@@ -1,0 +1,52 @@
+.app {
+  max-width: 1100px;
+  margin: 24px auto;
+}
+
+.app h1 {
+  font-size: 1.5rem;
+}
+
+/* Ekran po lewej, panel po prawej; na wąskim ekranie jedno pod drugim */
+.layout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+/* Ekran wizualizacji – na razie pusty prostokąt */
+.screen {
+  flex: 1 1 500px;
+  min-height: 400px;
+  border: 2px solid #888;
+  border-radius: 8px;
+}
+
+/* Panel sterowania */
+.panel {
+  flex: 0 1 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  border: 2px solid #888;
+  border-radius: 8px;
+}
+
+.panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.panel input {
+  padding: 8px;
+  font-size: 1rem;
+}
+
+.panel button {
+  padding: 10px;
+  font-size: 1rem;
+  cursor: pointer;
+}
