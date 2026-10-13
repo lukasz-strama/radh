@@ -50,3 +50,21 @@
   font-size: 1rem;
   cursor: pointer;
 }
+
+/* Komunikaty błędów */
+.panel input[aria-invalid='true'] {
+  border: 2px solid #d33;
+}
+
+.field-error {
+  color: #d33;
+  font-size: 0.875rem;
+}
+
+.api-error {
+  margin: 0;
+  padding: 10px;
+  color: #d33;
+  border: 1px solid #d33;
+  border-radius: 4px;
+}
