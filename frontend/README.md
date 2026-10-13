@@ -1,32 +1,62 @@
-# React + TypeScript + Vite
+# RADH – frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Interfejs demonstratora RSA i wymiany kluczy Diffiego-Hellmana.
+React + TypeScript + Vite.
 
-Currently, two official plugins are available:
+Frontend nie wykonuje obliczeń kryptograficznych – wysyła dane do backendu
+FastAPI i wyświetla jego odpowiedź.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Wymagania
 
-## React Compiler
+- Node.js w wersji 20.19+ lub 22.12+ (razem z nim instaluje się `npm`).
+  Sprawdzenie: `node -v`.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Instalacja zależności
 
-## Expanding the Oxlint configuration
+W katalogu `frontend/`:
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Wystarczy raz po sklonowaniu repozytorium i ponownie, gdy zmieni się
+`package.json`. Katalog `node_modules/` nie trafia do repozytorium.
+
+## Uruchomienie w trybie deweloperskim
+
+```bash
+npm run dev
+```
+
+Aplikacja będzie dostępna pod adresem http://localhost:5173/.
+Zmiany w plikach w `src/` widać od razu po zapisaniu.
+
+### Połączenie z backendem
+
+W trybie deweloperskim Vite przekierowuje żądania `/api/...` do backendu
+pod adresem `http://localhost:8000` (ustawienie `server.proxy` w
+`vite.config.ts`). Dzięki temu nie trzeba konfigurować CORS.
+
+Aby szyfrowanie działało, backend FastAPI musi być uruchomiony na porcie 8000.
+Bez niego interfejs się uruchomi, ale po kliknięciu „Szyfruj” pokaże komunikat
+o braku połączenia z backendem.
+
+## Kompilacja produkcyjna
+
+```bash
+npm run build
+```
+
+Polecenie sprawdza typy TypeScript i buduje aplikację do katalogu `dist/`.
+Podgląd zbudowanej wersji: `npm run preview`.
+
+## Pozostałe polecenia
+
+- `npm run lint` – sprawdzenie kodu linterem (oxlint).
+
+## Struktura
+
+- `src/App.tsx` – układ aplikacji: ekran wizualizacji i panel z formularzem RSA.
+- `src/api.ts` – komunikacja z backendem (`POST /api/v1/rsa/demo/encrypt`).
+- `src/validation.ts` – podstawowa walidacja danych z formularza.
+- `vite.config.ts` – konfiguracja Vite, w tym proxy do backendu.
