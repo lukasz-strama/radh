@@ -1,10 +1,25 @@
 import type { FormEvent } from 'react'
+import { encryptRsa } from './api'
 import './App.css'
 
 function App() {
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    // Na razie nic nie robimy, tylko blokujemy przeładowanie strony.
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+
+    // Zbieramy wartości z pól formularza (po atrybucie `name`).
+    const form = new FormData(event.currentTarget)
+    const data = {
+      message: Number(form.get('message')),
+      public_exponent: Number(form.get('public_exponent')),
+      modulus: Number(form.get('modulus')),
+    }
+
+    try {
+      const result = await encryptRsa(data)
+      console.log('Odpowiedź backendu:', result)
+    } catch (error) {
+      console.error('Nie udało się zaszyfrować:', error)
+    }
   }
 
   return (
