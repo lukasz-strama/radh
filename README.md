@@ -9,3 +9,11 @@ Celem jest stworzenie aplikacji edukacyjnej umożliwiającej poznanie zasad dzia
 ## Zasady współpracy
 
 Konwencje językowe, zasady branchowania, commitowania i tworzenia Pull Requestów znajdują się w pliku [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Dostępne komponenty
+
+- [`crypto-core/`](crypto-core/) – edukacyjne operacje kryptograficzne w C11.
+- [`backend/`](backend/) – API FastAPI integrujące Python z CryptoCore przez `ctypes`.
+
+Instrukcja budowania i uruchamiania API znajduje się w
+[`backend/README.md`](backend/README.md).
