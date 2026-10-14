@@ -56,7 +56,7 @@ typedef enum {
 
 radh_status_t rsa_encrypt(
     uint32_t message,
-    uint32_t modulus,
+    uint32_t public_exponent,
     uint32_t public_exponent,
     uint32_t *ciphertext
 );
