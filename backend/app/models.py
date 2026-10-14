@@ -30,7 +30,8 @@ class RsaEncryptRequest(BaseModel):
     message: Uint32 = Field(
         description="Liczba do zaszyfrowania; musi być mniejsza od n."
     )
-    public_key: RsaPublicKey
+    public_exponent: Uint32
+    modulus: Uint32
 
 
 class RsaEncryptResponse(BaseModel):
