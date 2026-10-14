@@ -39,7 +39,7 @@ def encrypt_rsa(
 ) -> RsaEncryptResponse:
     ciphertext = crypto_core.encrypt(
         request.message,
-        request.public_key.e,
-        request.public_key.n,
+        request.public_exponent,
+        request.modulus,
     )
     return RsaEncryptResponse(ciphertext=ciphertext)
