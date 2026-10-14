@@ -1,0 +1,105 @@
+.app {
+  max-width: 1100px;
+  margin: 24px auto;
+}
+
+.app h1 {
+  font-size: 1.5rem;
+}
+
+/* Ekran po lewej, panel po prawej; na wąskim ekranie jedno pod drugim */
+.layout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+/* Ekran wizualizacji – na razie pusty prostokąt */
+.screen {
+  flex: 1 1 500px;
+  min-height: 400px;
+  border: 2px solid #888;
+  border-radius: 8px;
+}
+
+/* Panel sterowania */
+.panel {
+  flex: 0 1 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  border: 2px solid #888;
+  border-radius: 8px;
+}
+
+.panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.panel input {
+  padding: 8px;
+  font-size: 1rem;
+}
+
+.panel button {
+  padding: 10px;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+/* Przycisk w trakcie obliczenia */
+.panel button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+/* Komunikaty błędów */
+.panel input[aria-invalid='true'] {
+  border: 2px solid #d33;
+}
+
+.field-error {
+  color: #d33;
+  font-size: 0.875rem;
+}
+
+/* Wynik szyfrowania */
+.result {
+  margin: 0;
+  padding: 10px;
+  border: 1px solid #888;
+  border-radius: 4px;
+}
+
+.result {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.result p {
+  margin: 0;
+}
+
+.result output {
+  font-family: ui-monospace, Consolas, monospace;
+  font-weight: bold;
+}
+
+/* Wzór c = m^e mod n; długie liczby mogą się zawijać na wąskim ekranie */
+.formula {
+  font-family: ui-monospace, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.api-error {
+  margin: 0;
+  padding: 10px;
+  color: #d33;
+  border: 1px solid #d33;
+  border-radius: 4px;
+}
