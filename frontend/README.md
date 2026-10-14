@@ -34,12 +34,18 @@ Zmiany w plikach w `src/` widać od razu po zapisaniu.
 ### Połączenie z backendem
 
 W trybie deweloperskim Vite przekierowuje żądania `/api/...` do backendu
-pod adresem `http://localhost:8000` (ustawienie `server.proxy` w
+pod adresem `http://127.0.0.1:8000` (ustawienie `server.proxy` w
 `vite.config.ts`). Dzięki temu nie trzeba konfigurować CORS.
 
-Aby szyfrowanie działało, backend FastAPI musi być uruchomiony na porcie 8000.
-Bez niego interfejs się uruchomi, ale po kliknięciu „Szyfruj” pokaże komunikat
-o braku połączenia z backendem.
+Aby szyfrowanie działało, backend FastAPI musi być uruchomiony na porcie 8000
+– instrukcja w [`backend/README.md`](../backend/README.md). Frontend i backend
+uruchamia się w dwóch osobnych terminalach.
+
+Bez backendu interfejs się uruchomi, ale po kliknięciu „Szyfruj” pokaże
+komunikat o braku połączenia z backendem.
+
+Szybkie sprawdzenie: dla `m = 65`, `e = 17`, `n = 3233` interfejs powinien
+pokazać szyfrogram `2790`.
 
 ## Kompilacja produkcyjna
 

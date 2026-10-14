@@ -61,6 +61,19 @@
   font-size: 0.875rem;
 }
 
+/* Wynik szyfrowania */
+.result {
+  margin: 0;
+  padding: 10px;
+  border: 1px solid #888;
+  border-radius: 4px;
+}
+
+.result output {
+  font-family: ui-monospace, Consolas, monospace;
+  font-weight: bold;
+}
+
 .api-error {
   margin: 0;
   padding: 10px;

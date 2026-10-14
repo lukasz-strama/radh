@@ -1,4 +1,4 @@
-// Komunikacja z backendem FastAPI.
+// Komunikacja z backendem FastAPI (backend/app/api.py).
 
 export type RsaEncryptRequest = {
   message: number
@@ -6,13 +6,23 @@ export type RsaEncryptRequest = {
   modulus: number
 }
 
-// Błąd z czytelnym komunikatem dla użytkownika.
-export class ApiError extends Error {}
+export type RsaEncryptResponse = {
+  ciphertext: number
+}
 
-// Wysyła parametry do backendu i zwraca surową odpowiedź JSON.
-// Kształt odpowiedzi (np. pole `ciphertext`) i format błędów są jeszcze
-// do ustalenia z backendem.
-export async function encryptRsa(data: RsaEncryptRequest): Promise<unknown> {
+// Błąd z czytelnym komunikatem dla użytkownika.
+// `code` to stały identyfikator z backendu (np. MESSAGE_OUT_OF_RANGE), jeśli przyszedł.
+export class ApiError extends Error {
+  readonly code?: string
+
+  constructor(message: string, code?: string) {
+    super(message)
+    this.code = code
+  }
+}
+
+// Wysyła parametry do backendu i zwraca szyfrogram obliczony przez backend.
+export async function encryptRsa(data: RsaEncryptRequest): Promise<RsaEncryptResponse> {
   let response: Response
   try {
     response = await fetch('/api/v1/rsa/demo/encrypt', {
@@ -28,26 +38,39 @@ export async function encryptRsa(data: RsaEncryptRequest): Promise<unknown> {
   const body: unknown = await response.json().catch(() => null)
 
   if (!response.ok) {
-    throw new ApiError(describeHttpError(response.status, body))
+    throw toApiError(response.status, body)
   }
 
-  return body
+  const ciphertext = (body as { ciphertext?: unknown } | null)?.ciphertext
+  if (typeof ciphertext !== 'number') {
+    throw new ApiError('Backend zwrócił odpowiedź w nieoczekiwanym formacie.')
+  }
+  return { ciphertext }
 }
 
-function describeHttpError(status: number, body: unknown): string {
-  // 502/503/504: proxy Vite nie może się połączyć z backendem (np. nie jest uruchomiony).
-  if (status === 502 || status === 503 || status === 504) {
-    return 'Nie można połączyć się z backendem. Upewnij się, że serwer FastAPI działa.'
+// Backend zwraca błędy w formacie: { "error": { "code": "...", "message": "..." } }.
+function toApiError(status: number, body: unknown): ApiError {
+  const error = (body as { error?: { code?: unknown; message?: unknown } } | null)?.error
+  if (error && typeof error.message === 'string' && error.message !== '') {
+    const code = typeof error.code === 'string' ? error.code : undefined
+    return new ApiError(error.message, code)
   }
 
-  // Jeśli backend zwrócił tekstowe `detail` (konwencja FastAPI), pokazujemy je.
+  // Fallback: domyślny format błędów FastAPI ({ "detail": "..." }).
   const detail = (body as { detail?: unknown } | null)?.detail
   if (typeof detail === 'string' && detail !== '') {
-    return detail
+    return new ApiError(detail)
   }
 
-  if (status >= 400 && status < 500) {
-    return `Serwer odrzucił dane (błąd ${status}). Sprawdź wprowadzone wartości.`
+  // Brak odpowiedzi JSON z backendu – najczęściej proxy Vite nie może się z nim
+  // połączyć (backend nie jest uruchomiony) i samo zwraca 502/503/504.
+  if (status === 502 || status === 503 || status === 504) {
+    return new ApiError(
+      'Nie można połączyć się z backendem. Upewnij się, że serwer FastAPI działa.',
+    )
   }
-  return `Wystąpił błąd serwera (błąd ${status}). Spróbuj ponownie później.`
+  if (status >= 400 && status < 500) {
+    return new ApiError(`Serwer odrzucił dane (błąd ${status}). Sprawdź wprowadzone wartości.`)
+  }
+  return new ApiError(`Wystąpił błąd serwera (błąd ${status}). Spróbuj ponownie później.`)
 }

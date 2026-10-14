@@ -6,9 +6,10 @@ export default defineConfig({
   plugins: [react()],
   server: {
     // W trybie dev żądania /api/... idą do backendu FastAPI (bez problemów z CORS).
-    // Port 8000 to domyślny port FastAPI – do potwierdzenia z backendem.
+    // Backend uruchomiony przez `uvicorn app.main:app` słucha na 127.0.0.1:8000
+    // (patrz backend/README.md).
     proxy: {
-      '/api': 'http://localhost:8000',
+      '/api': 'http://127.0.0.1:8000',
     },
   },
 })

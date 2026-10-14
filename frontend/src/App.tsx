@@ -8,10 +8,12 @@ import './App.css'
 function App() {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [apiError, setApiError] = useState<string | null>(null)
+  const [ciphertext, setCiphertext] = useState<number | null>(null)
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setApiError(null)
+    setCiphertext(null)
 
     // Zbieramy wartości z pól formularza (po atrybucie `name`).
     const form = new FormData(event.currentTarget)
@@ -28,9 +30,9 @@ function App() {
     setFieldErrors({})
 
     try {
+      // Szyfrogram pochodzi wyłącznie z odpowiedzi backendu.
       const result = await encryptRsa(validation.data)
-      // Wyświetlanie szyfrogramu – do zrobienia, gdy ustalimy format odpowiedzi.
-      console.log('Odpowiedź backendu:', result)
+      setCiphertext(result.ciphertext)
     } catch (error) {
       setApiError(
         error instanceof ApiError ? error.message : 'Wystąpił nieoczekiwany błąd.',
@@ -57,6 +59,12 @@ function App() {
           <Field name="modulus" label="Moduł (n)" error={fieldErrors.modulus} />
 
           <button type="submit">Szyfruj</button>
+
+          {ciphertext !== null && (
+            <p className="result" role="status">
+              Szyfrogram (c): <output>{ciphertext}</output>
+            </p>
+          )}
 
           {apiError && (
             <p className="api-error" role="alert">
