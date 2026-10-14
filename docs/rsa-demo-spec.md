@@ -47,7 +47,7 @@ Iloczyn dwóch wartości mniejszych od `modulus` może przekroczyć 32 bity. Pon
 #include <stdint.h>
 
 typedef enum {
-    RADH_OK = 0,
+    RADH_STATUS_OK = 0,
     RADH_ERR_NULL_ARGUMENT = 1,
     RADH_ERR_INVALID_MODULUS = 2,
     RADH_ERR_INVALID_EXPONENT = 3,
