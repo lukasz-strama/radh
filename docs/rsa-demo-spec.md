@@ -51,7 +51,7 @@ typedef enum {
     RADH_STATUS_INVALID_POINTER = 1,
     RADH_STATUS_INVALID_MODULUS = 2,
     RADH_STATUS_INVALID_EXPONENT = 3,
-    RADH_ERR_MESSAGE_OUT_OF_RANGE = 4
+    RADH_STATUS_INVALID_MESSAGE = 4
 } radh_status_t;
 
 radh_status_t rsa_encrypt(
