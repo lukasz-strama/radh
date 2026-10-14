@@ -51,6 +51,12 @@
   cursor: pointer;
 }
 
+/* Przycisk w trakcie obliczenia */
+.panel button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
 /* Komunikaty błędów */
 .panel input[aria-invalid='true'] {
   border: 2px solid #d33;
@@ -69,9 +75,25 @@
   border-radius: 4px;
 }
 
+.result {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.result p {
+  margin: 0;
+}
+
 .result output {
   font-family: ui-monospace, Consolas, monospace;
   font-weight: bold;
+}
+
+/* Wzór c = m^e mod n; długie liczby mogą się zawijać na wąskim ekranie */
+.formula {
+  font-family: ui-monospace, Consolas, monospace;
+  overflow-wrap: anywhere;
 }
 
 .api-error {

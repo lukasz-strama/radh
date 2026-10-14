@@ -1,19 +1,29 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { ApiError, encryptRsa } from './api'
+import type { RsaEncryptRequest } from './api'
 import { validateRsaInput } from './validation'
 import type { FieldErrors, RsaField } from './validation'
 import './App.css'
 
+// Wynik szyfrowania razem z parametrami, które faktycznie zostały wysłane.
+// (Pola formularza mogą się zmienić po kliknięciu, więc nie bierzemy ich z pól.)
+type EncryptResult = {
+  request: RsaEncryptRequest
+  ciphertext: number
+}
+
 function App() {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [apiError, setApiError] = useState<string | null>(null)
-  const [ciphertext, setCiphertext] = useState<number | null>(null)
+  const [result, setResult] = useState<EncryptResult | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (isLoading) return
     setApiError(null)
-    setCiphertext(null)
+    setResult(null)
 
     // Zbieramy wartości z pól formularza (po atrybucie `name`).
     const form = new FormData(event.currentTarget)
@@ -29,14 +39,17 @@ function App() {
     }
     setFieldErrors({})
 
+    setIsLoading(true)
     try {
       // Szyfrogram pochodzi wyłącznie z odpowiedzi backendu.
-      const result = await encryptRsa(validation.data)
-      setCiphertext(result.ciphertext)
+      const response = await encryptRsa(validation.data)
+      setResult({ request: validation.data, ciphertext: response.ciphertext })
     } catch (error) {
       setApiError(
         error instanceof ApiError ? error.message : 'Wystąpił nieoczekiwany błąd.',
       )
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -58,12 +71,24 @@ function App() {
           />
           <Field name="modulus" label="Moduł (n)" error={fieldErrors.modulus} />
 
-          <button type="submit">Szyfruj</button>
+          <button type="submit" disabled={isLoading} aria-busy={isLoading}>
+            {isLoading ? 'Szyfrowanie…' : 'Szyfruj'}
+          </button>
 
-          {ciphertext !== null && (
-            <p className="result" role="status">
-              Szyfrogram (c): <output>{ciphertext}</output>
-            </p>
+          {result && (
+            <div className="result" role="status">
+              <p>
+                Szyfrogram (c): <output>{result.ciphertext}</output>
+              </p>
+              <p className="formula">
+                c = m<sup>e</sup> mod n
+              </p>
+              <p className="formula">
+                c = {result.request.message}
+                <sup>{result.request.public_exponent}</sup> mod {result.request.modulus} ={' '}
+                {result.ciphertext}
+              </p>
+            </div>
           )}
 
           {apiError && (
