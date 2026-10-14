@@ -49,7 +49,7 @@ Iloczyn dwóch wartości mniejszych od `modulus` może przekroczyć 32 bity. Pon
 typedef enum {
     RADH_STATUS_OK = 0,
     RADH_STATUS_INVALID_POINTER = 1,
-    RADH_ERR_INVALID_MODULUS = 2,
+    RADH_STATUS_INVALID_MODULUS = 2,
     RADH_ERR_INVALID_EXPONENT = 3,
     RADH_ERR_MESSAGE_OUT_OF_RANGE = 4
 } radh_status_t;
