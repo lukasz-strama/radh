@@ -62,7 +62,7 @@ export RADH_CRYPTO_CORE_LIBRARY=/pełna/ścieżka/libradh_crypto_core.dylib
 ```sh
 curl -X POST http://127.0.0.1:8000/api/v1/rsa/demo/encrypt \
   -H 'Content-Type: application/json' \
-  -d '{"message":65,"public_key":{"n":3233,"e":17}}'
+  -d '{"message":65,"public_exponent":17,"modulus":3233}'
 ```
 
 Odpowiedź:
