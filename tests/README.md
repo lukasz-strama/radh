@@ -50,7 +50,7 @@ python -m pytest tests/test_core_valid.py -v
 | `tests/test_api_robustness.py` | serwer po błędnych żądaniach, brak biblioteki (503), prawdziwy proces `uvicorn` |
 
 Przypadki testowe są w `tests/data/rsa_cases.json`. Trzy testy oznaczone `xfail`
-dotyczą znanego defektu (format błędów 404/405/400 – zgłoszenie: #NN). Po jego
+dotyczą znanego defektu (format błędów 404/405/400 – zgłoszenie: #26). Po jego
 naprawie usuń z nich `xfail`.
 
 ### CI
