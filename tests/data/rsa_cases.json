@@ -1,0 +1,35 @@
+{
+  "_opis": "Przypadki testowe szyfrowania RSA (liczby 32-bitowe). Wspólne dla testów biblioteki C i endpointu API. Wartości 'ciphertext' policzono w Pythonie przez pow(m, e, n).",
+  "valid": [
+    {"id": "textbook_65", "message": 65, "public_exponent": 17, "modulus": 3233, "ciphertext": 2790},
+    {"id": "message_zero", "message": 0, "public_exponent": 17, "modulus": 3233, "ciphertext": 0},
+    {"id": "message_one", "message": 1, "public_exponent": 17, "modulus": 3233, "ciphertext": 1},
+    {"id": "message_modulus_minus_one", "message": 3232, "public_exponent": 17, "modulus": 3233, "ciphertext": 3232},
+    {"id": "exponent_one", "message": 65, "public_exponent": 1, "modulus": 3233, "ciphertext": 65},
+    {"id": "smallest_modulus_message_one", "message": 1, "public_exponent": 5, "modulus": 2, "ciphertext": 1},
+    {"id": "smallest_modulus_message_zero", "message": 0, "public_exponent": 1, "modulus": 2, "ciphertext": 0},
+    {"id": "modulus_16_bit", "message": 12345, "public_exponent": 17, "modulus": 60491, "ciphertext": 41476},
+    {"id": "modulus_32_bit_rsa_keys", "message": 123456789, "public_exponent": 65537, "modulus": 4292870399, "ciphertext": 2081669972},
+    {"id": "modulus_uint32_max", "message": 4294967294, "public_exponent": 4294967295, "modulus": 4294967295, "ciphertext": 4294967294},
+    {"id": "large_prime_modulus", "message": 4000000000, "public_exponent": 65537, "modulus": 4294967291, "ciphertext": 2865113741},
+    {"id": "exponent_uint32_max", "message": 2, "public_exponent": 4294967295, "modulus": 4294967291, "ciphertext": 32}
+  ],
+  "invalid": [
+    {"id": "modulus_zero", "message": 5, "public_exponent": 17, "modulus": 0, "status": "INVALID_MODULUS"},
+    {"id": "modulus_one", "message": 0, "public_exponent": 17, "modulus": 1, "status": "INVALID_MODULUS"},
+    {"id": "public_exponent_zero", "message": 65, "public_exponent": 0, "modulus": 3233, "status": "INVALID_EXPONENT"},
+    {"id": "message_equals_modulus", "message": 3233, "public_exponent": 17, "modulus": 3233, "status": "INVALID_MESSAGE"},
+    {"id": "message_above_modulus", "message": 3234, "public_exponent": 17, "modulus": 3233, "status": "INVALID_MESSAGE"},
+    {"id": "message_uint32_max", "message": 4294967295, "public_exponent": 17, "modulus": 3233, "status": "INVALID_MESSAGE"},
+    {"id": "message_equals_modulus_uint32_max", "message": 4294967295, "public_exponent": 1, "modulus": 4294967295, "status": "INVALID_MESSAGE"},
+    {"id": "all_zero_modulus_wins", "message": 0, "public_exponent": 0, "modulus": 0, "status": "INVALID_MODULUS"},
+    {"id": "modulus_one_and_exponent_zero_modulus_wins", "message": 0, "public_exponent": 0, "modulus": 1, "status": "INVALID_MODULUS"},
+    {"id": "modulus_zero_and_message_max_modulus_wins", "message": 4294967295, "public_exponent": 0, "modulus": 0, "status": "INVALID_MODULUS"},
+    {"id": "exponent_zero_and_message_too_big_exponent_wins", "message": 3233, "public_exponent": 0, "modulus": 3233, "status": "INVALID_EXPONENT"}
+  ],
+  "rsa_keys": [
+    {"id": "textbook", "p": 61, "q": 53, "public_exponent": 17, "modulus": 3233, "private_exponent": 2753},
+    {"id": "medium", "p": 251, "q": 241, "public_exponent": 17, "modulus": 60491, "private_exponent": 42353},
+    {"id": "largest_32_bit", "p": 65521, "q": 65519, "public_exponent": 65537, "modulus": 4292870399, "private_exponent": 1475213633}
+  ]
+}
