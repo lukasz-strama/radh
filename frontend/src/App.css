@@ -131,15 +131,18 @@
 }
 
 /* Wymiana kluczy DH */
-.dh {
+.dh h1 {
+  margin: 0.67em 0;
+}
+
+/* Wizualizacja po lewej (jak ekran w RSA), panel kroków po prawej */
+.dh-scene {
+  flex: 1 1 500px;
+  min-width: 0;
   container-type: inline-size;
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-
-.dh h1 {
-  margin: 0.67em 0 0;
 }
 
 .dh h2,
@@ -176,8 +179,10 @@
 .dh-channel {
   position: relative;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 8px;
 }
 
 .dh-channel::before {
@@ -200,7 +205,12 @@
   background: Canvas;
 }
 
-/* Zależy od szerokości widoku DH, nie całego okna */
+/* Strzałki pakietów: domyślnie poziome, pionowe włącza container query niżej */
+.dh-arrow-v {
+  display: none;
+}
+
+/* Zależy od szerokości wizualizacji, nie całego okna */
 @container (max-width: 480px) {
   .dh-parties {
     grid-template-columns: 1fr;
@@ -213,6 +223,14 @@
   /* W pionie podpis leży na linii */
   .dh-channel-label {
     transform: none;
+  }
+
+  .dh-arrow-h {
+    display: none;
+  }
+
+  .dh-arrow-v {
+    display: inline;
   }
 
   /* Linia kanału pionowo, pakiety polecą z góry na dół */
@@ -286,4 +304,63 @@
 
 .dh-value output {
   font-weight: bold;
+}
+
+/* Wartość przed swoim etapem: tylko „symbol = ?” */
+.dh-value--pending {
+  opacity: 0.4;
+}
+
+/* Pakiet z wartością publiczną na kanale, w kolorze nadawcy */
+.dh-packet {
+  position: relative;
+  display: flex;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 0.875rem;
+  font-weight: bold;
+  color: var(--party-color);
+  background: Canvas;
+  border: 2px solid var(--party-color);
+  border-radius: 999px;
+}
+
+.dh-packet--alice {
+  --party-color: #2f7bd8;
+}
+
+.dh-packet--bob {
+  --party-color: #1f9d55;
+}
+
+/* Panel kroków */
+.dh-controls h2 {
+  font-size: 1.1rem;
+}
+
+.dh-controls p {
+  margin: 8px 0 0;
+}
+
+.dh-step-counter {
+  font-size: 0.875rem;
+  color: #888;
+}
+
+.dh-controls .dh-step-counter {
+  margin: 0 0 4px;
+}
+
+.dh-step-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.dh-step-buttons button {
+  flex: 1;
+}
+
+/* Nieaktywny przycisk to nie „czekaj”, tylko brak kolejnego kroku */
+.dh-step-buttons button:disabled {
+  cursor: not-allowed;
 }
