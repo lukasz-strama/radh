@@ -43,7 +43,7 @@ function App() {
         <RsaView />
       </div>
       <div hidden={tab !== 'dh'}>
-        <DhExchange data={DH_EXAMPLE} />
+        <DhExchange state={{ status: 'ready', data: DH_EXAMPLE }} />
       </div>
     </div>
   )

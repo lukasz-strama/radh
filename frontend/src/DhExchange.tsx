@@ -61,69 +61,106 @@ const STEP_PUBLIC = 2
 const STEP_EXCHANGE = 3
 const STEP_SECRET = 4
 
+// Stan danych do wizualizacji. Przy błędzie nie pokazujemy żadnych wartości,
+// żeby nie wyświetlić niepoprawnego wyniku.
+export type DhState =
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ready'; data: DhExchangeData }
+
 type DhExchangeProps = {
-  data: DhExchangeData
+  state: DhState
+  onRetry?: () => void
 }
 
-export function DhExchange({ data }: DhExchangeProps) {
-  const [step, setStep] = useState(0)
-  const isLast = step === STEPS.length - 1
-
+export function DhExchange({ state, onRetry }: DhExchangeProps) {
   return (
     <div className="dh">
       <h1>RADH – wymiana kluczy Diffiego–Hellmana</h1>
 
-      <div className="layout">
-        <section className="dh-scene" aria-label="Wizualizacja wymiany">
-          {/* Parametry znane obu stronom (i każdemu, kto podsłuchuje) */}
-          <section className="dh-shared" aria-labelledby="dh-shared-title">
-            <h2 id="dh-shared-title">Parametry wspólne</h2>
-            <p className="formula">
-              p = <output>{data.p}</output>
-            </p>
-            <p className="formula">
-              g = <output>{data.g}</output>
-            </p>
-          </section>
+      {state.status === 'loading' && (
+        <p className="dh-status" role="status">
+          Pobieranie danych z backendu…
+        </p>
+      )}
 
-          <div className="dh-parties">
-            <PartyPanel party="alice" data={data} step={step} />
+      {state.status === 'error' && (
+        <div className="api-error dh-error" role="alert">
+          <p>{state.message}</p>
+          {onRetry && (
+            <button type="button" onClick={onRetry}>
+              Spróbuj ponownie
+            </button>
+          )}
+        </div>
+      )}
 
-            {/* Kanał publiczny: na etapie wymiany pokazuje przesyłane A i B */}
-            <div className="dh-channel">
-              <span className="dh-channel-label">kanał publiczny</span>
-              {step >= STEP_EXCHANGE && (
-                <>
-                  <Packet from="alice" value={data.alice.publicValue} />
-                  <Packet from="bob" value={data.bob.publicValue} />
-                </>
-              )}
-            </div>
+      {/* Nowe dane montują wizualizację od nowa, więc etapy zaczynają się od 1 */}
+      {state.status === 'ready' && <DhWalkthrough data={state.data} />}
+    </div>
+  )
+}
 
-            <PartyPanel party="bob" data={data} step={step} />
-          </div>
+type DhWalkthroughProps = {
+  data: DhExchangeData
+}
+
+// Wizualizacja z panelem etapów.
+function DhWalkthrough({ data }: DhWalkthroughProps) {
+  const [step, setStep] = useState(0)
+  const isLast = step === STEPS.length - 1
+
+  return (
+    <div className="layout">
+      <section className="dh-scene" aria-label="Wizualizacja wymiany">
+        {/* Parametry znane obu stronom (i każdemu, kto podsłuchuje) */}
+        <section className="dh-shared" aria-labelledby="dh-shared-title">
+          <h2 id="dh-shared-title">Parametry wspólne</h2>
+          <p className="formula">
+            p = <output>{data.p}</output>
+          </p>
+          <p className="formula">
+            g = <output>{data.g}</output>
+          </p>
         </section>
 
-        {/* Panel sterowania krokami */}
-        <aside className="panel dh-controls" aria-label="Sterowanie etapami">
-          <div aria-live="polite">
-            <p className="dh-step-counter">
-              Krok {step + 1} z {STEPS.length}
-            </p>
-            <h2>{STEPS[step].title}</h2>
-            <p>{STEPS[step].description}</p>
+        <div className="dh-parties">
+          <PartyPanel party="alice" data={data} step={step} />
+
+          {/* Kanał publiczny: na etapie wymiany pokazuje przesyłane A i B */}
+          <div className="dh-channel">
+            <span className="dh-channel-label">kanał publiczny</span>
+            {step >= STEP_EXCHANGE && (
+              <>
+                <Packet from="alice" value={data.alice.publicValue} />
+                <Packet from="bob" value={data.bob.publicValue} />
+              </>
+            )}
           </div>
 
-          <div className="dh-step-buttons">
-            <button type="button" onClick={() => setStep(step - 1)} disabled={step === 0}>
-              Wstecz
-            </button>
-            <button type="button" onClick={() => setStep(step + 1)} disabled={isLast}>
-              Dalej
-            </button>
-          </div>
-        </aside>
-      </div>
+          <PartyPanel party="bob" data={data} step={step} />
+        </div>
+      </section>
+
+      {/* Panel sterowania krokami */}
+      <aside className="panel dh-controls" aria-label="Sterowanie etapami">
+        <div aria-live="polite">
+          <p className="dh-step-counter">
+            Krok {step + 1} z {STEPS.length}
+          </p>
+          <h2>{STEPS[step].title}</h2>
+          <p>{STEPS[step].description}</p>
+        </div>
+
+        <div className="dh-step-buttons">
+          <button type="button" onClick={() => setStep(step - 1)} disabled={step === 0}>
+            Wstecz
+          </button>
+          <button type="button" onClick={() => setStep(step + 1)} disabled={isLast}>
+            Dalej
+          </button>
+        </div>
+      </aside>
     </div>
   )
 }

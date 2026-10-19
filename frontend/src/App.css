@@ -364,3 +364,22 @@
 .dh-step-buttons button:disabled {
   cursor: not-allowed;
 }
+
+/* Ładowanie i błąd w zakładce DH */
+.dh-status {
+  color: #888;
+}
+
+.dh-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dh-error button {
+  padding: 6px 12px;
+  font: inherit;
+  cursor: pointer;
+}
