@@ -13,9 +13,10 @@ FastAPI i wyświetla jego odpowiedź.
 
 ## Instalacja zależności
 
-W katalogu `frontend/`:
+Z głównego katalogu:
 
 ```bash
+cd frontend
 npm install
 ```
 
@@ -59,10 +60,3 @@ Podgląd zbudowanej wersji: `npm run preview`.
 ## Pozostałe polecenia
 
 - `npm run lint` – sprawdzenie kodu linterem (oxlint).
-
-## Struktura
-
-- `src/App.tsx` – układ aplikacji: ekran wizualizacji i panel z formularzem RSA.
-- `src/api.ts` – komunikacja z backendem (`POST /api/v1/rsa/demo/encrypt`).
-- `src/validation.ts` – podstawowa walidacja danych z formularza.
-- `vite.config.ts` – konfiguracja Vite, w tym proxy do backendu.
