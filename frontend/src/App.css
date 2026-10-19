@@ -103,3 +103,144 @@
   border: 1px solid #d33;
   border-radius: 4px;
 }
+
+/* Zakładki widoków */
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 2px solid #888;
+}
+
+.tab {
+  margin-bottom: -2px;
+  padding: 8px 16px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  background: none;
+  border: 2px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+}
+
+/* Aktywna zakładka zasłania linię pod sobą */
+.tab[aria-current='page'] {
+  font-weight: bold;
+  background: Canvas;
+  border-color: #888;
+}
+
+/* Wymiana kluczy DH */
+.dh {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dh h1 {
+  margin: 0.67em 0 0;
+}
+
+.dh h2,
+.dh p {
+  margin: 0;
+}
+
+.dh h2 {
+  font-size: 1.1rem;
+}
+
+.dh-shared {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 24px;
+  padding: 12px;
+  border: 1px dashed #888;
+  border-radius: 6px;
+}
+
+.dh-shared h2 {
+  flex-basis: 100%;
+}
+
+/* Alice | kanał | Bob; na wąskim ekranie wszystko jedno pod drugim */
+.dh-parties {
+  display: grid;
+  grid-template-columns: 1fr 120px 1fr;
+  gap: 8px;
+}
+
+/* Kanał: przerywana linia z podpisem, poziomo między panelami */
+.dh-channel {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dh-channel::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  border-top: 2px dashed #888;
+}
+
+/* Podpis nad linią, żeby jej nie zasłaniał */
+.dh-channel-label {
+  position: relative;
+  transform: translateY(-0.9em);
+  padding: 2px 4px;
+  font-size: 0.75rem;
+  color: #888;
+  text-align: center;
+  background: Canvas;
+}
+
+/* Zależy od szerokości widoku DH, nie całego okna */
+@container (max-width: 480px) {
+  .dh-parties {
+    grid-template-columns: 1fr;
+  }
+
+  .dh-channel {
+    min-height: 80px;
+  }
+
+  /* W pionie podpis leży na linii */
+  .dh-channel-label {
+    transform: none;
+  }
+
+  /* Linia kanału pionowo, pakiety polecą z góry na dół */
+  .dh-channel::before {
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    right: auto;
+    border-top: none;
+    border-left: 2px dashed #888;
+  }
+}
+
+.dh-party {
+  min-height: 160px;
+  padding: 12px;
+  border: 2px solid var(--party-color);
+  border-radius: 6px;
+}
+
+.dh-party h2 {
+  color: var(--party-color);
+}
+
+.dh-party--alice {
+  --party-color: #2f7bd8;
+}
+
+.dh-party--bob {
+  --party-color: #1f9d55;
+}
