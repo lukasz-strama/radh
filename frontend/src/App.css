@@ -227,7 +227,10 @@
 }
 
 .dh-party {
-  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
   padding: 12px;
   border: 2px solid var(--party-color);
   border-radius: 6px;
@@ -243,4 +246,44 @@
 
 .dh-party--bob {
   --party-color: #1f9d55;
+}
+
+/* Pojedyncza wartość: tajne (pełna ramka, tło) vs jawne (przerywana ramka) */
+.dh-value {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 4px;
+}
+
+.dh-value--private {
+  --value-color: #c2700c;
+  border: 2px solid var(--value-color);
+  background: color-mix(in srgb, var(--value-color) 10%, transparent);
+}
+
+.dh-value--public {
+  --value-color: #888;
+  border: 2px dashed var(--value-color);
+}
+
+.dh-value-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.875rem;
+}
+
+.dh-value-badge {
+  padding: 0 6px;
+  font-size: 0.75rem;
+  font-weight: bold;
+  color: var(--value-color);
+  border: 1px solid var(--value-color);
+  border-radius: 999px;
+}
+
+.dh-value output {
+  font-weight: bold;
 }

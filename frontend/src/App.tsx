@@ -1,9 +1,18 @@
 import { useState } from 'react'
 import { DhExchange } from './DhExchange'
+import type { DhExchangeData } from './DhExchange'
 import { RsaView } from './RsaView'
 import './App.css'
 
 type Tab = 'rsa' | 'dh'
+
+// Tymczasowo przykład z kryteriów #14 zamiast odpowiedzi backendu.
+const DH_EXAMPLE: DhExchangeData = {
+  p: 23,
+  g: 5,
+  alice: { privateKey: 6, publicValue: 8, sharedSecret: 2 },
+  bob: { privateKey: 15, publicValue: 19, sharedSecret: 2 },
+}
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'rsa', label: 'RSA' },
@@ -34,8 +43,7 @@ function App() {
         <RsaView />
       </div>
       <div hidden={tab !== 'dh'}>
-        {/* Tymczasowo przykład z kryteriów #14; docelowo dane z backendu */}
-        <DhExchange p={23} g={5} />
+        <DhExchange data={DH_EXAMPLE} />
       </div>
     </div>
   )
