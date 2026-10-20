@@ -11,7 +11,7 @@ add_compile_options(
     "$<$<C_COMPILER_ID:MSVC>:/W4>"
 )
 
-add_library(radh_crypto_core SHARED src/modexp.c src/rsa.c)
+add_library(radh_crypto_core SHARED src/modexp.c src/rsa.c src/dh.c)
 target_include_directories(radh_crypto_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
 # Eksport publicznych funkcji także przy budowaniu DLL.
