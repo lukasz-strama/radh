@@ -16,6 +16,9 @@ STATUS = {
     "INVALID_MODULUS": 2,
     "INVALID_EXPONENT": 3,
     "INVALID_MESSAGE": 4,
+    "INVALID_PRIME": 5, 
+    "INVALID_GENERATOR": 6,
+    "INVALID_SECRET": 7,
 }
 
 def _library_names():
