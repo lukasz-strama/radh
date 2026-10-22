@@ -21,6 +21,16 @@ STATUS = {
     "INVALID_SECRET": 7,
 }
 
+DH_FIELDS = ("alice_public", "bob_public", "alice_shared_key", "bob_shared_key")
+
+class DhResult(ctypes.Structure):
+    """Odpowiednik radh_dh_exchange_result_t"""
+
+    _fields_ = [(name, ctypes.c_uint32) for name in DH_FIELDS]
+
+    def as_tuple(self):
+        return tuple(getattr(self, name) for name in DH_FIELDS)
+
 def _library_names():
     if sys.platform == "darwin":
         return ["libradh_crypto_core.dylib"]
@@ -63,6 +73,16 @@ class NativeCore:
             ]
             function.restype = ctypes.c_int
 
+        self._dh = self._lib.radh_dh_exchange_u32
+        self._dh.argtypes = [
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.POINTER(DhResult),
+        ]
+        self._dh.restype = ctypes.c_int
+
     def _call(self, function, a, b, c, initial):
         output = ctypes.c_uint32(initial)
         status = function(a, b, c, ctypes.byref(output))
@@ -85,3 +105,17 @@ class NativeCore:
     def encrypt_null_output(self, message, public_exponent, modulus):
         """Wywołanie ze wskaźnikiem wyniku NULL. Zwraca sam status."""
         return self._lib.radh_rsa_encrypt_u32(message, public_exponent, modulus, None)
+
+    def dh_exchange(self, prime, generator, alice_secret, bob_secret, initial=SENTINEL):
+        """Zwraca (status, (A, B, K_A, K_B)).
+
+        Wszystkie pola struktury są najpierw ustawiane na `initial`, więc po błędzie
+        powinny mieć dokładnie tę wartość.
+        """
+        result = DhResult(initial, initial, initial, initial)
+        status = self._dh(prime, generator, alice_secret, bob_secret, ctypes.byref(result))
+        return status, result.as_tuple()
+
+    def dh_exchange_null_output(self, prime, generator, alice_secret, bob_secret):
+        """Wywołanie ze wskaźnikiem wyniku NULL. Zwraca sam status."""
+        return self._dh(prime, generator, alice_secret, bob_secret, None)
