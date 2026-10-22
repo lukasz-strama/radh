@@ -200,7 +200,11 @@ class CryptoCore:
             ctypes.c_uint32(modulus),
             ctypes.byref(ciphertext),
         )
-        self._check_status(raw_status)
+        self._check_status(raw_status, {
+            CryptoCoreStatus.INVALID_MODULUS,
+            CryptoCoreStatus.INVALID_EXPONENT,
+            CryptoCoreStatus.INVALID_MESSAGE,
+        })
         return ciphertext.value
 
     def exchange(
@@ -219,11 +223,15 @@ class CryptoCore:
             ctypes.c_uint32(alice_secret), ctypes.c_uint32(bob_secret),
             ctypes.byref(result),
         )
-        self._check_status(raw_status)
+        self._check_status(raw_status, {
+            CryptoCoreStatus.INVALID_PRIME,
+            CryptoCoreStatus.INVALID_GENERATOR,
+            CryptoCoreStatus.INVALID_SECRET,
+        })
         return result
 
     @staticmethod
-    def _check_status(raw_status: int) -> None:
+    def _check_status(raw_status: int, input_statuses: set[CryptoCoreStatus]) -> None:
         """Przetłumacz status ABI na kontrolowany wyjątek adaptera."""
 
         try:
@@ -238,5 +246,10 @@ class CryptoCore:
         if status is CryptoCoreStatus.OK:
             return
 
+        if status not in input_statuses:
+            raise CryptoCoreCallError(
+                int(status), "INTERNAL_ERROR",
+                "CryptoCore zwrócił status spoza kontraktu tej operacji.",
+            )
         code, message = _STATUS_ERRORS[status]
         raise CryptoCoreCallError(int(status), code, message)

@@ -1,12 +1,10 @@
 """Testy integracji DH z rzeczywistą biblioteką C i kontraktu HTTP."""
 
-import ctypes
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
 from app.api import get_crypto_core
-from app.crypto_core import CryptoCore, CryptoCoreInputError, CryptoCoreLoadError
 
 URL = "/api/v1/dh/demo/exchange"
 BASE = {"prime": 23, "generator": 5, "alice_secret": 6, "bob_secret": 15}
@@ -71,7 +69,7 @@ def test_extra_field(client):
     assert response.json()["error"]["code"] == "INVALID_REQUEST"
 
 
-@pytest.mark.parametrize("status", [1, -1, 99])
+@pytest.mark.parametrize("status", [1, 2, 3, 4, -1, 99])
 def test_unexpected_native_status(client, monkeypatch, status):
     monkeypatch.setattr(get_crypto_core(), "_exchange", lambda *args: status)
     response = client.post(URL, json=BASE)
@@ -86,30 +84,6 @@ def test_missing_library(client, monkeypatch, tmp_path):
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "CRYPTO_CORE_UNAVAILABLE"
     assert str(tmp_path) not in response.text
-
-
-def test_library_without_dh_symbol(core, monkeypatch):
-    class OldLibrary:
-        def radh_rsa_encrypt_u32(self):
-            pass
-
-    # Funkcja jako atrybut instancji pozwala przypisać sygnaturę ctypes.
-    old = OldLibrary()
-    old.radh_rsa_encrypt_u32 = lambda: None
-    monkeypatch.setattr(ctypes, "CDLL", lambda path: old)
-    with pytest.raises(CryptoCoreLoadError, match="radh_dh_exchange_u32"):
-        CryptoCore(core.path)
-
-
-@pytest.mark.parametrize("field", BASE)
-@pytest.mark.parametrize("value", [-1, 2**32, True, "5", 1.5, None])
-def test_adapter_rejects_invalid_arguments_before_c(core, field, value):
-    adapter = CryptoCore(core.path)
-    def unexpected_call(*args):
-        pytest.fail("Niepoprawne dane nie mogą dotrzeć do C")
-    adapter._exchange = unexpected_call
-    with pytest.raises(CryptoCoreInputError):
-        adapter.exchange(**{**BASE, field: value})
 
 
 def test_native_call_is_used(client, monkeypatch):

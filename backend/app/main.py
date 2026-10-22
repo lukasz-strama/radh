@@ -22,7 +22,7 @@ app = FastAPI(
     version="0.1.0",
     description=(
         "API demonstratora RSA i Diffiego–Hellmana. Endpointy RSA i DH korzystają "
-        "z edukacyjnej biblioteki CryptoCore w C i nie zapewnia bezpieczeństwa "
+        "z edukacyjnej biblioteki CryptoCore w C i nie zapewniają bezpieczeństwa "
         "kryptograficznego."
     ),
 )
@@ -68,7 +68,7 @@ async def crypto_core_call_error(
     }:
         return _error_response(422, exception.code, exception.message)
     logger.error(
-        "Błąd kontraktu CryptoCore (status=%s): %s", exception.status, exception
+        "CryptoCore contract violation (status=%s): %s", exception.status, exception
     )
     return _error_response(
         500,
@@ -81,7 +81,7 @@ async def crypto_core_call_error(
 async def crypto_core_load_error(
     _request: Request, exception: CryptoCoreLoadError
 ) -> JSONResponse:
-    logger.error("Nie można uruchomić CryptoCore: %s", exception)
+    logger.error("Cannot load CryptoCore: %s", exception)
     return _error_response(
         503,
         "CRYPTO_CORE_UNAVAILABLE",
