@@ -1,20 +1,13 @@
-import os
 import socket
-import subprocess
-import sys
-import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-
 import httpx
 import pytest
-
 import reference
 from conftest import API_URL, CASES
 
 BASE = {"message": 65, "public_exponent": 17, "modulus": 3233}
 EXPECTED_CIPHERTEXT = 2790
-BACKEND_DIR = Path(__file__).resolve().parents[1] / "backend"
 
 
 def assert_server_still_works(client):
@@ -160,52 +153,6 @@ def test_parallel_requests_return_correct_results(client):
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = list(pool.map(worker, range(200)))
     assert all(results)
-
-
-def _free_port():
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
-
-@pytest.fixture
-def live_server(core, tmp_path):
-    """Prawdziwy serwer uvicorn w osobnym procesie (jak przy uruchomieniu API ręcznie)."""
-    port = _free_port()
-    log_path = tmp_path / "uvicorn.log"
-    env = dict(os.environ, RADH_CRYPTO_CORE_LIBRARY=str(core.path))
-    with open(log_path, "wb") as log:
-        process = subprocess.Popen(
-            [
-                sys.executable, "-m", "uvicorn", "app.main:app",
-                "--app-dir", str(BACKEND_DIR),
-                "--host", "127.0.0.1", "--port", str(port),
-            ],
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            env=env,
-        )
-        base_url = f"http://127.0.0.1:{port}"
-        try:
-            deadline = time.time() + 20
-            while True:
-                if process.poll() is not None:
-                    pytest.fail("Serwer zakończył pracę przy starcie:\n" + log_path.read_text(errors="replace"))
-                try:
-                    if httpx.get(base_url + "/openapi.json", timeout=1).status_code == 200:
-                        break
-                except httpx.TransportError:
-                    pass
-                if time.time() > deadline:
-                    pytest.fail("Serwer nie wystartował w 20 s:\n" + log_path.read_text(errors="replace"))
-                time.sleep(0.1)
-            yield process, base_url, port
-        finally:
-            process.terminate()
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
 
 
 @pytest.mark.live

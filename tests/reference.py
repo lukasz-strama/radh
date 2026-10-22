@@ -31,5 +31,45 @@ def expected_encrypt_status(message, public_exponent, modulus):
 
 
 def private_exponent(p, q, public_exponent):
-    """Wykładnik prywatny d = e^-1 mod phi(n) dla liczb pierwszych p, q."""
+    """Wykładnik prywatny d = e^-1 mod phi(n) dla liczb pierwszych p, q"""
     return pow(public_exponent, -1, (p - 1) * (q - 1))
+
+def is_prime(value):
+    """Niezależna od biblioteki C kontrola pierwszości"""
+    if value < 2:
+        return False
+    if value % 2 == 0:
+        return value == 2
+    divisor = 3
+    while divisor * divisor <= value:
+        if value % divisor == 0:
+            return False
+        divisor += 2
+    return True
+
+
+def expected_dh_status(prime, generator, alice_secret, bob_secret):
+    """Oczekiwany status radh_dh_exchange_u32.
+
+    Kolejność walidacji z nagłówka: liczba pierwsza, generator, sekret Alice,
+    sekret Boba (wskaźnik NULL jest sprawdzany wcześniej)
+    """
+    if not is_prime(prime):
+        return "INVALID_PRIME"
+    if generator < 2 or generator >= prime:
+        return "INVALID_GENERATOR"
+    if alice_secret == 0 or bob_secret == 0:
+        return "INVALID_SECRET"
+    return "OK"
+
+
+def dh_exchange(prime, generator, alice_secret, bob_secret):
+    """Referencyjna wymiana DH z wbudowanym pow(): zwraca (A, B, K_A, K_B)"""
+    alice_public = pow(generator, alice_secret, prime)
+    bob_public = pow(generator, bob_secret, prime)
+    return (
+        alice_public,
+        bob_public,
+        pow(bob_public, alice_secret, prime),
+        pow(alice_public, bob_secret, prime),
+    )
