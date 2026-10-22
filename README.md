@@ -115,3 +115,9 @@ Oczekiwana odpowiedź:
 ```json
 {"ciphertext":2790}
 ```
+
+
+Backend obsługuje również `POST /api/v1/dh/demo/exchange`. Wymianę DH można
+wykonać przez Swagger UI pod <http://127.0.0.1:8000/docs>; przykład żądania,
+wynik `A=8, B=19, K=2` i kontrakt znajdują się w
+[backend/README.md](backend/README.md#wymiana-kluczy-dh--kontrakt-api-13-29).

@@ -5,8 +5,9 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException
 
-from .api import router
+from .api import dh_router, router
 from .crypto_core import (
     CryptoCoreCallError,
     CryptoCoreInputError,
@@ -20,18 +21,22 @@ app = FastAPI(
     title="RADH API",
     version="0.1.0",
     description=(
-        "API demonstratora RSA i Diffiego–Hellmana. Obecny endpoint RSA korzysta "
-        "z edukacyjnej biblioteki CryptoCore w C i nie zapewnia bezpieczeństwa "
+        "API demonstratora RSA i Diffiego–Hellmana. Endpointy RSA i DH korzystają "
+        "z edukacyjnej biblioteki CryptoCore w C i nie zapewniają bezpieczeństwa "
         "kryptograficznego."
     ),
 )
 app.include_router(router)
+app.include_router(dh_router)
 
 
-def _error_response(status_code: int, code: str, message: str) -> JSONResponse:
+def _error_response(
+    status_code: int, code: str, message: str, headers: dict[str, str] | None = None,
+) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
         content={"error": {"code": code, "message": message}},
+        headers=headers,
     )
 
 
@@ -57,10 +62,13 @@ async def crypto_core_call_error(
         "INVALID_MODULUS",
         "INVALID_EXPONENT",
         "MESSAGE_OUT_OF_RANGE",
+        "INVALID_PRIME",
+        "INVALID_GENERATOR",
+        "INVALID_SECRET",
     }:
         return _error_response(422, exception.code, exception.message)
     logger.error(
-        "Błąd kontraktu CryptoCore (status=%s): %s", exception.status, exception
+        "CryptoCore contract violation (status=%s): %s", exception.status, exception
     )
     return _error_response(
         500,
@@ -73,9 +81,29 @@ async def crypto_core_call_error(
 async def crypto_core_load_error(
     _request: Request, exception: CryptoCoreLoadError
 ) -> JSONResponse:
-    logger.error("Nie można uruchomić CryptoCore: %s", exception)
+    logger.error("Cannot load CryptoCore: %s", exception)
     return _error_response(
         503,
         "CRYPTO_CORE_UNAVAILABLE",
         "Biblioteka CryptoCore jest niedostępna.",
+    )
+
+
+_HTTP_ERRORS = {
+    400: ("BAD_REQUEST", "Nie można odczytać żądania."),
+    404: ("NOT_FOUND", "Nie znaleziono zasobu."),
+    405: ("METHOD_NOT_ALLOWED", "Metoda HTTP jest niedozwolona dla tego zasobu."),
+}
+
+
+@app.exception_handler(HTTPException)
+async def http_error(_request: Request, exception: HTTPException) -> JSONResponse:
+    """Wspólny format błędów HTTP, także generowanych przez router Starlette."""
+
+    code, message = _HTTP_ERRORS.get(
+        exception.status_code,
+        (f"HTTP_{exception.status_code}", "Nie można obsłużyć żądania."),
+    )
+    return _error_response(
+        exception.status_code, code, message, headers=exception.headers,
     )

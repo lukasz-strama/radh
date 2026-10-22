@@ -74,7 +74,6 @@ def test_unusual_requests_get_4xx_and_server_keeps_working(client, method, url, 
     assert 400 <= response.status_code < 500
     assert_server_still_works(client)
 
-@pytest.mark.xfail(strict=True, reason="DEFEKT: błędy frameworka mają inny format niż ErrorResponse")
 @pytest.mark.parametrize(
     "method,url,kwargs",
     [

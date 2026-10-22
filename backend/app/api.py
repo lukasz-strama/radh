@@ -6,10 +6,19 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from .crypto_core import CryptoCore
-from .models import ErrorResponse, RsaEncryptRequest, RsaEncryptResponse
+from .models import (
+    DhExchangeRequest, DhExchangeResponse,
+    ErrorResponse, RsaEncryptRequest, RsaEncryptResponse,
+)
 
 
-router = APIRouter(prefix="/api/v1/rsa", tags=["RSA"])
+HTTP_ERROR_RESPONSES = {
+    400: {"model": ErrorResponse, "description": "Nie można odczytać żądania"},
+    404: {"model": ErrorResponse, "description": "Nie znaleziono zasobu"},
+    405: {"model": ErrorResponse, "description": "Niedozwolona metoda HTTP"},
+}
+router = APIRouter(prefix="/api/v1/rsa", tags=["RSA"], responses=HTTP_ERROR_RESPONSES)
+dh_router = APIRouter(prefix="/api/v1/dh", tags=["DH"], responses=HTTP_ERROR_RESPONSES)
 
 
 @lru_cache(maxsize=1)
@@ -43,3 +52,34 @@ def encrypt_rsa(
         request.modulus,
     )
     return RsaEncryptResponse(ciphertext=ciphertext)
+
+
+@dh_router.post(
+    "/demo/exchange",
+    response_model=DhExchangeResponse,
+    summary="Edukacyjna wymiana kluczy Diffiego–Hellmana",
+    description=(
+        "Oblicza wartości publiczne i wspólny sekret obu stron w CryptoCore (C). "
+        "Wszystkie parametry muszą być całkowite i mieścić się w uint32. "
+        "Wymaga liczby pierwszej p, 2 <= g < p oraz dodatnich sekretów. "
+        "Nie sprawdza pierwotności generatora. Wyłącznie demonstracja edukacyjna."
+    ),
+    responses={
+        422: {"model": ErrorResponse, "description": "Niepoprawne dane wejściowe"},
+        500: {"model": ErrorResponse, "description": "Błąd kontraktu CryptoCore"},
+        503: {"model": ErrorResponse, "description": "CryptoCore jest niedostępny"},
+    },
+)
+def exchange_dh(
+    request: DhExchangeRequest,
+    crypto_core: Annotated[CryptoCore, Depends(get_crypto_core)],
+) -> DhExchangeResponse:
+    result = crypto_core.exchange(
+        request.prime, request.generator, request.alice_secret, request.bob_secret,
+    )
+    return DhExchangeResponse(
+        alice_public=result.alice_public,
+        bob_public=result.bob_public,
+        alice_shared_key=result.alice_shared_key,
+        bob_shared_key=result.bob_shared_key,
+    )
