@@ -91,6 +91,7 @@ export function DhExchange() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (isLoading) return
+    setState({ status: 'idle' })
 
     // Zbieramy wartości z pól formularza (po atrybucie `name`).
     const form = new FormData(event.currentTarget)
