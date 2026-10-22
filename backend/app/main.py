@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from .api import router
+from .api import dh_router, router
 from .crypto_core import (
     CryptoCoreCallError,
     CryptoCoreInputError,
@@ -20,12 +20,13 @@ app = FastAPI(
     title="RADH API",
     version="0.1.0",
     description=(
-        "API demonstratora RSA i Diffiego–Hellmana. Obecny endpoint RSA korzysta "
+        "API demonstratora RSA i Diffiego–Hellmana. Endpointy RSA i DH korzystają "
         "z edukacyjnej biblioteki CryptoCore w C i nie zapewnia bezpieczeństwa "
         "kryptograficznego."
     ),
 )
 app.include_router(router)
+app.include_router(dh_router)
 
 
 def _error_response(status_code: int, code: str, message: str) -> JSONResponse:
@@ -57,6 +58,9 @@ async def crypto_core_call_error(
         "INVALID_MODULUS",
         "INVALID_EXPONENT",
         "MESSAGE_OUT_OF_RANGE",
+        "INVALID_PRIME",
+        "INVALID_GENERATOR",
+        "INVALID_SECRET",
     }:
         return _error_response(422, exception.code, exception.message)
     logger.error(

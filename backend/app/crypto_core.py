@@ -21,6 +21,20 @@ class CryptoCoreStatus(IntEnum):
     INVALID_MODULUS = 2
     INVALID_EXPONENT = 3
     INVALID_MESSAGE = 4
+    INVALID_PRIME = 5
+    INVALID_GENERATOR = 6
+    INVALID_SECRET = 7
+
+
+class DhExchangeResult(ctypes.Structure):
+    """Układ pamięci radh_dh_exchange_result_t z publicznego nagłówka C."""
+
+    _fields_ = [
+        ("alice_public", ctypes.c_uint32),
+        ("bob_public", ctypes.c_uint32),
+        ("alice_shared_key", ctypes.c_uint32),
+        ("bob_shared_key", ctypes.c_uint32),
+    ]
 
 
 class CryptoCoreLoadError(RuntimeError):
@@ -42,6 +56,15 @@ class CryptoCoreCallError(RuntimeError):
 
 
 _STATUS_ERRORS = {
+    CryptoCoreStatus.INVALID_PRIME: (
+        "INVALID_PRIME", "Parametr prime musi być liczbą pierwszą.",
+    ),
+    CryptoCoreStatus.INVALID_GENERATOR: (
+        "INVALID_GENERATOR", "Generator musi spełniać 2 <= generator < prime.",
+    ),
+    CryptoCoreStatus.INVALID_SECRET: (
+        "INVALID_SECRET", "Sekrety Alice i Boba muszą być większe od 0.",
+    ),
     CryptoCoreStatus.INVALID_POINTER: (
         "INTERNAL_ERROR",
         "Backend przekazał niepoprawny wskaźnik wyniku.",
@@ -146,6 +169,23 @@ class CryptoCore:
         self._library = library
         self._encrypt = encrypt
 
+        try:
+            exchange = library.radh_dh_exchange_u32
+        except AttributeError as exc:
+            raise CryptoCoreLoadError(
+                "Biblioteka CryptoCore nie eksportuje funkcji radh_dh_exchange_u32. "
+                "Zbuduj ponownie bibliotekę C."
+            ) from exc
+        exchange.argtypes = [
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.POINTER(DhExchangeResult),
+        ]
+        exchange.restype = ctypes.c_int
+        self._exchange = exchange
+
     def encrypt(self, message: int, public_exponent: int, modulus: int) -> int:
         """Wywołaj C: message^public_exponent mod modulus."""
 
@@ -160,6 +200,32 @@ class CryptoCore:
             ctypes.c_uint32(modulus),
             ctypes.byref(ciphertext),
         )
+        self._check_status(raw_status)
+        return ciphertext.value
+
+    def exchange(
+        self, prime: int, generator: int, alice_secret: int, bob_secret: int
+    ) -> DhExchangeResult:
+        """Wywołaj wymianę DH w C; Python sprawdza wyłącznie typ i zakres ABI."""
+
+        for name, value in (
+            ("prime", prime), ("generator", generator),
+            ("alice_secret", alice_secret), ("bob_secret", bob_secret),
+        ):
+            _require_uint32(name, value)
+        result = DhExchangeResult()
+        raw_status = self._exchange(
+            ctypes.c_uint32(prime), ctypes.c_uint32(generator),
+            ctypes.c_uint32(alice_secret), ctypes.c_uint32(bob_secret),
+            ctypes.byref(result),
+        )
+        self._check_status(raw_status)
+        return result
+
+    @staticmethod
+    def _check_status(raw_status: int) -> None:
+        """Przetłumacz status ABI na kontrolowany wyjątek adaptera."""
+
         try:
             status = CryptoCoreStatus(raw_status)
         except ValueError as exc:
@@ -170,7 +236,7 @@ class CryptoCore:
             ) from exc
 
         if status is CryptoCoreStatus.OK:
-            return ciphertext.value
+            return
 
         code, message = _STATUS_ERRORS[status]
         raise CryptoCoreCallError(int(status), code, message)

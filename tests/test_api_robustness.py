@@ -242,3 +242,23 @@ def test_live_server_matches_reference_for_valid_requests(live_server):
         response = httpx.post(base_url + API_URL, json=body, timeout=5)
         assert response.status_code == 200
         assert response.json()["ciphertext"] == reference.rsa_encrypt(**body)
+
+
+@pytest.mark.live
+def test_live_dh_exchange_and_validation(live_server):
+    """Wymiana DH przez prawdziwy serwer oraz RSA po błędnym żądaniu DH."""
+    _process, base_url, _port = live_server
+    url = base_url + "/api/v1/dh/demo/exchange"
+    data = {"prime": 23, "generator": 5, "alice_secret": 6, "bob_secret": 15}
+    response = httpx.post(url, json=data, timeout=5)
+    assert response.status_code == 200
+    assert response.json() == {
+        "alice_public": 8, "bob_public": 19, "alice_shared_key": 2, "bob_shared_key": 2,
+    }
+    response = httpx.post(url, json={**data, "prime": 25}, timeout=5)
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "INVALID_PRIME"
+    assert httpx.get(base_url + "/docs", timeout=5).status_code == 200
+    response = httpx.post(base_url + API_URL, json=BASE, timeout=5)
+    assert response.status_code == 200
+    assert response.json() == {"ciphertext": EXPECTED_CIPHERTEXT}

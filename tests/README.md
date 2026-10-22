@@ -1,7 +1,7 @@
 ## Testy
 
 Testy sprawdzają rzeczywistą bibliotekę C (przez `ctypes`) oraz endpoint
-`POST /api/v1/rsa/demo/encrypt`. Obejmują poprawne i błędne dane
+`POST /api/v1/rsa/demo/encrypt` i `POST /api/v1/dh/demo/exchange`. Obejmują poprawne i błędne dane
 (`modulus=0`, `public_exponent=0`, `message ≥ modulus`, wartości spoza zakresu
 uint32) i porównują wyniki z `pow()` z Pythona.
 
@@ -46,6 +46,7 @@ python -m pytest tests/test_core_valid.py -v
 | `tests/test_core_valid.py` | poprawne parametry RSA, szyfrowanie i deszyfrowanie, znane wartości |
 | `tests/test_core_invalid.py` | błędne parametry, kolejność walidacji, wskaźnik `NULL`, niezmieniony wynik po błędzie |
 | `tests/test_core_vs_reference.py` | porównanie z `pow()`: losowe i graniczne dane |
+| `tests/test_api_dh.py` | DH: rzeczywista biblioteka C, wektor #13, granice uint32, walidacja, statusy, Swagger i równoległość |
 | `tests/test_api_rsa.py` | endpoint FastAPI: wyniki, kody błędów, format odpowiedzi |
 | `tests/test_api_robustness.py` | serwer po błędnych żądaniach, brak biblioteki (503), prawdziwy proces `uvicorn` |
 
