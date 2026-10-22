@@ -1,0 +1,426 @@
+{
+  "valid": [
+    {
+      "id": "reference_vector",
+      "prime": 23,
+      "generator": 5,
+      "alice_secret": 6,
+      "bob_secret": 15,
+      "alice_public": 8,
+      "bob_public": 19,
+      "shared_key": 2
+    },
+    {
+      "id": "textbook_p13_g2",
+      "prime": 13,
+      "generator": 2,
+      "alice_secret": 3,
+      "bob_secret": 5,
+      "alice_public": 8,
+      "bob_public": 6,
+      "shared_key": 8
+    },
+    {
+      "id": "smallest_prime_p3",
+      "prime": 3,
+      "generator": 2,
+      "alice_secret": 1,
+      "bob_secret": 1,
+      "alice_public": 2,
+      "bob_public": 2,
+      "shared_key": 2
+    },
+    {
+      "id": "p5_g4_secrets_1",
+      "prime": 5,
+      "generator": 4,
+      "alice_secret": 1,
+      "bob_secret": 1,
+      "alice_public": 4,
+      "bob_public": 4,
+      "shared_key": 4
+    },
+    {
+      "id": "p7_g3_primitive_root",
+      "prime": 7,
+      "generator": 3,
+      "alice_secret": 2,
+      "bob_secret": 5,
+      "alice_public": 2,
+      "bob_public": 5,
+      "shared_key": 4
+    },
+    {
+      "id": "p11_g2",
+      "prime": 11,
+      "generator": 2,
+      "alice_secret": 7,
+      "bob_secret": 9,
+      "alice_public": 7,
+      "bob_public": 6,
+      "shared_key": 8
+    },
+    {
+      "id": "generator_is_p_minus_1",
+      "prime": 23,
+      "generator": 22,
+      "alice_secret": 6,
+      "bob_secret": 15,
+      "alice_public": 1,
+      "bob_public": 22,
+      "shared_key": 1
+    },
+    {
+      "id": "secrets_multiple_of_order",
+      "prime": 23,
+      "generator": 5,
+      "alice_secret": 22,
+      "bob_secret": 44,
+      "alice_public": 1,
+      "bob_public": 1,
+      "shared_key": 1
+    },
+    {
+      "id": "equal_secrets",
+      "prime": 23,
+      "generator": 5,
+      "alice_secret": 9,
+      "bob_secret": 9,
+      "alice_public": 11,
+      "bob_public": 11,
+      "shared_key": 19
+    },
+    {
+      "id": "p65537_fermat_prime",
+      "prime": 65537,
+      "generator": 3,
+      "alice_secret": 12345,
+      "bob_secret": 54321,
+      "alice_public": 40360,
+      "bob_public": 21002,
+      "shared_key": 65037
+    },
+    {
+      "id": "p65521_largest_16bit",
+      "prime": 65521,
+      "generator": 17,
+      "alice_secret": 40000,
+      "bob_secret": 50001,
+      "alice_public": 33572,
+      "bob_public": 18335,
+      "shared_key": 54640
+    },
+    {
+      "id": "mersenne_p2_31_minus_1",
+      "prime": 2147483647,
+      "generator": 7,
+      "alice_secret": 123456789,
+      "bob_secret": 987654321,
+      "alice_public": 510444705,
+      "bob_public": 1018773341,
+      "shared_key": 366175671
+    },
+    {
+      "id": "largest_uint32_prime",
+      "prime": 4294967291,
+      "generator": 2,
+      "alice_secret": 3,
+      "bob_secret": 5,
+      "alice_public": 8,
+      "bob_public": 32,
+      "shared_key": 32768
+    },
+    {
+      "id": "largest_prime_max_secrets",
+      "prime": 4294967291,
+      "generator": 2,
+      "alice_secret": 4294967295,
+      "bob_secret": 4294967295,
+      "alice_public": 32,
+      "bob_public": 32,
+      "shared_key": 33554432
+    },
+    {
+      "id": "largest_prime_g_p_minus_1",
+      "prime": 4294967291,
+      "generator": 4294967290,
+      "alice_secret": 4294967295,
+      "bob_secret": 4294967294,
+      "alice_public": 4294967290,
+      "bob_public": 1,
+      "shared_key": 1
+    },
+    {
+      "id": "largest_prime_large_generator",
+      "prime": 4294967291,
+      "generator": 4294967289,
+      "alice_secret": 3000000000,
+      "bob_secret": 4000000000,
+      "alice_public": 1370018189,
+      "bob_public": 3683567776,
+      "shared_key": 896930065
+    },
+    {
+      "id": "secrets_1_and_max",
+      "prime": 4294967291,
+      "generator": 123456789,
+      "alice_secret": 1,
+      "bob_secret": 4294967295,
+      "alice_public": 123456789,
+      "bob_public": 1988663416,
+      "shared_key": 1988663416
+    },
+    {
+      "id": "mersenne_g_p_minus_1",
+      "prime": 2147483647,
+      "generator": 2147483646,
+      "alice_secret": 4294967295,
+      "bob_secret": 4294967295,
+      "alice_public": 2147483646,
+      "bob_public": 2147483646,
+      "shared_key": 2147483646
+    }
+  ],
+  "invalid": [
+    {
+      "id": "prime_zero",
+      "prime": 0,
+      "generator": 5,
+      "alice_secret": 6,
+      "bob_secret": 15,
+      "status": "INVALID_PRIME"
+    },
+    {
+      "id": "prime_one",
+      "prime": 1,
+      "generator": 5,
+      "alice_secret": 6,
+      "bob_secret": 15,
+      "status": "INVALID_PRIME"
+    },
+    {
+      "id": "prime_four",
+      "prime": 4,
+      "generator": 2,
+      "alice_secret": 3,
+      "bob_secret": 5,
+      "status": "INVALID_PRIME"
+    },
+    {
+      "id": "prime_nine",
+      "prime": 9,
+      "generator": 2,
+      "alice_secret": 3,
+      "bob_secret": 5,
+      "status": "INVALID_PRIME"
+    },
+    {
+      "id": "prime_fifteen",
+      "prime": 15,
+      "generator": 2,
+      "alice_secret": 3,
+      "bob_secret": 5,
+      "status": "INVALID_PRIME"
+    },
+    {
+      "id": "prime_even_large",
+      "prime": 2147483648,
+      "generator": 2,
+      "alice_secret": 3,
+      "bob_secret": 5,
+      "status": "INVALID_PRIME"
+    },
+    {
+      "id": "carmichael_561",
+      "prime": 561,
+      "generator": 2,
+      "alice_secret": 3,
+      "bob_secret": 5,
+      "status": "INVALID_PRIME"
+    },
+    {
+      "id": "carmichael_41041",
+      "prime": 41041,
+      "generator": 2,
+      "alice_secret": 3,
+      "bob_secret": 5,
+      "status": "INVALID_PRIME"
+    },
+    {
+      "id": "strong_pseudoprime_3215031751",
+      "prime": 3215031751,
+      "generator": 2,
+      "alice_secret": 3,
+      "bob_secret": 5,
+      "status": "INVALID_PRIME"
+    },
+    {
+      "id": "square_of_largest_16bit_prime",
+      "prime": 4293001441,
+      "generator": 2,
+      "alice_secret": 3,
+      "bob_secret": 5,
+      "status": "INVALID_PRIME"
+    },
+    {
+      "id": "uint32_max_is_composite",
+      "prime": 4294967295,
+      "generator": 2,
+      "alice_secret": 3,
+      "bob_secret": 5,
+      "status": "INVALID_PRIME"
+    },
+    {
+      "id": "product_of_two_16bit_primes",
+      "prime": 4294049777,
+      "generator": 2,
+      "alice_secret": 3,
+      "bob_secret": 5,
+      "status": "INVALID_PRIME"
+    },
+    {
+      "id": "prime_two_has_no_valid_generator",
+      "prime": 2,
+      "generator": 2,
+      "alice_secret": 3,
+      "bob_secret": 5,
+      "status": "INVALID_GENERATOR"
+    },
+    {
+      "id": "generator_zero",
+      "prime": 23,
+      "generator": 0,
+      "alice_secret": 6,
+      "bob_secret": 15,
+      "status": "INVALID_GENERATOR"
+    },
+    {
+      "id": "generator_one",
+      "prime": 23,
+      "generator": 1,
+      "alice_secret": 6,
+      "bob_secret": 15,
+      "status": "INVALID_GENERATOR"
+    },
+    {
+      "id": "generator_equals_prime",
+      "prime": 23,
+      "generator": 23,
+      "alice_secret": 6,
+      "bob_secret": 15,
+      "status": "INVALID_GENERATOR"
+    },
+    {
+      "id": "generator_above_prime",
+      "prime": 23,
+      "generator": 24,
+      "alice_secret": 6,
+      "bob_secret": 15,
+      "status": "INVALID_GENERATOR"
+    },
+    {
+      "id": "generator_uint32_max",
+      "prime": 23,
+      "generator": 4294967295,
+      "alice_secret": 6,
+      "bob_secret": 15,
+      "status": "INVALID_GENERATOR"
+    },
+    {
+      "id": "generator_equals_largest_prime",
+      "prime": 4294967291,
+      "generator": 4294967291,
+      "alice_secret": 3,
+      "bob_secret": 5,
+      "status": "INVALID_GENERATOR"
+    },
+    {
+      "id": "generator_above_largest_prime",
+      "prime": 4294967291,
+      "generator": 4294967292,
+      "alice_secret": 3,
+      "bob_secret": 5,
+      "status": "INVALID_GENERATOR"
+    },
+    {
+      "id": "generator_uint32_max_largest_prime",
+      "prime": 4294967291,
+      "generator": 4294967295,
+      "alice_secret": 3,
+      "bob_secret": 5,
+      "status": "INVALID_GENERATOR"
+    },
+    {
+      "id": "alice_secret_zero",
+      "prime": 23,
+      "generator": 5,
+      "alice_secret": 0,
+      "bob_secret": 15,
+      "status": "INVALID_SECRET"
+    },
+    {
+      "id": "bob_secret_zero",
+      "prime": 23,
+      "generator": 5,
+      "alice_secret": 6,
+      "bob_secret": 0,
+      "status": "INVALID_SECRET"
+    },
+    {
+      "id": "both_secrets_zero",
+      "prime": 23,
+      "generator": 5,
+      "alice_secret": 0,
+      "bob_secret": 0,
+      "status": "INVALID_SECRET"
+    },
+    {
+      "id": "alice_secret_zero_largest_prime",
+      "prime": 4294967291,
+      "generator": 2,
+      "alice_secret": 0,
+      "bob_secret": 4294967295,
+      "status": "INVALID_SECRET"
+    },
+    {
+      "id": "bob_secret_zero_largest_prime",
+      "prime": 4294967291,
+      "generator": 2,
+      "alice_secret": 4294967295,
+      "bob_secret": 0,
+      "status": "INVALID_SECRET"
+    },
+    {
+      "id": "prime_wins_over_generator",
+      "prime": 4,
+      "generator": 0,
+      "alice_secret": 0,
+      "bob_secret": 0,
+      "status": "INVALID_PRIME"
+    },
+    {
+      "id": "prime_wins_over_secret",
+      "prime": 15,
+      "generator": 5,
+      "alice_secret": 0,
+      "bob_secret": 0,
+      "status": "INVALID_PRIME"
+    },
+    {
+      "id": "generator_wins_over_secret",
+      "prime": 23,
+      "generator": 1,
+      "alice_secret": 0,
+      "bob_secret": 0,
+      "status": "INVALID_GENERATOR"
+    },
+    {
+      "id": "generator_wins_over_secret_2",
+      "prime": 23,
+      "generator": 23,
+      "alice_secret": 0,
+      "bob_secret": 0,
+      "status": "INVALID_GENERATOR"
+    }
+  ]
+}
