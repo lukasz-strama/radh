@@ -333,22 +333,42 @@
   --party-color: #1f9d55;
 }
 
-/* Panel kroków */
-.dh-controls h2 {
+/* Wizualizacja przed pierwszym wynikiem lub w trakcie obliczania */
+.dh-placeholder {
+  padding: 24px;
+  color: #888;
+  text-align: center;
+  border: 2px dashed #888;
+  border-radius: 8px;
+}
+
+/* Panel: formularz parametrów, pod nim etapy */
+.dh-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dh-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 16px;
+  border-top: 2px solid #888;
+}
+
+.dh-steps h2 {
   font-size: 1.1rem;
 }
 
-.dh-controls p {
+.dh-steps p {
   margin: 8px 0 0;
 }
 
-.dh-step-counter {
+.dh-steps .dh-step-counter {
+  margin: 0 0 4px;
   font-size: 0.875rem;
   color: #888;
-}
-
-.dh-controls .dh-step-counter {
-  margin: 0 0 4px;
 }
 
 .dh-step-buttons {
@@ -363,23 +383,4 @@
 /* Nieaktywny przycisk to nie „czekaj”, tylko brak kolejnego kroku */
 .dh-step-buttons button:disabled {
   cursor: not-allowed;
-}
-
-/* Ładowanie i błąd w zakładce DH */
-.dh-status {
-  color: #888;
-}
-
-.dh-error {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.dh-error button {
-  padding: 6px 12px;
-  font: inherit;
-  cursor: pointer;
 }

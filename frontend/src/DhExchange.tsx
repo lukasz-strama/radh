@@ -1,19 +1,23 @@
 // Widok wymiany kluczy Diffiego–Hellmana (PBI-010, #14).
-// Frontend niczego nie liczy: wyświetla wartości, które dostaje.
+// Frontend niczego nie liczy: wysyła parametry do backendu i wyświetla odpowiedź.
 
 import { useState } from 'react'
-import type { ReactNode } from 'react'
+import type { FormEvent, ReactNode } from 'react'
+import { ApiError, exchangeDh } from './api'
+import { Field } from './Field'
+import { validateDhInput } from './validation'
+import type { DhField, DhFieldErrors } from './validation'
 
 type Party = 'alice' | 'bob'
 
 // Wartości jednej strony wymiany.
-export type DhPartyData = {
+type DhPartyData = {
   privateKey: number
   publicValue: number
   sharedSecret: number
 }
 
-export type DhExchangeData = {
+type DhExchangeData = {
   p: number
   g: number
   alice: DhPartyData
@@ -61,107 +65,199 @@ const STEP_PUBLIC = 2
 const STEP_EXCHANGE = 3
 const STEP_SECRET = 4
 
-// Stan danych do wizualizacji. Przy błędzie nie pokazujemy żadnych wartości,
+// Stan zakładki. Przy błędzie nie pokazujemy żadnych wartości,
 // żeby nie wyświetlić niepoprawnego wyniku.
-export type DhState =
+type DhState =
+  | { status: 'idle' }
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'ready'; data: DhExchangeData }
 
-type DhExchangeProps = {
-  state: DhState
-  onRetry?: () => void
+// Wartości startowe formularza: przykład z kryteriów akceptacji #14.
+const DEFAULTS: Record<DhField, string> = {
+  prime: '23',
+  generator: '5',
+  alice_secret: '6',
+  bob_secret: '15',
 }
 
-export function DhExchange({ state, onRetry }: DhExchangeProps) {
+export function DhExchange() {
+  const [fieldErrors, setFieldErrors] = useState<DhFieldErrors>({})
+  const [state, setState] = useState<DhState>({ status: 'idle' })
+  const [step, setStep] = useState(0)
+  const isLoading = state.status === 'loading'
+  const isLast = step === STEPS.length - 1
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (isLoading) return
+
+    // Zbieramy wartości z pól formularza (po atrybucie `name`).
+    const form = new FormData(event.currentTarget)
+    const validation = validateDhInput({
+      prime: String(form.get('prime') ?? ''),
+      generator: String(form.get('generator') ?? ''),
+      alice_secret: String(form.get('alice_secret') ?? ''),
+      bob_secret: String(form.get('bob_secret') ?? ''),
+    })
+
+    if (!validation.ok) {
+      setFieldErrors(validation.errors)
+      return
+    }
+    setFieldErrors({})
+
+    // Stary wynik znika od razu, żeby nie mieszał się z nowymi parametrami.
+    setState({ status: 'loading' })
+    try {
+      const request = validation.data
+      const response = await exchangeDh(request)
+      // p, g i sekrety pochodzą z wysłanego żądania, reszta wyłącznie z backendu.
+      setState({
+        status: 'ready',
+        data: {
+          p: request.prime,
+          g: request.generator,
+          alice: {
+            privateKey: request.alice_secret,
+            publicValue: response.alice_public,
+            sharedSecret: response.alice_shared_key,
+          },
+          bob: {
+            privateKey: request.bob_secret,
+            publicValue: response.bob_public,
+            sharedSecret: response.bob_shared_key,
+          },
+        },
+      })
+      setStep(0)
+    } catch (error) {
+      setState({
+        status: 'error',
+        message: error instanceof ApiError ? error.message : 'Wystąpił nieoczekiwany błąd.',
+      })
+    }
+  }
+
   return (
     <div className="dh">
       <h1>RADH – wymiana kluczy Diffiego–Hellmana</h1>
 
-      {state.status === 'loading' && (
-        <p className="dh-status" role="status">
-          Pobieranie danych z backendu…
-        </p>
-      )}
-
-      {state.status === 'error' && (
-        <div className="api-error dh-error" role="alert">
-          <p>{state.message}</p>
-          {onRetry && (
-            <button type="button" onClick={onRetry}>
-              Spróbuj ponownie
-            </button>
+      <div className="layout">
+        <section className="dh-scene" aria-label="Wizualizacja wymiany">
+          {state.status === 'ready' ? (
+            <DhVisualization data={state.data} step={step} />
+          ) : (
+            <p className="dh-placeholder">
+              {isLoading
+                ? 'Obliczanie…'
+                : 'Podaj parametry i kliknij „Oblicz”, aby zobaczyć wymianę kluczy.'}
+            </p>
           )}
-        </div>
-      )}
+        </section>
 
-      {/* Nowe dane montują wizualizację od nowa, więc etapy zaczynają się od 1 */}
-      {state.status === 'ready' && <DhWalkthrough data={state.data} />}
+        <aside className="panel" aria-label="Parametry i etapy">
+          {/* noValidate: walidację robimy sami, z polskimi komunikatami. */}
+          <form className="dh-form" onSubmit={handleSubmit} noValidate>
+            <Field
+              name="prime"
+              label="Liczba pierwsza (p)"
+              error={fieldErrors.prime}
+              defaultValue={DEFAULTS.prime}
+            />
+            <Field
+              name="generator"
+              label="Generator (g)"
+              error={fieldErrors.generator}
+              defaultValue={DEFAULTS.generator}
+            />
+            <Field
+              name="alice_secret"
+              label="Klucz prywatny Alice (a)"
+              error={fieldErrors.alice_secret}
+              defaultValue={DEFAULTS.alice_secret}
+            />
+            <Field
+              name="bob_secret"
+              label="Klucz prywatny Boba (b)"
+              error={fieldErrors.bob_secret}
+              defaultValue={DEFAULTS.bob_secret}
+            />
+
+            <button type="submit" disabled={isLoading} aria-busy={isLoading}>
+              {isLoading ? 'Obliczanie…' : 'Oblicz'}
+            </button>
+
+            {state.status === 'error' && (
+              <p className="api-error" role="alert">
+                {state.message}
+              </p>
+            )}
+          </form>
+
+          {state.status === 'ready' && (
+            <div className="dh-steps">
+              <div aria-live="polite">
+                <p className="dh-step-counter">
+                  Krok {step + 1} z {STEPS.length}
+                </p>
+                <h2>{STEPS[step].title}</h2>
+                <p>{STEPS[step].description}</p>
+              </div>
+
+              <div className="dh-step-buttons">
+                <button type="button" onClick={() => setStep(step - 1)} disabled={step === 0}>
+                  Wstecz
+                </button>
+                <button type="button" onClick={() => setStep(step + 1)} disabled={isLast}>
+                  Dalej
+                </button>
+              </div>
+            </div>
+          )}
+        </aside>
+      </div>
     </div>
   )
 }
 
-type DhWalkthroughProps = {
+type DhVisualizationProps = {
   data: DhExchangeData
+  step: number
 }
 
-// Wizualizacja z panelem etapów.
-function DhWalkthrough({ data }: DhWalkthroughProps) {
-  const [step, setStep] = useState(0)
-  const isLast = step === STEPS.length - 1
-
+// Parametry wspólne, panele Alice i Boba oraz kanał publiczny.
+function DhVisualization({ data, step }: DhVisualizationProps) {
   return (
-    <div className="layout">
-      <section className="dh-scene" aria-label="Wizualizacja wymiany">
-        {/* Parametry znane obu stronom (i każdemu, kto podsłuchuje) */}
-        <section className="dh-shared" aria-labelledby="dh-shared-title">
-          <h2 id="dh-shared-title">Parametry wspólne</h2>
-          <p className="formula">
-            p = <output>{data.p}</output>
-          </p>
-          <p className="formula">
-            g = <output>{data.g}</output>
-          </p>
-        </section>
-
-        <div className="dh-parties">
-          <PartyPanel party="alice" data={data} step={step} />
-
-          {/* Kanał publiczny: na etapie wymiany pokazuje przesyłane A i B */}
-          <div className="dh-channel">
-            <span className="dh-channel-label">kanał publiczny</span>
-            {step >= STEP_EXCHANGE && (
-              <>
-                <Packet from="alice" value={data.alice.publicValue} />
-                <Packet from="bob" value={data.bob.publicValue} />
-              </>
-            )}
-          </div>
-
-          <PartyPanel party="bob" data={data} step={step} />
-        </div>
+    <>
+      {/* Parametry znane obu stronom (i każdemu, kto podsłuchuje) */}
+      <section className="dh-shared" aria-labelledby="dh-shared-title">
+        <h2 id="dh-shared-title">Parametry wspólne</h2>
+        <p className="formula">
+          p = <output>{data.p}</output>
+        </p>
+        <p className="formula">
+          g = <output>{data.g}</output>
+        </p>
       </section>
 
-      {/* Panel sterowania krokami */}
-      <aside className="panel dh-controls" aria-label="Sterowanie etapami">
-        <div aria-live="polite">
-          <p className="dh-step-counter">
-            Krok {step + 1} z {STEPS.length}
-          </p>
-          <h2>{STEPS[step].title}</h2>
-          <p>{STEPS[step].description}</p>
+      <div className="dh-parties">
+        <PartyPanel party="alice" data={data} step={step} />
+
+        {/* Kanał publiczny: na etapie wymiany pokazuje przesyłane A i B */}
+        <div className="dh-channel">
+          <span className="dh-channel-label">kanał publiczny</span>
+          {step >= STEP_EXCHANGE && (
+            <>
+              <Packet from="alice" value={data.alice.publicValue} />
+              <Packet from="bob" value={data.bob.publicValue} />
+            </>
+          )}
         </div>
 
-        <div className="dh-step-buttons">
-          <button type="button" onClick={() => setStep(step - 1)} disabled={step === 0}>
-            Wstecz
-          </button>
-          <button type="button" onClick={() => setStep(step + 1)} disabled={isLast}>
-            Dalej
-          </button>
-        </div>
-      </aside>
-    </div>
+        <PartyPanel party="bob" data={data} step={step} />
+      </div>
+    </>
   )
 }
 

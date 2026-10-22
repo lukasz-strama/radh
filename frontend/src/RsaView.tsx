@@ -3,7 +3,8 @@ import type { FormEvent } from 'react'
 import { ApiError, encryptRsa } from './api'
 import type { RsaEncryptRequest } from './api'
 import { validateRsaInput } from './validation'
-import type { FieldErrors, RsaField } from './validation'
+import type { FieldErrors } from './validation'
+import { Field } from './Field'
 
 // Wynik szyfrowania razem z parametrami, które faktycznie zostały wysłane.
 // (Pola formularza mogą się zmienić po kliknięciu, więc nie bierzemy ich z pól.)
@@ -99,33 +100,5 @@ export function RsaView() {
         </form>
       </div>
     </>
-  )
-}
-
-type FieldProps = {
-  name: RsaField
-  label: string
-  error?: string
-}
-
-// Pojedyncze pole liczbowe z etykietą i komunikatem błędu pod spodem.
-function Field({ name, label, error }: FieldProps) {
-  const errorId = `${name}-error`
-  return (
-    <label>
-      {label}
-      <input
-        name={name}
-        type="text"
-        inputMode="numeric"
-        aria-invalid={error ? true : undefined}
-        aria-describedby={error ? errorId : undefined}
-      />
-      {error && (
-        <span className="field-error" id={errorId}>
-          {error}
-        </span>
-      )}
-    </label>
   )
 }

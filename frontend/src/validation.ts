@@ -5,7 +5,7 @@
 //   message:         0 .. modulus - 1
 // Backend i tak sprawdza wszystko sam – tutaj chodzi o szybkie, czytelne komunikaty.
 
-import type { RsaEncryptRequest } from './api'
+import type { DhExchangeRequest, RsaEncryptRequest } from './api'
 
 const UINT32_MAX = 4_294_967_295
 
@@ -60,6 +60,65 @@ export function validateRsaInput(raw: Record<RsaField, string>): ValidationResul
       message: message as number,
       public_exponent: publicExponent as number,
       modulus: modulus as number,
+    },
+  }
+}
+
+// Walidacja danych wymiany DH. Zakresy jak w backendzie (uint32):
+//   prime:        liczba pierwsza – pierwszość sprawdza backend
+//   generator:    2 .. prime - 1
+//   alice_secret: 1 .. 4 294 967 295 (może być >= prime)
+//   bob_secret:   1 .. 4 294 967 295
+
+export type DhField = keyof DhExchangeRequest
+export type DhFieldErrors = Partial<Record<DhField, string>>
+
+export type DhValidationResult =
+  | { ok: true; data: DhExchangeRequest }
+  | { ok: false; errors: DhFieldErrors }
+
+export function validateDhInput(raw: Record<DhField, string>): DhValidationResult {
+  const errors: DhFieldErrors = {}
+
+  const prime = parseUint32(raw.prime)
+  const generator = parseUint32(raw.generator)
+  const aliceSecret = parseUint32(raw.alice_secret)
+  const bobSecret = parseUint32(raw.bob_secret)
+
+  if (typeof prime === 'string') errors.prime = prime
+  if (typeof generator === 'string') errors.generator = generator
+  if (typeof aliceSecret === 'string') errors.alice_secret = aliceSecret
+  if (typeof bobSecret === 'string') errors.bob_secret = bobSecret
+
+  if (typeof prime === 'number' && prime < 3) {
+    errors.prime = 'Liczba pierwsza p musi być co najmniej równa 3.'
+  }
+  if (typeof generator === 'number' && generator < 2) {
+    errors.generator = 'Generator g musi być co najmniej równy 2.'
+  } else if (
+    typeof generator === 'number' &&
+    typeof prime === 'number' &&
+    !errors.prime &&
+    generator >= prime
+  ) {
+    errors.generator = 'Generator g musi być mniejszy od p.'
+  }
+  if (typeof aliceSecret === 'number' && aliceSecret < 1) {
+    errors.alice_secret = 'Sekret musi być większy od 0.'
+  }
+  if (typeof bobSecret === 'number' && bobSecret < 1) {
+    errors.bob_secret = 'Sekret musi być większy od 0.'
+  }
+
+  if (Object.keys(errors).length > 0) return { ok: false, errors }
+
+  return {
+    ok: true,
+    data: {
+      prime: prime as number,
+      generator: generator as number,
+      alice_secret: aliceSecret as number,
+      bob_secret: bobSecret as number,
     },
   }
 }
