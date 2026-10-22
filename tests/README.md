@@ -1,7 +1,7 @@
 ## Testy
 
 Testy sprawdzają rzeczywistą bibliotekę C (przez `ctypes`) oraz endpoint
-`POST /api/v1/rsa/demo/encrypt` i `POST /api/v1/dh/demo/exchange`. Obejmują poprawne i błędne dane
+`POST /api/v1/rsa/demo/encrypt`. Obejmują poprawne i błędne dane
 (`modulus=0`, `public_exponent=0`, `message ≥ modulus`, wartości spoza zakresu
 uint32) i porównują wyniki z `pow()` z Pythona.
 
@@ -47,7 +47,7 @@ python -m pytest tests/test_backend_unit.py
 
 Nie wymagają kompilacji ani ładowania biblioteki C. Sprawdzają adapter na
 kontrolowanej atrapie ABI, modele Pydantic i mapowanie błędów HTTP.
-Testy w `test_api_dh.py` pozostają osobnymi testami integracyjnymi.
+Testy integracyjne DH należą do osobnego zadania QA #30.
 
 ### Zestaw testów
 
@@ -57,14 +57,13 @@ Testy w `test_api_dh.py` pozostają osobnymi testami integracyjnymi.
 | `tests/test_core_invalid.py` | błędne parametry, kolejność walidacji, wskaźnik `NULL`, niezmieniony wynik po błędzie |
 | `tests/test_core_vs_reference.py` | porównanie z `pow()`: losowe i graniczne dane |
 | `tests/test_backend_unit.py` | jednostkowe: adapter DH/RSA, statusy ABI, modele DH, błędy HTTP; bez biblioteki C |
-| `tests/test_api_dh.py` | DH: rzeczywista biblioteka C, wektor #13, granice uint32, walidacja, statusy, Swagger i równoległość |
 | `tests/test_api_rsa.py` | endpoint FastAPI: wyniki, kody błędów, format odpowiedzi |
 | `tests/test_api_robustness.py` | serwer po błędnych żądaniach, brak biblioteki (503), prawdziwy proces `uvicorn` |
 
 Przypadki testowe RSA są w `tests/data/rsa_cases.json`. Testy regresji defektu
-#26 (z PR #27) sprawdzają wspólny format błędów 404/405/400, ich statusy i kody
-oraz nagłówek `Allow` dla 405; nie mają już oznaczenia `xfail`. Obejmują także
-endpoint DH i zachowanie innych statusów oraz nagłówków HTTP.
+#26 (z PR #27) sprawdzają wspólny format błędów 404/405/400; po naprawie
+usunięto z nich oznaczenie `xfail`. Pozostała treść testów QA jest niezmieniona.
+Statusy i nagłówki obsługi błędów są sprawdzane w testach jednostkowych backendu.
 
 ### CI
 

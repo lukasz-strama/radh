@@ -167,5 +167,6 @@ python3 -c 'print("{\"message\":" + "9" * 5000 + ",\"public_exponent\":17,\"modu
 
 Kryteria automatycznie sprawdza `test_framework_errors_use_common_error_format`
 w `tests/test_api_robustness.py` (testy z PR #27, usunięte `xfail`).
-Dodatkowe testy obejmują DH, nagłówki HTTP i schematy OpenAPI. Po błędnych
-żądaniach poprawne szyfrowanie RSA nadal zwraca 2790.
+Testy jednostkowe w `tests/test_backend_unit.py` sprawdzają adapter DH/RSA,
+modele DH, mapowanie statusów i zachowanie nagłówków HTTP bez serwera i biblioteki C.
+Testy integracyjne DH są zakresem osobnego zadania QA #30.
