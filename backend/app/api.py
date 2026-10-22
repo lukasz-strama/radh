@@ -12,8 +12,13 @@ from .models import (
 )
 
 
-router = APIRouter(prefix="/api/v1/rsa", tags=["RSA"])
-dh_router = APIRouter(prefix="/api/v1/dh", tags=["DH"])
+HTTP_ERROR_RESPONSES = {
+    400: {"model": ErrorResponse, "description": "Nie można odczytać żądania"},
+    404: {"model": ErrorResponse, "description": "Nie znaleziono zasobu"},
+    405: {"model": ErrorResponse, "description": "Niedozwolona metoda HTTP"},
+}
+router = APIRouter(prefix="/api/v1/rsa", tags=["RSA"], responses=HTTP_ERROR_RESPONSES)
+dh_router = APIRouter(prefix="/api/v1/dh", tags=["DH"], responses=HTTP_ERROR_RESPONSES)
 
 
 @lru_cache(maxsize=1)

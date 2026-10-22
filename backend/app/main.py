@@ -5,6 +5,7 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException
 
 from .api import dh_router, router
 from .crypto_core import (
@@ -29,10 +30,13 @@ app.include_router(router)
 app.include_router(dh_router)
 
 
-def _error_response(status_code: int, code: str, message: str) -> JSONResponse:
+def _error_response(
+    status_code: int, code: str, message: str, headers: dict[str, str] | None = None,
+) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
         content={"error": {"code": code, "message": message}},
+        headers=headers,
     )
 
 
@@ -82,4 +86,24 @@ async def crypto_core_load_error(
         503,
         "CRYPTO_CORE_UNAVAILABLE",
         "Biblioteka CryptoCore jest niedostępna.",
+    )
+
+
+_HTTP_ERRORS = {
+    400: ("BAD_REQUEST", "Nie można odczytać żądania."),
+    404: ("NOT_FOUND", "Nie znaleziono zasobu."),
+    405: ("METHOD_NOT_ALLOWED", "Metoda HTTP jest niedozwolona dla tego zasobu."),
+}
+
+
+@app.exception_handler(HTTPException)
+async def http_error(_request: Request, exception: HTTPException) -> JSONResponse:
+    """Wspólny format błędów HTTP, także generowanych przez router Starlette."""
+
+    code, message = _HTTP_ERRORS.get(
+        exception.status_code,
+        (f"HTTP_{exception.status_code}", "Nie można obsłużyć żądania."),
+    )
+    return _error_response(
+        exception.status_code, code, message, headers=exception.headers,
     )

@@ -50,9 +50,10 @@ python -m pytest tests/test_core_valid.py -v
 | `tests/test_api_rsa.py` | endpoint FastAPI: wyniki, kody błędów, format odpowiedzi |
 | `tests/test_api_robustness.py` | serwer po błędnych żądaniach, brak biblioteki (503), prawdziwy proces `uvicorn` |
 
-Przypadki testowe są w `tests/data/rsa_cases.json`. Trzy testy oznaczone `xfail`
-dotyczą znanego defektu (format błędów 404/405/400 – zgłoszenie: #26). Po jego
-naprawie usuń z nich `xfail`.
+Przypadki testowe RSA są w `tests/data/rsa_cases.json`. Testy regresji defektu
+#26 (z PR #27) sprawdzają wspólny format błędów 404/405/400, ich statusy i kody
+oraz nagłówek `Allow` dla 405; nie mają już oznaczenia `xfail`. Obejmują także
+endpoint DH i zachowanie innych statusów oraz nagłówków HTTP.
 
 ### CI
 

@@ -120,3 +120,52 @@ nie służy do zabezpieczania rzeczywistych danych.
 W Swagger UI (`/docs`) rozwiń **DH**, wybierz **Try it out** i **Execute**.
 Przykład jest wypełniony powyższymi parametrami. Schematy wejścia, wyjścia oraz
 błędów są dostępne także pod `/openapi.json`. Endpoint RSA pozostaje dostępny.
+
+
+## Wspólny format błędów HTTP (#26)
+
+Błędy kontrolowane przez aplikację FastAPI (RSA, DH, walidacja i wyjątki HTTP
+routera/frameworka) zwracają `ErrorResponse`:
+
+```json
+{"error":{"code":"NOT_FOUND","message":"Nie znaleziono zasobu."}}
+```
+
+| HTTP | Kod | Komunikat |
+| --- | --- | --- |
+| 400 | `BAD_REQUEST` | Nie można odczytać żądania. |
+| 404 | `NOT_FOUND` | Nie znaleziono zasobu. |
+| 405 | `METHOD_NOT_ALLOWED` | Metoda HTTP jest niedozwolona dla tego zasobu. |
+| 422 | `INVALID_REQUEST` lub kod CryptoCore | Błąd walidacji danych |
+| 500 | `INTERNAL_ERROR` | Nieoczekiwany status CryptoCore |
+| 503 | `CRYPTO_CORE_UNAVAILABLE` | Biblioteka CryptoCore jest niedostępna. |
+
+Pozostałe wyjątki HTTP zachowują status i używają kodu `HTTP_<status>` oraz
+komunikatu „Nie można obsłużyć żądania.”. Nagłówki wyjątku pozostają zachowane,
+w szczególności `Allow: POST` dla 405. Szczegóły wewnętrzne nie trafiają do JSON.
+Ten kontrakt dotyczy odpowiedzi aplikacji, nie błędów protokołu odrzuconych
+przez uvicorn przed wejściem do FastAPI ani błędów zewnętrznego proxy.
+
+### Reprodukcja i akceptacja poprawki #26
+
+Uruchom API według instrukcji powyżej. Przed poprawką poniższe żądania zwracały
+`{"detail":"Not Found"}` (404), `{"detail":"Method Not Allowed"}` (405)
+oraz `{"detail":"There was an error parsing the body"}` (400).
+Po poprawce każde zwraca `{"error":{"code":"...","message":"..."}}`
+z kodem i komunikatem z tabeli, bez zmiany statusu HTTP.
+
+```sh
+# 404
+curl -i http://127.0.0.1:8000/nie-istnieje
+# 405, dodatkowo musi zachować Allow: POST
+curl -i http://127.0.0.1:8000/api/v1/rsa/demo/encrypt
+# 400: liczba przekraczająca domyślny limit konwersji cyfr w Pythonie
+python3 -c 'print("{\"message\":" + "9" * 5000 + ",\"public_exponent\":17,\"modulus\":3233}")' | \
+  curl -i http://127.0.0.1:8000/api/v1/rsa/demo/encrypt \
+    -H 'Content-Type: application/json' --data-binary @-
+```
+
+Kryteria automatycznie sprawdza `test_framework_errors_use_common_error_format`
+w `tests/test_api_robustness.py` (testy z PR #27, usunięte `xfail`).
+Dodatkowe testy obejmują DH, nagłówki HTTP i schematy OpenAPI. Po błędnych
+żądaniach poprawne szyfrowanie RSA nadal zwraca 2790.
