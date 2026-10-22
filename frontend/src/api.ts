@@ -10,6 +10,20 @@ export type RsaEncryptResponse = {
   ciphertext: number
 }
 
+export type DhExchangeRequest = {
+  prime: number
+  generator: number
+  alice_secret: number
+  bob_secret: number
+}
+
+export type DhExchangeResponse = {
+  alice_public: number
+  bob_public: number
+  alice_shared_key: number
+  bob_shared_key: number
+}
+
 // Błąd z czytelnym komunikatem dla użytkownika.
 // `code` to stały identyfikator z backendu (np. MESSAGE_OUT_OF_RANGE), jeśli przyszedł.
 export class ApiError extends Error {
@@ -23,9 +37,45 @@ export class ApiError extends Error {
 
 // Wysyła parametry do backendu i zwraca szyfrogram obliczony przez backend.
 export async function encryptRsa(data: RsaEncryptRequest): Promise<RsaEncryptResponse> {
+  const body = await postJson('/api/v1/rsa/demo/encrypt', data)
+
+  const ciphertext = (body as { ciphertext?: unknown } | null)?.ciphertext
+  if (typeof ciphertext !== 'number') throw unexpectedFormat()
+  return { ciphertext }
+}
+
+const DH_RESPONSE_FIELDS = [
+  'alice_public',
+  'bob_public',
+  'alice_shared_key',
+  'bob_shared_key',
+] as const
+
+// Wysyła parametry wymiany DH i zwraca wartości obliczone przez backend.
+export async function exchangeDh(data: DhExchangeRequest): Promise<DhExchangeResponse> {
+  const body = (await postJson('/api/v1/dh/demo/exchange', data)) as Record<
+    string,
+    unknown
+  > | null
+
+  // Niepełna odpowiedź to błąd: nie pokazujemy częściowych wyników.
+  if (!body || DH_RESPONSE_FIELDS.some((field) => typeof body[field] !== 'number')) {
+    throw unexpectedFormat()
+  }
+  const response = body as DhExchangeResponse
+  return {
+    alice_public: response.alice_public,
+    bob_public: response.bob_public,
+    alice_shared_key: response.alice_shared_key,
+    bob_shared_key: response.bob_shared_key,
+  }
+}
+
+// Wysyła JSON metodą POST i zwraca treść odpowiedzi; błędy zamienia na ApiError.
+async function postJson(url: string, data: unknown): Promise<unknown> {
   let response: Response
   try {
-    response = await fetch('/api/v1/rsa/demo/encrypt', {
+    response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -40,12 +90,11 @@ export async function encryptRsa(data: RsaEncryptRequest): Promise<RsaEncryptRes
   if (!response.ok) {
     throw toApiError(response.status, body)
   }
+  return body
+}
 
-  const ciphertext = (body as { ciphertext?: unknown } | null)?.ciphertext
-  if (typeof ciphertext !== 'number') {
-    throw new ApiError('Backend zwrócił odpowiedź w nieoczekiwanym formacie.')
-  }
-  return { ciphertext }
+function unexpectedFormat(): ApiError {
+  return new ApiError('Backend zwrócił odpowiedź w nieoczekiwanym formacie.')
 }
 
 // Backend zwraca błędy w formacie: { "error": { "code": "...", "message": "..." } }.
