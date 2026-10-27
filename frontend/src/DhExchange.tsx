@@ -11,8 +11,9 @@ import type { DhField, DhFieldErrors } from './validation'
 // Uczestnicy sesji. M3: dojdzie 'mallory'.
 type Role = 'alice' | 'bob'
 
-// Stan procesu węzła.
-type NodeStatus = 'offline' | 'ready' | 'sent' | 'done' | 'error'
+// Stan węzła. Fazy idle, public_ready, complete pochodzą z węzłów (#36, NodeState.phase);
+// offline i error zgłasza koordynator, bo niedziałający węzeł sam o sobie nie powie.
+type NodeStatus = 'offline' | 'idle' | 'public_ready' | 'complete' | 'error'
 
 type SessionStatus = 'running' | 'completed' | 'failed'
 
@@ -61,8 +62,8 @@ const SAMPLE_SESSION: DhSession = {
   g: 5,
   status: 'completed',
   nodes: {
-    alice: { status: 'done', publicValue: 8, receivedValue: 19, sharedKey: 2 },
-    bob: { status: 'done', publicValue: 19, receivedValue: 8, sharedKey: 2 },
+    alice: { status: 'complete', publicValue: 8, receivedValue: 19, sharedKey: 2 },
+    bob: { status: 'complete', publicValue: 19, receivedValue: 8, sharedKey: 2 },
   },
   events: [
     { seq: 1, from: 'alice', to: 'bob', type: 'PUBLIC_VALUE', value: 8, status: 'accepted' },
@@ -83,9 +84,9 @@ type Tone = 'neutral' | 'ok' | 'error'
 
 const NODE_STATUS: Record<NodeStatus, { label: string; tone: Tone }> = {
   offline: { label: 'niedostępny', tone: 'error' },
-  ready: { label: 'gotowy', tone: 'neutral' },
-  sent: { label: 'wysłał wartość publiczną', tone: 'neutral' },
-  done: { label: 'obliczył sekret', tone: 'ok' },
+  idle: { label: 'gotowy', tone: 'neutral' },
+  public_ready: { label: 'obliczył wartość publiczną', tone: 'neutral' },
+  complete: { label: 'obliczył sekret', tone: 'ok' },
   error: { label: 'błąd', tone: 'error' },
 }
 

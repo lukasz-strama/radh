@@ -5,7 +5,7 @@
 //   message:         0 .. modulus - 1
 // Backend i tak sprawdza wszystko sam – tutaj chodzi o szybkie, czytelne komunikaty.
 
-import type { DhExchangeRequest, RsaEncryptRequest } from './api'
+import type { RsaEncryptRequest } from './api'
 
 const UINT32_MAX = 4_294_967_295
 
