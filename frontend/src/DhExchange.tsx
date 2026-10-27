@@ -8,6 +8,8 @@ import {
   ApiError,
   cancelActiveDhSession,
   cancelDhSession,
+  fetchDhDiagnostics,
+  fetchDhNodes,
   fetchDhSession,
   startDhSession,
 } from './api'
@@ -17,6 +19,7 @@ import type {
   DhSession,
   EventType,
   MessageStatus,
+  NodeAvailability,
   ParticipantStatus,
   Role,
   SessionStatus,
@@ -31,6 +34,12 @@ type ViewState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'session'; session: DhSession }
+
+// Dostępność węzłów z heartbeatów.
+type NodesState =
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ready'; nodes: Record<Role, NodeAvailability> }
 
 // Nazwa uczestnika (też w dopełniaczu) i symbole we wzorach (Alice: a, A; Bob: b, B).
 const ROLES: Record<
@@ -70,8 +79,33 @@ const MESSAGE_STATUS: Record<MessageStatus, { label: string; tone: Tone }> = {
   processed: { label: 'przetworzona', tone: 'ok' },
 }
 
-// Co ile odpytujemy stan trwającej sesji.
+// Co ile odpytujemy stan sesji i dostępność węzłów.
 const SESSION_POLL_MS = 1000
+const NODES_POLL_MS = 3000
+// Ostatni ACK może zakończyć sesję, zanim węzły zgłoszą K, więc diagnostykę
+// czytamy jeszcze przez tyle po zakończeniu (albo krócej, gdy przyjdą obie wartości).
+const DIAGNOSTICS_GRACE_MS = 10_000
+
+// Pyta koordynatora o dostępność węzłów; błąd zamienia na stan do wyświetlenia.
+async function checkNodes(): Promise<NodesState> {
+  try {
+    return { status: 'ready', nodes: await fetchDhNodes() }
+  } catch (error) {
+    return { status: 'error', message: errorMessage(error, 'nieoczekiwany błąd.') }
+  }
+}
+
+// Dokłada K z diagnostyki do stanu sesji; null zostaje jako brak wartości.
+function withDiagnostics(
+  session: DhSession,
+  diagnostics: Record<Role, number | null>,
+): DhSession {
+  const node = (role: Role): DhNode => ({
+    ...session.nodes[role],
+    sharedKey: diagnostics[role] ?? undefined,
+  })
+  return { ...session, nodes: { alice: node('alice'), bob: node('bob') } }
+}
 
 const DEFAULTS: Record<DhField, string> = {
   prime: '23',
@@ -88,32 +122,52 @@ export function DhExchange() {
   // Numer bieżącego żądania. Reset albo nowy start go zwiększa, więc spóźniona
   // odpowiedź starego żądania jest ignorowana i nie nadpisze nowszego stanu.
   const requestId = useRef(0)
+  const [nodes, setNodes] = useState<NodesState>({ status: 'loading' })
   const isLoading = view.status === 'loading'
+  // Start blokujemy tylko, gdy wiadomo, że któryś węzeł nie działa. Gdy dostępności
+  // nie da się sprawdzić, nie blokujemy – sesja i tak pokaże, czy węzły odpowiadają.
+  const nodesOffline =
+    nodes.status === 'ready' && (!nodes.nodes.alice.online || !nodes.nodes.bob.online)
 
-  // Sesję odpytujemy tylko, dopóki trwa. Zakończona albo anulowana nie zmieni się już.
+  const sessionId = view.status === 'session' ? view.session.id : null
   const activeId =
     view.status === 'session' &&
     (view.session.status === 'created' || view.session.status === 'running')
       ? view.session.id
       : null
 
-  // Odpytywanie trwającej sesji. Kolejne zapytanie idzie dopiero po odpowiedzi na
-  // poprzednie, więc się nie nakładają. Reset, nowy start albo koniec sesji je zatrzymuje.
+  // Dostępność węzłów sprawdzamy od razu i potem co NODES_POLL_MS.
   useEffect(() => {
-    if (!activeId) return
-    const sessionId = activeId
+    let active = true
+    let timer: number | undefined
+    async function tick() {
+      const state = await checkNodes()
+      if (!active) return
+      setNodes(state)
+      timer = window.setTimeout(tick, NODES_POLL_MS)
+    }
+    void tick()
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
+  }, [])
+
+  // Odpytywanie sesji i jej diagnostyki. Kolejne zapytanie idzie dopiero po odpowiedzi
+  // na poprzednie. Działa, dopóki sesja trwa, a po zakończeniu jeszcze do
+  // DIAGNOSTICS_GRACE_MS lub do otrzymania K od obu stron. Reset i nowy start je zatrzymują.
+  useEffect(() => {
+    if (!sessionId) return
     const id = requestId.current
     let active = true
     let timer: number | undefined
+    let diagnostics: Record<Role, number | null> = { alice: null, bob: null }
+    let completedAt: number | null = null
 
     async function tick() {
+      let session: DhSession
       try {
-        const session = await fetchDhSession(sessionId)
-        if (!active || id !== requestId.current) return
-        setView({ status: 'session', session })
-        if (session.status === 'created' || session.status === 'running') {
-          timer = window.setTimeout(tick, SESSION_POLL_MS)
-        }
+        session = await fetchDhSession(sessionId as string)
       } catch (error) {
         if (!active || id !== requestId.current) return
         // Bez aktualnego stanu nie pokazujemy starego: zamiast sesji tylko błąd.
@@ -121,7 +175,31 @@ export function DhExchange() {
           status: 'error',
           message: `Utracono stan sesji: ${errorMessage(error, 'nieoczekiwany błąd.')}`,
         })
+        return
       }
+      if (!active || id !== requestId.current) return
+
+      // Błąd diagnostyki nie psuje sesji: K jest dodatkiem, zostają poprzednie wartości.
+      if (session.status === 'running' || session.status === 'completed') {
+        try {
+          diagnostics = await fetchDhDiagnostics(session.id)
+        } catch {
+          // ignorujemy, spróbujemy przy następnym odczycie
+        }
+        if (!active || id !== requestId.current) return
+      }
+
+      setView({ status: 'session', session: withDiagnostics(session, diagnostics) })
+
+      if (session.status === 'completed' && completedAt === null) completedAt = Date.now()
+      const bothKnown = diagnostics.alice !== null && diagnostics.bob !== null
+      const keepPolling =
+        session.status === 'created' ||
+        session.status === 'running' ||
+        (session.status === 'completed' &&
+          !bothKnown &&
+          Date.now() - (completedAt ?? 0) < DIAGNOSTICS_GRACE_MS)
+      if (keepPolling) timer = window.setTimeout(tick, SESSION_POLL_MS)
     }
 
     timer = window.setTimeout(tick, SESSION_POLL_MS)
@@ -129,11 +207,11 @@ export function DhExchange() {
       active = false
       window.clearTimeout(timer)
     }
-  }, [activeId])
+  }, [sessionId])
 
   async function handleStart(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (isLoading) return
+    if (isLoading || nodesOffline) return
     const id = ++requestId.current
     setView({ status: 'empty' })
 
@@ -199,17 +277,17 @@ export function DhExchange() {
 
           {/* Węzły widać zawsze; bez sesji bez wartości. */}
           <div className="dh-parties">
-            <NodePanel role="alice" node={session?.nodes.alice} />
+            <NodePanel role="alice" node={session?.nodes.alice} nodes={nodes} />
 
             {/* Środek: wiadomości idą przez koordynatora. M3: tu stanie Mallory. */}
             <div className="dh-channel">
               <span className="dh-channel-label">koordynator</span>
             </div>
 
-            <NodePanel role="bob" node={session?.nodes.bob} />
+            <NodePanel role="bob" node={session?.nodes.bob} nodes={nodes} />
           </div>
 
-          {session && <WaitingHint session={session} />}
+          {session && <WaitingHint session={session} nodes={nodes} />}
           {session && <SessionResult session={session} />}
           {session && <EventLog events={session.events} />}
         </section>
@@ -234,13 +312,22 @@ export function DhExchange() {
             </p>
 
             <div className="dh-buttons">
-              <button type="submit" disabled={isLoading} aria-busy={isLoading}>
+              <button
+                type="submit"
+                disabled={isLoading || nodesOffline}
+                aria-busy={isLoading}
+                aria-describedby={
+                  nodesOffline || nodes.status === 'error' ? 'dh-nodes-hint' : undefined
+                }
+              >
                 {isLoading ? 'Uruchamianie…' : 'Rozpocznij sesję'}
               </button>
               <button type="button" onClick={handleReset}>
                 Reset
               </button>
             </div>
+
+            <NodesHint nodes={nodes} />
 
             {view.status === 'error' && (
               <p className="api-error" role="alert">
@@ -273,27 +360,77 @@ function SessionHeader({ session }: { session: DhSession }) {
   )
 }
 
-// Koordynator nie wie, czy procesy węzłów działają (#37 nie ma heartbeatów).
-// Gdy sesja trwa, a ktoś jeszcze nie wysłał wartości, podpowiadamy, co sprawdzić.
-function WaitingHint({ session }: { session: DhSession }) {
+// Sesja trwa, a ktoś jeszcze nie wysłał wartości: mówimy, na kogo czekamy, a jeśli
+// heartbeat mówi, że proces nie działa, podpowiadamy, jak go uruchomić.
+function WaitingHint({ session, nodes }: { session: DhSession; nodes: NodesState }) {
   if (session.status !== 'running') return null
   const waiting = (['alice', 'bob'] as const).filter(
     (role) => session.nodes[role].status === 'waiting',
   )
   if (waiting.length === 0) return null
+  const offline =
+    nodes.status === 'ready' ? waiting.filter((role) => !nodes.nodes[role].online) : []
   const names = waiting.map((role) => ROLES[role].nameOf).join(' i ')
   return (
     <p className="dh-note" role="status">
-      Czekamy na wartość publiczną od {names}. Jeśli się nie pojawia, sprawdź, czy proces
-      węzła jest uruchomiony (<code>python -m backend.dh_transport --role …</code>).
+      Czekamy na wartość publiczną od {names}.
+      {offline.length > 0 && (
+        <>
+          {' '}
+          Proces {offline.map((role) => ROLES[role].nameOf).join(' i ')} nie odpowiada –
+          uruchom go: <code>python -m backend.dh_transport --role {offline[0]}</code>.
+        </>
+      )}
     </p>
   )
 }
 
+// Komunikat pod przyciskami o dostępności węzłów.
+function NodesHint({ nodes }: { nodes: NodesState }) {
+  let text: string | null = null
+  if (nodes.status === 'error') text = `Nie udało się sprawdzić dostępności węzłów: ${nodes.message}`
+  if (nodes.status === 'ready') {
+    const offline = (['alice', 'bob'] as const).filter((role) => !nodes.nodes[role].online)
+    if (offline.length > 0) {
+      const names = offline.map((role) => ROLES[role].nameOf).join(' i ')
+      text = `Uruchom proces ${names}, żeby rozpocząć sesję.`
+    }
+  }
+  if (!text) return null
+  return (
+    <p className="dh-note" id="dh-nodes-hint">
+      {text}
+    </p>
+  )
+}
+
+// Plakietka węzła: w sesji jego postęp, poza sesją dostępność procesu.
+function nodeBadge(
+  role: Role,
+  node: DhNode | undefined,
+  nodes: NodesState,
+): { label: string; tone: Tone } | null {
+  if (node) return PARTICIPANT_STATUS[node.status]
+  if (nodes.status === 'loading') return { label: 'sprawdzanie…', tone: 'neutral' }
+  if (nodes.status === 'error') return null
+  const availability = nodes.nodes[role]
+  if (availability.online) return { label: 'dostępny', tone: 'ok' }
+  return availability.lastSeen === null
+    ? { label: 'nie zgłosił się', tone: 'error' }
+    : { label: 'niedostępny', tone: 'error' }
+}
+
 // Panel jednego węzła: status, tajny klucz (bez wartości), wartości publiczne, sekret.
-function NodePanel({ role, node }: { role: Role; node: DhNode | undefined }) {
+type NodePanelProps = {
+  role: Role
+  // Stan uczestnika w sesji; bez sesji undefined.
+  node: DhNode | undefined
+  nodes: NodesState
+}
+
+function NodePanel({ role, node, nodes }: NodePanelProps) {
   const { name, nameOf, priv, pub, other } = ROLES[role]
-  const status = node && PARTICIPANT_STATUS[node.status]
+  const status = nodeBadge(role, node, nodes)
   const otherPub = ROLES[other].pub
   const titleId = `dh-${role}-title`
 
@@ -317,7 +454,8 @@ function NodePanel({ role, node }: { role: Role; node: DhNode | undefined }) {
       </DhValue>
 
       {/* Bez diagnostyki K zostaje w procesie: po przetworzeniu wartości partnera
-          wiemy tylko, że węzeł je obliczył, więc zamiast „?” mówimy to wprost. */}
+          wiemy tylko, że węzeł je obliczył, więc zamiast „?” mówimy to wprost.
+          Gdy diagnostyka przyjdzie (także po zakończeniu sesji), pokazujemy liczbę. */}
       {node?.status === 'received' && node.sharedKey === undefined ? (
         <DhValue kind="private" label="Wspólny sekret" withValue={false}>
           <span className="formula">K</span> – obliczony, zna go tylko proces {nameOf}
@@ -364,8 +502,8 @@ function DhValue({ kind, label, value, withValue = true, children }: DhValueProp
   )
 }
 
-// Porównanie sekretów obu stron. Pokazujemy dopiero, gdy oba węzły je zgłosiły.
-// API #37 nie udostępnia jeszcze K, więc do czasu uzgodnienia diagnostyki sekcja się nie pokazuje.
+// Porównanie sekretów obu stron. Pokazujemy dopiero, gdy oba węzły zgłosiły K
+// w diagnostyce (węzły uruchomione z --allow-diagnostics).
 function SessionResult({ session }: { session: DhSession }) {
   const kA = session.nodes.alice.sharedKey
   const kB = session.nodes.bob.sharedKey

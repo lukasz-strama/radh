@@ -65,7 +65,7 @@ export type DhNode = {
   status: ParticipantStatus
   publicValue?: number
   receivedValue?: number
-  // K z diagnostyki węzła. API #37 go nie udostępnia, więc na razie zawsze undefined.
+  // K z diagnostyki węzła (fetchDhDiagnostics); nie jest częścią wiadomości protokołu.
   sharedKey?: number
 }
 
@@ -124,6 +124,46 @@ export async function cancelActiveDhSession(): Promise<void> {
   if (current.status === 'created' || current.status === 'running') {
     await cancelDhSession(current.id)
   }
+}
+
+// Dostępność procesu węzła: ostatni heartbeat (co 1 s) nie starszy niż 5 s.
+// lastSeen === null: węzeł jeszcze się nie zgłosił. To informacja o ostatnim kontakcie,
+// nie gwarancja, że proces za chwilę nie przestanie działać.
+export type NodeAvailability = {
+  online: boolean
+  lastSeen: string | null
+}
+
+export async function fetchDhNodes(): Promise<Record<Role, NodeAvailability>> {
+  const body = (await requestJson('GET', '/api/v1/dh/nodes')) as Record<string, unknown> | null
+  function node(role: Role): NodeAvailability {
+    const raw = body?.[role] as Record<string, unknown> | undefined
+    if (
+      !raw ||
+      typeof raw.online !== 'boolean' ||
+      (raw.last_seen !== null && typeof raw.last_seen !== 'string')
+    ) {
+      throw unexpectedFormat()
+    }
+    return { online: raw.online, lastSeen: raw.last_seen }
+  }
+  return { alice: node('alice'), bob: node('bob') }
+}
+
+// K zgłoszone przez węzły uruchomione z --allow-diagnostics; null = brak zgłoszenia.
+// Przechowywane osobno od wiadomości i zdarzeń protokołu.
+export async function fetchDhDiagnostics(id: string): Promise<Record<Role, number | null>> {
+  const body = (await requestJson('GET', `${DH_SESSIONS_URL}/${id}/diagnostics`)) as Record<
+    string,
+    unknown
+  > | null
+  function value(role: Role): number | null {
+    const raw = body?.[role]
+    if (raw !== null && typeof raw !== 'number') throw unexpectedFormat()
+    return raw
+  }
+  if (!body) throw unexpectedFormat()
+  return { alice: value('alice'), bob: value('bob') }
 }
 
 const ROLES: readonly Role[] = ['alice', 'bob']
