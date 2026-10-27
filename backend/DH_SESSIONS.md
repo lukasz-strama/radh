@@ -174,3 +174,11 @@ i sprawdza transport A=8/B=19. Używa stałych publicznych wartości, więc nie
 zastępuje testów obliczeń ani pełnej integracji agentów z #39. Osobne testy
 obejmują walidację, kolejność, konflikty, ponowienia po utracie odpowiedzi,
 atomowość duplikatów, stare ID i schemat błędów OpenAPI.
+
+### Walidacja odpowiedzi klienta
+
+Modele kontraktu są współdzielone przez API i klienta w `app/session_models.py`.
+Klient sprawdza wymagane pola sesji, schemat całej kolejki, role nadawcy i odbiorcy,
+status i zakres wartości przed wywołaniem obliczeń lub ACK. Odpowiedź uszkodzona,
+niepełna albo skierowana do innej roli nie trafia do węzła. Błędny JSON i zerwane
+połączenie są obsługiwane bez zakończenia pętli; diagnostyka nie wypisuje ich treści.

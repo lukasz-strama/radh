@@ -222,3 +222,102 @@ def test_transport_retries_lost_send_and_ack_without_restarting_node(api):
     assert node.starts == 1
     assert node.values == [19]
     assert len(api.get(BASE + "/ref/events").json()) == 5
+
+
+@pytest.mark.parametrize("bad_response", [None, [], {"status": "running"}, {"error": "bad"},
+    {"prime": 23, "generator": 5, "mode": "normal", "status": "running"},
+    {"session_id": "ref", "prime": 23, "generator": 5, "mode": "normal"}])
+def test_transport_rejects_invalid_session_before_node_call(bad_response):
+    from backend.dh_transport import HttpTransport, InvalidResponse
+
+    class UnusedNode:
+        @property
+        def state(self):
+            pytest.fail("Błędna odpowiedź dotarła do węzła")
+
+    transport = HttpTransport("http://unused", "alice", UnusedNode())
+    transport.request = lambda *args: bad_response
+    with pytest.raises(InvalidResponse):
+        transport.poll()
+
+
+@pytest.mark.parametrize("messages", [
+    None, {}, [B], [{"message_id": "missing-fields"}], [{**B, "status": "queued", "recipient": "bob"}],
+    [{**B, "status": "queued", "sender": "alice"}],
+    [{**B, "status": "queued", "public_value": 0}],
+    [{**B, "status": "queued", "public_value": 23}],
+    [{**B, "status": "queued", "message_id": "../../escape"}],
+    [{**B, "status": "processed"}],
+    [{**B, "status": "queued", "shared_secret": 2}],
+    [{**B, "status": "queued"}, {**B, "status": "queued"}],
+])
+def test_transport_rejects_invalid_inbox_without_ack(api, messages):
+    from types import SimpleNamespace
+    from backend.dh_transport import HttpTransport, InvalidResponse
+    start(api)
+
+    class Node:
+        state = SimpleNamespace(session_id="ref", public_value=8)
+
+        def receive_public(self, *args):
+            pytest.fail("Błędna kolejka dotarła do obliczeń")
+
+    transport = HttpTransport("http://unused", "alice", Node())
+    paths = []
+
+    def request(path, body=None):
+        paths.append(path)
+        if path == "/current":
+            return api.get(BASE + path).json()
+        if body is not None:
+            return api.post(BASE + path, json=body).json()
+        return messages
+
+    transport.request = request
+    with pytest.raises(InvalidResponse):
+        transport.poll()
+    assert not any(path.endswith("/ack") for path in paths)
+
+
+def test_transport_rejects_invalid_json_and_closes_response(monkeypatch):
+    import io
+    from backend.dh_transport import HttpTransport, InvalidResponse
+    response = io.BytesIO(b'{broken')
+    monkeypatch.setattr("backend.dh_transport.urlopen", lambda *args, **kwargs: response)
+    with pytest.raises(InvalidResponse):
+        HttpTransport("http://unused", "alice", None).request("/current")
+    assert response.closed
+
+
+def test_concurrent_acknowledgements_complete_only_once(api):
+    start(api)
+    send(api, A)
+    send(api, B)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda message: ack(api, message), [A, B] * 10))
+    assert all(result.status_code == 200 for result in results)
+    session = api.get(BASE + "/ref").json()
+    assert session["status"] == "completed"
+    assert len(session["events"]) == 7
+    assert sum(e["type"] == "session_completed" for e in session["events"]) == 1
+
+
+def test_cancelled_queue_cannot_be_processed(api):
+    start(api)
+    send(api, A)
+    send(api, B)
+    assert api.post(BASE + "/ref/cancel").status_code == 200
+    before = api.get(BASE + "/ref").json()
+    assert ack(api, A).status_code == 409
+    assert api.get(BASE + "/ref/messages?recipient=bob").status_code == 409
+    assert api.get(BASE + "/ref").json() == before
+
+
+def test_store_returns_isolated_snapshots():
+    from app.sessions import CreateSession
+    store = SessionStore()
+    snapshot = store.create(CreateSession(session_id="ref", prime=23, generator=5))
+    snapshot.events.clear()
+    snapshot.participants["alice"] = "received"
+    assert len(store.get().events) == 1
+    assert store.get().participants["alice"] == "waiting"
