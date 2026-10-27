@@ -24,7 +24,8 @@ def adapter(monkeypatch, tmp_path):
         return 0
     def exchange(*args):
         return 0
-    library = SimpleNamespace(radh_rsa_encrypt_u32=encrypt, radh_dh_exchange_u32=exchange)
+    library = SimpleNamespace(radh_rsa_encrypt_u32=encrypt, radh_dh_exchange_u32=exchange,
+                              radh_modexp_u32=lambda *args: 0)
     monkeypatch.setattr(ctypes, "CDLL", lambda path: library)
     return CryptoCore(tmp_path / "fake-library")
 
@@ -55,9 +56,10 @@ def test_adapter_passes_uint32_and_reads_all_native_fields(adapter):
             result.alice_shared_key, result.bob_shared_key) == (7, 11, 13, 17)
 
 
-@pytest.mark.parametrize("symbol", ["radh_rsa_encrypt_u32", "radh_dh_exchange_u32"])
+@pytest.mark.parametrize("symbol", ["radh_rsa_encrypt_u32", "radh_dh_exchange_u32", "radh_modexp_u32"])
 def test_missing_symbol_is_load_error(monkeypatch, tmp_path, symbol):
-    library = SimpleNamespace(radh_rsa_encrypt_u32=lambda: 0, radh_dh_exchange_u32=lambda: 0)
+    library = SimpleNamespace(radh_rsa_encrypt_u32=lambda: 0, radh_dh_exchange_u32=lambda: 0,
+                              radh_modexp_u32=lambda: 0)
     delattr(library, symbol)
     monkeypatch.setattr(ctypes, "CDLL", lambda path: library)
     with pytest.raises(CryptoCoreLoadError, match=symbol):
