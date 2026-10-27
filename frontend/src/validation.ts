@@ -5,7 +5,7 @@
 //   message:         0 .. modulus - 1
 // Backend i tak sprawdza wszystko sam – tutaj chodzi o szybkie, czytelne komunikaty.
 
-import type { RsaEncryptRequest } from './api'
+import type { DhSessionParams, RsaEncryptRequest } from './api'
 
 const UINT32_MAX = 4_294_967_295
 
@@ -69,17 +69,12 @@ export function validateRsaInput(raw: Record<RsaField, string>): ValidationResul
 //   generator: 2 .. prime - 1
 // Sekrety a i b nie przechodzą przez przeglądarkę: losują je procesy węzłów.
 
-export type DhParams = {
-  prime: number
-  generator: number
-}
+  export type DhField = keyof DhSessionParams
+  export type DhFieldErrors = Partial<Record<DhField, string>>
 
-export type DhField = keyof DhParams
-export type DhFieldErrors = Partial<Record<DhField, string>>
-
-export type DhValidationResult =
-  | { ok: true; data: DhParams }
-  | { ok: false; errors: DhFieldErrors }
+  export type DhValidationResult =
+    | { ok: true; data: DhSessionParams }
+    | { ok: false; errors: DhFieldErrors }
 
 export function validateDhParams(raw: Record<DhField, string>): DhValidationResult {
   const errors: DhFieldErrors = {}

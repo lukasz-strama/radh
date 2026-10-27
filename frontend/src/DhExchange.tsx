@@ -2,50 +2,13 @@
 // Frontend niczego nie liczy i nie wymyśla zdarzeń: pokazuje stan sesji z API.
 // Sekrety a i b nigdy nie przechodzą przez przeglądarkę.
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
+import { ApiError, startDhSession } from './api'
+import type { DhEvent, DhSession, EventStatus, NodeStatus, Role, SessionStatus } from './api'
 import { Field } from './Field'
 import { validateDhParams } from './validation'
 import type { DhField, DhFieldErrors } from './validation'
-
-// Uczestnicy sesji. M3: dojdzie 'mallory'.
-type Role = 'alice' | 'bob'
-
-// Stan węzła. Fazy idle, public_ready, complete pochodzą z węzłów (#36, NodeState.phase);
-// offline i error zgłasza koordynator, bo niedziałający węzeł sam o sobie nie powie.
-type NodeStatus = 'offline' | 'idle' | 'public_ready' | 'complete' | 'error'
-
-type SessionStatus = 'running' | 'completed' | 'failed'
-
-type EventStatus = 'accepted' | 'rejected'
-
-// Stan jednego węzła. Brak wartości = węzeł jeszcze jej nie zgłosił.
-type DhNode = {
-  status: NodeStatus
-  publicValue?: number
-  receivedValue?: number
-  // Diagnostyka węzła, nie wiadomość protokołu.
-  sharedKey?: number
-}
-
-// Wiadomość protokołu przekazana przez koordynatora.
-type DhEvent = {
-  seq: number
-  from: Role
-  to: Role
-  type: string
-  value: number
-  status: EventStatus
-}
-
-type DhSession = {
-  id: string
-  p: number
-  g: number
-  status: SessionStatus
-  nodes: Record<Role, DhNode>
-  events: DhEvent[]
-}
 
 // Stan zakładki. Bez sesji nie pokazujemy żadnych wartości, żeby nie zostały stare.
 type ViewState =
@@ -53,23 +16,6 @@ type ViewState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'session'; session: DhSession }
-
-// TYMCZASOWO, do czasu API sesji (#37): „Rozpocznij sesję” pokazuje tę przykładową
-// sesję dla p = 23, g = 5, a = 6, b = 15. Docelowo stan i zdarzenia przyjdą z API.
-const SAMPLE_SESSION: DhSession = {
-  id: 'przyklad',
-  p: 23,
-  g: 5,
-  status: 'completed',
-  nodes: {
-    alice: { status: 'complete', publicValue: 8, receivedValue: 19, sharedKey: 2 },
-    bob: { status: 'complete', publicValue: 19, receivedValue: 8, sharedKey: 2 },
-  },
-  events: [
-    { seq: 1, from: 'alice', to: 'bob', type: 'PUBLIC_VALUE', value: 8, status: 'accepted' },
-    { seq: 2, from: 'bob', to: 'alice', type: 'PUBLIC_VALUE', value: 19, status: 'accepted' },
-  ],
-}
 
 // Nazwa uczestnika (też w dopełniaczu) i symbole we wzorach (Alice: a, A; Bob: b, B).
 const ROLES: Record<
@@ -109,11 +55,15 @@ const DEFAULTS: Record<DhField, string> = {
 export function DhExchange() {
   const [fieldErrors, setFieldErrors] = useState<DhFieldErrors>({})
   const [view, setView] = useState<ViewState>({ status: 'empty' })
+  // Numer bieżącego żądania. Reset albo nowy start go zwiększa, więc spóźniona
+  // odpowiedź starego żądania jest ignorowana i nie nadpisze nowszego stanu.
+  const requestId = useRef(0)
   const isLoading = view.status === 'loading'
 
-  function handleStart(event: FormEvent<HTMLFormElement>) {
+  async function handleStart(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (isLoading) return
+    const id = ++requestId.current
     setView({ status: 'empty' })
 
     const form = new FormData(event.currentTarget)
@@ -128,11 +78,23 @@ export function DhExchange() {
     }
     setFieldErrors({})
 
-    // TYMCZASOWO: zamiast rozpoczęcia sesji przez API.
-    setView({ status: 'session', session: SAMPLE_SESSION })
+    setView({ status: 'loading' })
+    try {
+      const session = await startDhSession(validation.data)
+      if (id !== requestId.current) return
+      setView({ status: 'session', session })
+    } catch (error) {
+      if (id !== requestId.current) return
+      setView({
+        status: 'error',
+        message: error instanceof ApiError ? error.message : 'Wystąpił nieoczekiwany błąd.',
+      })
+    }
   }
 
+  // Reset działa też w trakcie uruchamiania: porzuca czekające żądanie.
   function handleReset() {
+    requestId.current++
     setFieldErrors({})
     setView({ status: 'empty' })
   }
@@ -177,7 +139,7 @@ export function DhExchange() {
               <button type="submit" disabled={isLoading} aria-busy={isLoading}>
                 {isLoading ? 'Uruchamianie…' : 'Rozpocznij sesję'}
               </button>
-              <button type="button" onClick={handleReset} disabled={isLoading}>
+              <button type="button" onClick={handleReset}>
                 Reset
               </button>
             </div>
