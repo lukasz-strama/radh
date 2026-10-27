@@ -1,17 +1,23 @@
 // Laboratorium DH (#38): sesja dwóch niezależnych procesów, Alice i Boba.
-// Frontend niczego nie liczy i nie wymyśla zdarzeń: pokazuje stan sesji z API.
+// Frontend niczego nie liczy i nie wymyśla zdarzeń: pokazuje stan sesji z API (#37).
 // Sekrety a i b nigdy nie przechodzą przez przeglądarkę.
 
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { ApiError, fetchDhNodes, fetchDhSession, startDhSession } from './api'
+import {
+  ApiError,
+  cancelActiveDhSession,
+  cancelDhSession,
+  fetchDhSession,
+  startDhSession,
+} from './api'
 import type {
   DhEvent,
   DhNode,
   DhSession,
-  EventStatus,
-  NodeAvailability,
-  NodeStatus,
+  EventType,
+  MessageStatus,
+  ParticipantStatus,
   Role,
   SessionStatus,
 } from './api'
@@ -26,12 +32,6 @@ type ViewState =
   | { status: 'error'; message: string }
   | { status: 'session'; session: DhSession }
 
-// Dostępność węzłów przed sesją.
-type NodesState =
-  | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'ready'; nodes: Record<Role, NodeAvailability> }
-
 // Nazwa uczestnika (też w dopełniaczu) i symbole we wzorach (Alice: a, A; Bob: b, B).
 const ROLES: Record<
   Role,
@@ -43,49 +43,43 @@ const ROLES: Record<
 
 type Tone = 'neutral' | 'ok' | 'error'
 
-const NODE_STATUS: Record<NodeStatus, { label: string; tone: Tone }> = {
-  offline: { label: 'niedostępny', tone: 'error' },
-  idle: { label: 'gotowy', tone: 'neutral' },
-  public_ready: { label: 'obliczył wartość publiczną', tone: 'neutral' },
-  complete: { label: 'obliczył sekret', tone: 'ok' },
-  error: { label: 'błąd', tone: 'error' },
-}
-
-const AVAILABILITY: Record<NodeAvailability, { label: string; tone: Tone }> = {
-  online: { label: 'dostępny', tone: 'ok' },
-  offline: { label: 'niedostępny', tone: 'error' },
+const PARTICIPANT_STATUS: Record<ParticipantStatus, { label: string; tone: Tone }> = {
+  waiting: { label: 'oczekuje', tone: 'neutral' },
+  published: { label: 'wysłał wartość publiczną', tone: 'neutral' },
+  received: { label: 'przetworzył wartość partnera', tone: 'ok' },
 }
 
 const SESSION_STATUS: Record<SessionStatus, { label: string; tone: Tone }> = {
+  created: { label: 'utworzona', tone: 'neutral' },
   running: { label: 'w toku', tone: 'neutral' },
   completed: { label: 'zakończona', tone: 'ok' },
-  failed: { label: 'nieudana', tone: 'error' },
+  cancelled: { label: 'anulowana', tone: 'error' },
 }
 
-const EVENT_STATUS: Record<EventStatus, { label: string; tone: Tone }> = {
-  accepted: { label: 'przyjęta', tone: 'ok' },
-  rejected: { label: 'odrzucona', tone: 'error' },
+const EVENT_TYPE: Record<EventType, string> = {
+  session_created: 'utworzenie sesji',
+  session_started: 'start sesji',
+  public_value: 'wartość publiczna',
+  message_processed: 'przetworzenie wiadomości',
+  session_completed: 'koniec sesji',
+  session_cancelled: 'anulowanie sesji',
 }
 
-// Pyta koordynatora o dostępność węzłów; błąd zamienia na stan do wyświetlenia.
-async function checkNodes(): Promise<NodesState> {
-  try {
-    return { status: 'ready', nodes: await fetchDhNodes() }
-  } catch (error) {
-    return {
-      status: 'error',
-      message: error instanceof ApiError ? error.message : 'Nie udało się sprawdzić węzłów.',
-    }
-  }
+const MESSAGE_STATUS: Record<MessageStatus, { label: string; tone: Tone }> = {
+  queued: { label: 'w kolejce', tone: 'neutral' },
+  processed: { label: 'przetworzona', tone: 'ok' },
 }
 
-// Co ile odpytujemy stan trwającej sesji i dostępność węzłów.
+// Co ile odpytujemy stan trwającej sesji.
 const SESSION_POLL_MS = 1000
-const NODES_POLL_MS = 3000
 
 const DEFAULTS: Record<DhField, string> = {
   prime: '23',
   generator: '5',
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof ApiError ? error.message : fallback
 }
 
 export function DhExchange() {
@@ -94,37 +88,20 @@ export function DhExchange() {
   // Numer bieżącego żądania. Reset albo nowy start go zwiększa, więc spóźniona
   // odpowiedź starego żądania jest ignorowana i nie nadpisze nowszego stanu.
   const requestId = useRef(0)
-  const [nodes, setNodes] = useState<NodesState>({ status: 'loading' })
   const isLoading = view.status === 'loading'
-  const nodesReady =
-    nodes.status === 'ready' && nodes.nodes.alice === 'online' && nodes.nodes.bob === 'online'
 
-  // Sesję odpytujemy tylko, dopóki trwa. Zakończona albo nieudana nie zmieni się już.
-  const pollingId =
-    view.status === 'session' && view.session.status === 'running' ? view.session.id : null
-
-  // Dostępność węzłów sprawdzamy od razu i potem co NODES_POLL_MS.
-  useEffect(() => {
-    let active = true
-    let timer: number | undefined
-    async function tick() {
-      const state = await checkNodes()
-      if (!active) return
-      setNodes(state)
-      timer = window.setTimeout(tick, NODES_POLL_MS)
-    }
-    void tick()
-    return () => {
-      active = false
-      window.clearTimeout(timer)
-    }
-  }, [])
+  // Sesję odpytujemy tylko, dopóki trwa. Zakończona albo anulowana nie zmieni się już.
+  const activeId =
+    view.status === 'session' &&
+    (view.session.status === 'created' || view.session.status === 'running')
+      ? view.session.id
+      : null
 
   // Odpytywanie trwającej sesji. Kolejne zapytanie idzie dopiero po odpowiedzi na
   // poprzednie, więc się nie nakładają. Reset, nowy start albo koniec sesji je zatrzymuje.
   useEffect(() => {
-    if (!pollingId) return
-    const sessionId = pollingId
+    if (!activeId) return
+    const sessionId = activeId
     const id = requestId.current
     let active = true
     let timer: number | undefined
@@ -134,16 +111,15 @@ export function DhExchange() {
         const session = await fetchDhSession(sessionId)
         if (!active || id !== requestId.current) return
         setView({ status: 'session', session })
-        if (session.status === 'running') timer = window.setTimeout(tick, SESSION_POLL_MS)
+        if (session.status === 'created' || session.status === 'running') {
+          timer = window.setTimeout(tick, SESSION_POLL_MS)
+        }
       } catch (error) {
         if (!active || id !== requestId.current) return
         // Bez aktualnego stanu nie pokazujemy starego: zamiast sesji tylko błąd.
         setView({
           status: 'error',
-          message:
-            error instanceof ApiError
-              ? `Utracono stan sesji: ${error.message}`
-              : 'Utracono stan sesji.',
+          message: `Utracono stan sesji: ${errorMessage(error, 'nieoczekiwany błąd.')}`,
         })
       }
     }
@@ -153,11 +129,11 @@ export function DhExchange() {
       active = false
       window.clearTimeout(timer)
     }
-  }, [pollingId])
+  }, [activeId])
 
   async function handleStart(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (isLoading || !nodesReady) return
+    if (isLoading) return
     const id = ++requestId.current
     setView({ status: 'empty' })
 
@@ -180,19 +156,30 @@ export function DhExchange() {
       setView({ status: 'session', session })
     } catch (error) {
       if (id !== requestId.current) return
+      setView({ status: 'error', message: errorMessage(error, 'Wystąpił nieoczekiwany błąd.') })
+    }
+  }
+
+  // Reset anuluje trwającą sesję u koordynatora (także pozostałą po odświeżeniu strony)
+  // i porzuca czekające żądania. Nowa sesja zawsze dostaje nowe ID.
+  async function handleReset() {
+    const id = ++requestId.current
+    const ownId = activeId
+    setFieldErrors({})
+    setView({ status: 'empty' })
+    try {
+      if (ownId) await cancelDhSession(ownId)
+      else await cancelActiveDhSession()
+    } catch (error) {
+      if (id !== requestId.current) return
       setView({
         status: 'error',
-        message: error instanceof ApiError ? error.message : 'Wystąpił nieoczekiwany błąd.',
+        message: `Nie udało się anulować sesji: ${errorMessage(error, 'nieoczekiwany błąd.')}`,
       })
     }
   }
 
-  // Reset działa też w trakcie uruchamiania i odpytywania: porzuca czekające żądania.
-  function handleReset() {
-    requestId.current++
-    setFieldErrors({})
-    setView({ status: 'empty' })
-  }
+  const session = view.status === 'session' ? view.session : null
 
   return (
     <div className="dh">
@@ -200,16 +187,31 @@ export function DhExchange() {
 
       <div className="layout">
         <section className="dh-scene" aria-label="Przebieg sesji">
-          {/* Węzły widać zawsze: przed sesją z dostępnością, w sesji z fazą. */}
-          <Scene session={view.status === 'session' ? view.session : null} nodes={nodes}>
-            {view.status !== 'session' && (
-              <p className="dh-placeholder">
-                {isLoading
-                  ? 'Uruchamianie sesji…'
-                  : 'Podaj parametry publiczne i kliknij „Rozpocznij sesję”.'}
-              </p>
-            )}
-          </Scene>
+          {session ? (
+            <SessionHeader session={session} />
+          ) : (
+            <p className="dh-placeholder">
+              {isLoading
+                ? 'Uruchamianie sesji…'
+                : 'Podaj parametry publiczne i kliknij „Rozpocznij sesję”.'}
+            </p>
+          )}
+
+          {/* Węzły widać zawsze; bez sesji bez wartości. */}
+          <div className="dh-parties">
+            <NodePanel role="alice" node={session?.nodes.alice} />
+
+            {/* Środek: wiadomości idą przez koordynatora. M3: tu stanie Mallory. */}
+            <div className="dh-channel">
+              <span className="dh-channel-label">koordynator</span>
+            </div>
+
+            <NodePanel role="bob" node={session?.nodes.bob} />
+          </div>
+
+          {session && <WaitingHint session={session} />}
+          {session && <SessionResult session={session} />}
+          {session && <EventLog events={session.events} />}
         </section>
 
         <aside className="panel" aria-label="Parametry sesji">
@@ -232,20 +234,13 @@ export function DhExchange() {
             </p>
 
             <div className="dh-buttons">
-              <button
-                type="submit"
-                disabled={isLoading || !nodesReady}
-                aria-busy={isLoading}
-                aria-describedby={nodesReady ? undefined : 'dh-nodes-hint'}
-              >
+              <button type="submit" disabled={isLoading} aria-busy={isLoading}>
                 {isLoading ? 'Uruchamianie…' : 'Rozpocznij sesję'}
               </button>
               <button type="button" onClick={handleReset}>
                 Reset
               </button>
             </div>
-
-            <NodesHint nodes={nodes} />
 
             {view.status === 'error' && (
               <p className="api-error" role="alert">
@@ -259,92 +254,46 @@ export function DhExchange() {
   )
 }
 
-type SceneProps = {
-  session: DhSession | null
-  nodes: NodesState
-  children?: ReactNode
-}
-
-// Parametry, węzły, wynik i dziennik. Bez sesji: same węzły z dostępnością.
-function Scene({ session, nodes, children }: SceneProps) {
-  const sessionStatus = session && SESSION_STATUS[session.status]
-
+// Parametry wspólne i status sesji.
+function SessionHeader({ session }: { session: DhSession }) {
+  const status = SESSION_STATUS[session.status]
   return (
-    <>
-      {session && sessionStatus ? (
-        <section className="dh-shared" aria-labelledby="dh-shared-title">
-          <div className="dh-shared-header">
-            <h2 id="dh-shared-title">Parametry wspólne</h2>
-            <Badge tone={sessionStatus.tone}>sesja {sessionStatus.label}</Badge>
-          </div>
-          <p className="formula">
-            p = <output>{session.p}</output>
-          </p>
-          <p className="formula">
-            g = <output>{session.g}</output>
-          </p>
-        </section>
-      ) : (
-        children
-      )}
-
-      <div className="dh-parties">
-        <NodePanel role="alice" node={session?.nodes.alice} nodes={nodes} />
-
-        {/* Środek: wiadomości idą przez koordynatora. M3: tu stanie Mallory. */}
-        <div className="dh-channel">
-          <span className="dh-channel-label">koordynator</span>
-        </div>
-
-        <NodePanel role="bob" node={session?.nodes.bob} nodes={nodes} />
+    <section className="dh-shared" aria-labelledby="dh-shared-title">
+      <div className="dh-shared-header">
+        <h2 id="dh-shared-title">Parametry wspólne</h2>
+        <Badge tone={status.tone}>sesja {status.label}</Badge>
       </div>
-
-      {session && <SessionResult session={session} />}
-
-      {session && <EventLog events={session.events} />}
-    </>
+      <p className="formula">
+        p = <output>{session.p}</output>
+      </p>
+      <p className="formula">
+        g = <output>{session.g}</output>
+      </p>
+    </section>
   )
 }
 
-// Plakietka węzła: w sesji jego faza, poza sesją dostępność procesu.
-function nodeBadge(role: Role, node: DhNode | undefined, nodes: NodesState) {
-  if (node) return NODE_STATUS[node.status]
-  if (nodes.status === 'ready') return AVAILABILITY[nodes.nodes[role]]
-  if (nodes.status === 'error') return { label: 'nieznany', tone: 'error' as const }
-  return { label: 'sprawdzanie…', tone: 'neutral' as const }
-}
-
-// Komunikat pod przyciskiem, gdy nie da się rozpocząć sesji z powodu węzłów.
-function NodesHint({ nodes }: { nodes: NodesState }) {
-  let text: string | null = null
-  if (nodes.status === 'loading') text = 'Sprawdzanie dostępności węzłów…'
-  if (nodes.status === 'error') text = nodes.message
-  if (nodes.status === 'ready') {
-    const offline = (['alice', 'bob'] as const).filter((role) => nodes.nodes[role] === 'offline')
-    if (offline.length > 0) {
-      const names = offline.map((role) => ROLES[role].nameOf).join(' i ')
-      text = `Uruchom proces ${names}, żeby rozpocząć sesję.`
-    }
-  }
-  if (!text) return null
+// Koordynator nie wie, czy procesy węzłów działają (#37 nie ma heartbeatów).
+// Gdy sesja trwa, a ktoś jeszcze nie wysłał wartości, podpowiadamy, co sprawdzić.
+function WaitingHint({ session }: { session: DhSession }) {
+  if (session.status !== 'running') return null
+  const waiting = (['alice', 'bob'] as const).filter(
+    (role) => session.nodes[role].status === 'waiting',
+  )
+  if (waiting.length === 0) return null
+  const names = waiting.map((role) => ROLES[role].nameOf).join(' i ')
   return (
-    <p className="dh-note" id="dh-nodes-hint">
-      {text}
+    <p className="dh-note" role="status">
+      Czekamy na wartość publiczną od {names}. Jeśli się nie pojawia, sprawdź, czy proces
+      węzła jest uruchomiony (<code>python -m backend.dh_transport --role …</code>).
     </p>
   )
 }
 
-type NodePanelProps = {
-  role: Role
-  // Stan węzła w sesji; bez sesji undefined.
-  node: DhNode | undefined
-  nodes: NodesState
-}
-
 // Panel jednego węzła: status, tajny klucz (bez wartości), wartości publiczne, sekret.
-function NodePanel({ role, node, nodes }: NodePanelProps) {
+function NodePanel({ role, node }: { role: Role; node: DhNode | undefined }) {
   const { name, nameOf, priv, pub, other } = ROLES[role]
-  const status = nodeBadge(role, node, nodes)
+  const status = node && PARTICIPANT_STATUS[node.status]
   const otherPub = ROLES[other].pub
   const titleId = `dh-${role}-title`
 
@@ -352,7 +301,7 @@ function NodePanel({ role, node, nodes }: NodePanelProps) {
     <section className={`dh-party dh-party--${role}`} aria-labelledby={titleId}>
       <div className="dh-party-header">
         <h2 id={titleId}>{name}</h2>
-        <Badge tone={status.tone}>{status.label}</Badge>
+        {status && <Badge tone={status.tone}>{status.label}</Badge>}
       </div>
 
       <DhValue kind="private" label="Klucz prywatny" withValue={false}>
@@ -367,10 +316,18 @@ function NodePanel({ role, node, nodes }: NodePanelProps) {
         {otherPub}
       </DhValue>
 
-      <DhValue kind="private" label="Wspólny sekret" value={node?.sharedKey}>
-        K = {otherPub}
-        <sup>{priv}</sup> mod p
-      </DhValue>
+      {/* Bez diagnostyki K zostaje w procesie: po przetworzeniu wartości partnera
+          wiemy tylko, że węzeł je obliczył, więc zamiast „?” mówimy to wprost. */}
+      {node?.status === 'received' && node.sharedKey === undefined ? (
+        <DhValue kind="private" label="Wspólny sekret" withValue={false}>
+          <span className="formula">K</span> – obliczony, zna go tylko proces {nameOf}
+        </DhValue>
+      ) : (
+        <DhValue kind="private" label="Wspólny sekret" value={node?.sharedKey}>
+          K = {otherPub}
+          <sup>{priv}</sup> mod p
+        </DhValue>
+      )}
     </section>
   )
 }
@@ -378,7 +335,7 @@ function NodePanel({ role, node, nodes }: NodePanelProps) {
 type DhValueProps = {
   kind: 'private' | 'public'
   label: string
-  // undefined: węzeł jeszcze nie zgłosił wartości (pokazujemy „?”).
+  // undefined: wartości jeszcze nie ma (pokazujemy „?”).
   value?: number
   // false: pole bez wartości liczbowej (klucz prywatny).
   withValue?: boolean
@@ -408,6 +365,7 @@ function DhValue({ kind, label, value, withValue = true, children }: DhValueProp
 }
 
 // Porównanie sekretów obu stron. Pokazujemy dopiero, gdy oba węzły je zgłosiły.
+// API #37 nie udostępnia jeszcze K, więc do czasu uzgodnienia diagnostyki sekcja się nie pokazuje.
 function SessionResult({ session }: { session: DhSession }) {
   const kA = session.nodes.alice.sharedKey
   const kB = session.nodes.bob.sharedKey
@@ -439,54 +397,62 @@ function SessionResult({ session }: { session: DhSession }) {
   )
 }
 
-// Uporządkowany dziennik wiadomości przekazanych przez koordynatora.
+// Uporządkowany dziennik zdarzeń koordynatora.
 function EventLog({ events }: { events: DhEvent[] }) {
   return (
     <section className="dh-log" aria-labelledby="dh-log-title">
-      <h2 id="dh-log-title">Dziennik wiadomości</h2>
+      <h2 id="dh-log-title">Dziennik zdarzeń</h2>
       {events.length === 0 ? (
-        <p className="dh-note">Brak wiadomości w tej sesji.</p>
+        <p className="dh-note">Brak zdarzeń w tej sesji.</p>
       ) : (
         <div className="dh-log-scroll">
           <table>
             <thead>
               <tr>
                 <th scope="col">Nr</th>
+                <th scope="col">Zdarzenie</th>
                 <th scope="col">Nadawca → odbiorca</th>
-                <th scope="col">Typ</th>
                 <th scope="col">Wartość</th>
                 <th scope="col">Status</th>
               </tr>
             </thead>
             <tbody>
-              {events.map((event) => {
-                const status = EVENT_STATUS[event.status]
-                return (
-                  <tr key={event.seq}>
-                    <td>{event.seq}</td>
-                    <td>
-                      <span className={`dh-role dh-role--${event.from}`}>
-                        {ROLES[event.from].name}
-                      </span>{' '}
-                      →{' '}
-                      <span className={`dh-role dh-role--${event.to}`}>
-                        {ROLES[event.to].name}
-                      </span>
-                    </td>
-                    <td className="formula">{event.type}</td>
-                    <td className="formula">{event.value}</td>
-                    <td>
-                      <Badge tone={status.tone}>{status.label}</Badge>
-                    </td>
-                  </tr>
-                )
-              })}
+              {events.map((event) => (
+                <EventRow key={event.seq} event={event} />
+              ))}
             </tbody>
           </table>
         </div>
       )}
     </section>
   )
+}
+
+// Wiersz dziennika. Zdarzenia sesji (utworzenie, start, koniec) nie mają nadawcy
+// ani wartości, więc w tych kolumnach jest kreska.
+function EventRow({ event }: { event: DhEvent }) {
+  const status = MESSAGE_STATUS[event.status]
+  return (
+    <tr>
+      <td>{event.seq}</td>
+      <td>{EVENT_TYPE[event.type]}</td>
+      <td>
+        {event.from && event.to ? (
+          <>
+            <RoleName role={event.from} /> → <RoleName role={event.to} />
+          </>
+        ) : (
+          '–'
+        )}
+      </td>
+      <td className="formula">{event.value ?? '–'}</td>
+      <td>{event.from ? <Badge tone={status.tone}>{status.label}</Badge> : '–'}</td>
+    </tr>
+  )
+}
+
+function RoleName({ role }: { role: Role }) {
+  return <span className={`dh-role dh-role--${role}`}>{ROLES[role].name}</span>
 }
 
 function Badge({ tone, children }: { tone: Tone; children: ReactNode }) {

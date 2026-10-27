@@ -23,15 +23,17 @@ export class ApiError extends Error {
 
 // Wysyła parametry do backendu i zwraca szyfrogram obliczony przez backend.
 export async function encryptRsa(data: RsaEncryptRequest): Promise<RsaEncryptResponse> {
-  const body = await postJson('/api/v1/rsa/demo/encrypt', data)
+  const body = await requestJson('POST', '/api/v1/rsa/demo/encrypt', data)
 
   const ciphertext = (body as { ciphertext?: unknown } | null)?.ciphertext
   if (typeof ciphertext !== 'number') throw unexpectedFormat()
   return { ciphertext }
 }
 
-// Sesja DH (#38). Kształt danych to propozycja frontendu; po ustaleniu kontraktu
-// w #37 odpowiedź backendu mapujemy na te typy w funkcjach poniżej.
+// Sesja DH (#38) z koordynatora (#37, backend/DH_SESSIONS.md).
+// Odpowiedź backendu sprawdzamy i mapujemy na model widoku w toDhSession().
+
+const DH_SESSIONS_URL = '/api/v1/dh/sessions'
 
 export type DhSessionParams = {
   prime: number
@@ -41,31 +43,40 @@ export type DhSessionParams = {
 // Uczestnicy sesji. M3: dojdzie 'mallory'.
 export type Role = 'alice' | 'bob'
 
-// Stan węzła. Fazy idle, public_ready, complete pochodzą z węzłów (#36, NodeState.phase);
-// offline i error zgłasza koordynator, bo niedziałający węzeł sam o sobie nie powie.
-export type NodeStatus = 'offline' | 'idle' | 'public_ready' | 'complete' | 'error'
+// Postęp uczestnika potwierdzony przez koordynatora: waiting → published → received.
+// published: koordynator przyjął jego wartość publiczną;
+// received: węzeł potwierdził przetworzenie wartości partnera.
+export type ParticipantStatus = 'waiting' | 'published' | 'received'
 
-export type SessionStatus = 'running' | 'completed' | 'failed'
+export type SessionStatus = 'created' | 'running' | 'completed' | 'cancelled'
 
-export type EventStatus = 'accepted' | 'rejected'
+export type EventType =
+  | 'session_created'
+  | 'session_started'
+  | 'public_value'
+  | 'message_processed'
+  | 'session_completed'
+  | 'session_cancelled'
 
-// Stan jednego węzła. Brak wartości = węzeł jeszcze jej nie zgłosił.
+export type MessageStatus = 'queued' | 'processed'
+
+// Stan jednego uczestnika. Brak wartości = jeszcze jej nie ma.
 export type DhNode = {
-  status: NodeStatus
+  status: ParticipantStatus
   publicValue?: number
   receivedValue?: number
-  // Diagnostyka węzła, nie wiadomość protokołu.
+  // K z diagnostyki węzła. API #37 go nie udostępnia, więc na razie zawsze undefined.
   sharedKey?: number
 }
 
-// Wiadomość protokołu przekazana przez koordynatora.
+// Zdarzenie z dziennika koordynatora. Zdarzenia sesji nie mają nadawcy ani wartości.
 export type DhEvent = {
   seq: number
-  from: Role
-  to: Role
-  type: string
-  value: number
-  status: EventStatus
+  type: EventType
+  from: Role | null
+  to: Role | null
+  value: number | null
+  status: MessageStatus
 }
 
 export type DhSession = {
@@ -77,83 +88,168 @@ export type DhSession = {
   events: DhEvent[]
 }
 
-// TYMCZASOWO, do czasu API sesji (#37): przebieg przykładowej sesji dla p = 23, g = 5,
-// a = 6, b = 15 (wektor referencyjny z #16), rozpisany w czasie, żeby było co odpytywać.
-const SAMPLE_ID = 'przyklad'
-const SAMPLE_STEP_MS = 1000
-let sampleStartedAt = 0
-
-function sampleSession(elapsedMs: number): DhSession {
-  const step = Math.min(2, Math.floor(elapsedMs / SAMPLE_STEP_MS))
-  const aliceToBob: DhEvent = {
-    seq: 1, from: 'alice', to: 'bob', type: 'PUBLIC_VALUE', value: 8, status: 'accepted',
-  }
-  const bobToAlice: DhEvent = {
-    seq: 2, from: 'bob', to: 'alice', type: 'PUBLIC_VALUE', value: 19, status: 'accepted',
-  }
-  return {
-    id: SAMPLE_ID,
-    p: 23,
-    g: 5,
-    status: step < 2 ? 'running' : 'completed',
-    nodes: {
-      alice:
-        step < 2
-          ? { status: 'public_ready', publicValue: 8 }
-          : { status: 'complete', publicValue: 8, receivedValue: 19, sharedKey: 2 },
-      bob:
-        step < 1
-          ? { status: 'public_ready', publicValue: 19 }
-          : { status: 'complete', publicValue: 19, receivedValue: 8, sharedKey: 2 },
-    },
-    events: [aliceToBob, bobToAlice].slice(0, step),
-  }
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-// Dostępność procesu węzła poza sesją, zgłaszana przez koordynatora.
-export type NodeAvailability = 'online' | 'offline'
-
-// Zwraca dostępność węzłów Alice i Boba.
-// TYMCZASOWO: zamiast zapytania do koordynatora (#37) oba węzły są dostępne.
-export async function fetchDhNodes(): Promise<Record<Role, NodeAvailability>> {
-  await delay(200)
-  return { alice: 'online', bob: 'online' }
-}
-
-// Rozpoczyna sesję DH z publicznymi parametrami i zwraca jej początkowy stan.
-// TYMCZASOWO: zamiast POST do API sesji (#37) zaczyna przykładową sesję. Przykład pasuje
-// tylko do p = 23, g = 5, więc dla innych parametrów zwracamy błąd zamiast cudzego wyniku.
+// Tworzy sesję i od razu ją uruchamia; zwraca stan po starcie.
+// Gdy start się nie uda, anulujemy utworzoną sesję, żeby nie blokowała następnej.
 export async function startDhSession(params: DhSessionParams): Promise<DhSession> {
-  await delay(400)
-  if (params.prime !== 23 || params.generator !== 5) {
-    throw new ApiError(
-      'Do czasu podłączenia API sesji dostępny jest tylko przykład p = 23, g = 5.',
-    )
+  const created = toDhSession(
+    await requestJson('POST', DH_SESSIONS_URL, { ...params, mode: 'normal' }),
+  )
+  try {
+    return toDhSession(await requestJson('POST', `${DH_SESSIONS_URL}/${created.id}/start`))
+  } catch (error) {
+    await cancelDhSession(created.id).catch(() => undefined)
+    throw error
   }
-  sampleStartedAt = Date.now()
-  return sampleSession(0)
 }
 
-// Zwraca bieżący stan sesji: fazy węzłów i dziennik zdarzeń.
-// TYMCZASOWO: zamiast GET z API sesji (#37) zwraca kolejny etap przykładu.
+// Zwraca bieżący stan sesji: postęp uczestników, wiadomości i dziennik zdarzeń.
 export async function fetchDhSession(id: string): Promise<DhSession> {
-  await delay(150)
-  if (id !== SAMPLE_ID) throw new ApiError('Nie znaleziono sesji.')
-  return sampleSession(Date.now() - sampleStartedAt)
+  return toDhSession(await requestJson('GET', `${DH_SESSIONS_URL}/${id}`))
 }
 
-// Wysyła JSON metodą POST i zwraca treść odpowiedzi; błędy zamienia na ApiError.
-async function postJson(url: string, data: unknown): Promise<unknown> {
+export async function cancelDhSession(id: string): Promise<DhSession> {
+  return toDhSession(await requestJson('POST', `${DH_SESSIONS_URL}/${id}/cancel`))
+}
+
+// Anuluje bieżącą sesję koordynatora, jeśli jeszcze trwa (np. pozostałą po odświeżeniu
+// strony). Koordynator trzyma jedną sesję naraz, więc inaczej nowej nie da się zacząć.
+export async function cancelActiveDhSession(): Promise<void> {
+  let current: DhSession
+  try {
+    current = toDhSession(await requestJson('GET', `${DH_SESSIONS_URL}/current`))
+  } catch (error) {
+    if (error instanceof ApiError && error.code === 'SESSION_NOT_FOUND') return
+    throw error
+  }
+  if (current.status === 'created' || current.status === 'running') {
+    await cancelDhSession(current.id)
+  }
+}
+
+const ROLES: readonly Role[] = ['alice', 'bob']
+const SESSION_STATUSES: readonly SessionStatus[] = ['created', 'running', 'completed', 'cancelled']
+const PARTICIPANT_STATUSES: readonly ParticipantStatus[] = ['waiting', 'published', 'received']
+const MESSAGE_STATUSES: readonly MessageStatus[] = ['queued', 'processed']
+const EVENT_TYPES: readonly EventType[] = [
+  'session_created',
+  'session_started',
+  'public_value',
+  'message_processed',
+  'session_completed',
+  'session_cancelled',
+]
+
+type RawMessage = {
+  sender: Role
+  recipient: Role
+  public_value: number
+  status: MessageStatus
+}
+
+function isOneOf<T extends string>(values: readonly T[], value: unknown): value is T {
+  return typeof value === 'string' && (values as readonly string[]).includes(value)
+}
+
+function isRoleOrNull(value: unknown): value is Role | null {
+  return value === null || isOneOf(ROLES, value)
+}
+
+// Sprawdza odpowiedź sesji i zamienia ją na model widoku. Niepełna albo
+// niezgodna odpowiedź to błąd: nie pokazujemy częściowo poprawnych danych.
+function toDhSession(body: unknown): DhSession {
+  const raw = body as Record<string, unknown> | null
+  const participants = raw?.participants as Record<string, unknown> | undefined
+  if (
+    !raw ||
+    typeof raw.session_id !== 'string' ||
+    typeof raw.prime !== 'number' ||
+    typeof raw.generator !== 'number' ||
+    !isOneOf(SESSION_STATUSES, raw.status) ||
+    !participants ||
+    !ROLES.every((role) => isOneOf(PARTICIPANT_STATUSES, participants[role])) ||
+    !Array.isArray(raw.messages) ||
+    !Array.isArray(raw.events)
+  ) {
+    throw unexpectedFormat()
+  }
+
+  const messages = raw.messages.map((item): RawMessage => {
+    const message = item as Record<string, unknown> | null
+    if (
+      !message ||
+      !isOneOf(ROLES, message.sender) ||
+      !isOneOf(ROLES, message.recipient) ||
+      typeof message.public_value !== 'number' ||
+      !isOneOf(MESSAGE_STATUSES, message.status)
+    ) {
+      throw unexpectedFormat()
+    }
+    return {
+      sender: message.sender,
+      recipient: message.recipient,
+      public_value: message.public_value,
+      status: message.status,
+    }
+  })
+
+  const events = raw.events.map((item): DhEvent => {
+    const event = item as Record<string, unknown> | null
+    const value = event?.public_value
+    if (
+      !event ||
+      typeof event.sequence !== 'number' ||
+      !isOneOf(EVENT_TYPES, event.type) ||
+      !isRoleOrNull(event.sender) ||
+      !isRoleOrNull(event.recipient) ||
+      (value !== null && typeof value !== 'number') ||
+      !isOneOf(MESSAGE_STATUSES, event.status)
+    ) {
+      throw unexpectedFormat()
+    }
+    return {
+      seq: event.sequence,
+      type: event.type,
+      from: event.sender,
+      to: event.recipient,
+      value: value as number | null,
+      status: event.status,
+    }
+  })
+
+  // Wartość publiczna uczestnika: jego wiadomość przyjęta przez koordynatora.
+  // Otrzymana: wiadomość do niego, której przetworzenie potwierdził.
+  function node(role: Role): DhNode {
+    return {
+      status: participants![role] as ParticipantStatus,
+      publicValue: messages.find((m) => m.sender === role)?.public_value,
+      receivedValue: messages.find((m) => m.recipient === role && m.status === 'processed')
+        ?.public_value,
+    }
+  }
+
+  return {
+    id: raw.session_id,
+    p: raw.prime,
+    g: raw.generator,
+    status: raw.status,
+    nodes: { alice: node('alice'), bob: node('bob') },
+    events: [...events].sort((x, y) => x.seq - y.seq),
+  }
+}
+
+// Wysyła żądanie (z JSON-em, jeśli jest treść) i zwraca treść odpowiedzi;
+// błędy zamienia na ApiError.
+async function requestJson(
+  method: 'GET' | 'POST',
+  url: string,
+  data?: unknown,
+): Promise<unknown> {
   let response: Response
   try {
     response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
+      method,
+      headers: data === undefined ? undefined : { 'Content-Type': 'application/json' },
+      body: data === undefined ? undefined : JSON.stringify(data),
     })
   } catch {
     // fetch rzuca wyjątek, gdy w ogóle nie da się wysłać żądania.
