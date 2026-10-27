@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { ApiError, fetchDhNodes, startDhSession } from './api'
+import { ApiError, fetchDhNodes, fetchDhSession, startDhSession } from './api'
 import type {
   DhEvent,
   DhNode,
@@ -79,6 +79,10 @@ async function checkNodes(): Promise<NodesState> {
   }
 }
 
+// Co ile odpytujemy stan trwającej sesji i dostępność węzłów.
+const SESSION_POLL_MS = 1000
+const NODES_POLL_MS = 3000
+
 const DEFAULTS: Record<DhField, string> = {
   prime: '23',
   generator: '5',
@@ -95,17 +99,61 @@ export function DhExchange() {
   const nodesReady =
     nodes.status === 'ready' && nodes.nodes.alice === 'online' && nodes.nodes.bob === 'online'
 
-  // Dostępność węzłów sprawdzamy przy otwarciu widoku i po resecie.
-  // (Odświeżanie w odstępach czasu dojdzie razem z pollingiem.)
+  // Sesję odpytujemy tylko, dopóki trwa. Zakończona albo nieudana nie zmieni się już.
+  const pollingId =
+    view.status === 'session' && view.session.status === 'running' ? view.session.id : null
+
+  // Dostępność węzłów sprawdzamy od razu i potem co NODES_POLL_MS.
   useEffect(() => {
     let active = true
-    void checkNodes().then((state) => {
-      if (active) setNodes(state)
-    })
+    let timer: number | undefined
+    async function tick() {
+      const state = await checkNodes()
+      if (!active) return
+      setNodes(state)
+      timer = window.setTimeout(tick, NODES_POLL_MS)
+    }
+    void tick()
     return () => {
       active = false
+      window.clearTimeout(timer)
     }
   }, [])
+
+  // Odpytywanie trwającej sesji. Kolejne zapytanie idzie dopiero po odpowiedzi na
+  // poprzednie, więc się nie nakładają. Reset, nowy start albo koniec sesji je zatrzymuje.
+  useEffect(() => {
+    if (!pollingId) return
+    const sessionId = pollingId
+    const id = requestId.current
+    let active = true
+    let timer: number | undefined
+
+    async function tick() {
+      try {
+        const session = await fetchDhSession(sessionId)
+        if (!active || id !== requestId.current) return
+        setView({ status: 'session', session })
+        if (session.status === 'running') timer = window.setTimeout(tick, SESSION_POLL_MS)
+      } catch (error) {
+        if (!active || id !== requestId.current) return
+        // Bez aktualnego stanu nie pokazujemy starego: zamiast sesji tylko błąd.
+        setView({
+          status: 'error',
+          message:
+            error instanceof ApiError
+              ? `Utracono stan sesji: ${error.message}`
+              : 'Utracono stan sesji.',
+        })
+      }
+    }
+
+    timer = window.setTimeout(tick, SESSION_POLL_MS)
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
+  }, [pollingId])
 
   async function handleStart(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -139,13 +187,11 @@ export function DhExchange() {
     }
   }
 
-  // Reset działa też w trakcie uruchamiania: porzuca czekające żądanie.
+  // Reset działa też w trakcie uruchamiania i odpytywania: porzuca czekające żądania.
   function handleReset() {
     requestId.current++
     setFieldErrors({})
     setView({ status: 'empty' })
-    setNodes({ status: 'loading' })
-    void checkNodes().then(setNodes)
   }
 
   return (

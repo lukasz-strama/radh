@@ -30,7 +30,7 @@ export async function encryptRsa(data: RsaEncryptRequest): Promise<RsaEncryptRes
   return { ciphertext }
 }
 
-// Sesja DH. Kształt danych to propozycja frontendu; po ustaleniu kontraktu
+// Sesja DH (#38). Kształt danych to propozycja frontendu; po ustaleniu kontraktu
 // w #37 odpowiedź backendu mapujemy na te typy w funkcjach poniżej.
 
 export type DhSessionParams = {
@@ -77,21 +77,41 @@ export type DhSession = {
   events: DhEvent[]
 }
 
-// TYMCZASOWO, do czasu API sesji (#37): przykładowa sesja dla p = 23, g = 5,
-// a = 6, b = 15 (wektor referencyjny z #16).
-const SAMPLE_SESSION: DhSession = {
-  id: 'przyklad',
-  p: 23,
-  g: 5,
-  status: 'completed',
-  nodes: {
-    alice: { status: 'complete', publicValue: 8, receivedValue: 19, sharedKey: 2 },
-    bob: { status: 'complete', publicValue: 19, receivedValue: 8, sharedKey: 2 },
-  },
-  events: [
-    { seq: 1, from: 'alice', to: 'bob', type: 'PUBLIC_VALUE', value: 8, status: 'accepted' },
-    { seq: 2, from: 'bob', to: 'alice', type: 'PUBLIC_VALUE', value: 19, status: 'accepted' },
-  ],
+// TYMCZASOWO, do czasu API sesji (#37): przebieg przykładowej sesji dla p = 23, g = 5,
+// a = 6, b = 15 (wektor referencyjny z #16), rozpisany w czasie, żeby było co odpytywać.
+const SAMPLE_ID = 'przyklad'
+const SAMPLE_STEP_MS = 1000
+let sampleStartedAt = 0
+
+function sampleSession(elapsedMs: number): DhSession {
+  const step = Math.min(2, Math.floor(elapsedMs / SAMPLE_STEP_MS))
+  const aliceToBob: DhEvent = {
+    seq: 1, from: 'alice', to: 'bob', type: 'PUBLIC_VALUE', value: 8, status: 'accepted',
+  }
+  const bobToAlice: DhEvent = {
+    seq: 2, from: 'bob', to: 'alice', type: 'PUBLIC_VALUE', value: 19, status: 'accepted',
+  }
+  return {
+    id: SAMPLE_ID,
+    p: 23,
+    g: 5,
+    status: step < 2 ? 'running' : 'completed',
+    nodes: {
+      alice:
+        step < 2
+          ? { status: 'public_ready', publicValue: 8 }
+          : { status: 'complete', publicValue: 8, receivedValue: 19, sharedKey: 2 },
+      bob:
+        step < 1
+          ? { status: 'public_ready', publicValue: 19 }
+          : { status: 'complete', publicValue: 19, receivedValue: 8, sharedKey: 2 },
+    },
+    events: [aliceToBob, bobToAlice].slice(0, step),
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 // Dostępność procesu węzła poza sesją, zgłaszana przez koordynatora.
@@ -100,22 +120,30 @@ export type NodeAvailability = 'online' | 'offline'
 // Zwraca dostępność węzłów Alice i Boba.
 // TYMCZASOWO: zamiast zapytania do koordynatora (#37) oba węzły są dostępne.
 export async function fetchDhNodes(): Promise<Record<Role, NodeAvailability>> {
-  await new Promise((resolve) => setTimeout(resolve, 200))
+  await delay(200)
   return { alice: 'online', bob: 'online' }
 }
 
-// Rozpoczyna sesję DH z publicznymi parametrami i zwraca jej stan.
-// TYMCZASOWO: zamiast POST do API sesji (#37) zwraca przykładową sesję, z krótkim
-// opóźnieniem, żeby było widać stan ładowania. Przykład pasuje tylko do p = 23, g = 5,
-// więc dla innych parametrów zwracamy błąd zamiast cudzego wyniku.
+// Rozpoczyna sesję DH z publicznymi parametrami i zwraca jej początkowy stan.
+// TYMCZASOWO: zamiast POST do API sesji (#37) zaczyna przykładową sesję. Przykład pasuje
+// tylko do p = 23, g = 5, więc dla innych parametrów zwracamy błąd zamiast cudzego wyniku.
 export async function startDhSession(params: DhSessionParams): Promise<DhSession> {
-  await new Promise((resolve) => setTimeout(resolve, 400))
-  if (params.prime !== SAMPLE_SESSION.p || params.generator !== SAMPLE_SESSION.g) {
+  await delay(400)
+  if (params.prime !== 23 || params.generator !== 5) {
     throw new ApiError(
       'Do czasu podłączenia API sesji dostępny jest tylko przykład p = 23, g = 5.',
     )
   }
-  return SAMPLE_SESSION
+  sampleStartedAt = Date.now()
+  return sampleSession(0)
+}
+
+// Zwraca bieżący stan sesji: fazy węzłów i dziennik zdarzeń.
+// TYMCZASOWO: zamiast GET z API sesji (#37) zwraca kolejny etap przykładu.
+export async function fetchDhSession(id: string): Promise<DhSession> {
+  await delay(150)
+  if (id !== SAMPLE_ID) throw new ApiError('Nie znaleziono sesji.')
+  return sampleSession(Date.now() - sampleStartedAt)
 }
 
 // Wysyła JSON metodą POST i zwraca treść odpowiedzi; błędy zamienia na ApiError.
