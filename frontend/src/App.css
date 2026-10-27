@@ -425,3 +425,8 @@
 .dh-role--bob {
   --party-color: #1f9d55;
 }
+
+/* Przycisk wyłączony z powodu węzłów to nie „czekaj”, tylko „nie da się” */
+.dh-buttons button:disabled:not([aria-busy='true']) {
+  cursor: not-allowed;
+}

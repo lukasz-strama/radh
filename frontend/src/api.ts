@@ -30,7 +30,7 @@ export async function encryptRsa(data: RsaEncryptRequest): Promise<RsaEncryptRes
   return { ciphertext }
 }
 
-// Sesja DH (#38). Kształt danych to propozycja frontendu; po ustaleniu kontraktu
+// Sesja DH. Kształt danych to propozycja frontendu; po ustaleniu kontraktu
 // w #37 odpowiedź backendu mapujemy na te typy w funkcjach poniżej.
 
 export type DhSessionParams = {
@@ -92,6 +92,16 @@ const SAMPLE_SESSION: DhSession = {
     { seq: 1, from: 'alice', to: 'bob', type: 'PUBLIC_VALUE', value: 8, status: 'accepted' },
     { seq: 2, from: 'bob', to: 'alice', type: 'PUBLIC_VALUE', value: 19, status: 'accepted' },
   ],
+}
+
+// Dostępność procesu węzła poza sesją, zgłaszana przez koordynatora.
+export type NodeAvailability = 'online' | 'offline'
+
+// Zwraca dostępność węzłów Alice i Boba.
+// TYMCZASOWO: zamiast zapytania do koordynatora (#37) oba węzły są dostępne.
+export async function fetchDhNodes(): Promise<Record<Role, NodeAvailability>> {
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  return { alice: 'online', bob: 'online' }
 }
 
 // Rozpoczyna sesję DH z publicznymi parametrami i zwraca jej stan.

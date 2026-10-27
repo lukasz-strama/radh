@@ -2,10 +2,19 @@
 // Frontend niczego nie liczy i nie wymyśla zdarzeń: pokazuje stan sesji z API.
 // Sekrety a i b nigdy nie przechodzą przez przeglądarkę.
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { ApiError, startDhSession } from './api'
-import type { DhEvent, DhSession, EventStatus, NodeStatus, Role, SessionStatus } from './api'
+import { ApiError, fetchDhNodes, startDhSession } from './api'
+import type {
+  DhEvent,
+  DhNode,
+  DhSession,
+  EventStatus,
+  NodeAvailability,
+  NodeStatus,
+  Role,
+  SessionStatus,
+} from './api'
 import { Field } from './Field'
 import { validateDhParams } from './validation'
 import type { DhField, DhFieldErrors } from './validation'
@@ -16,6 +25,12 @@ type ViewState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'session'; session: DhSession }
+
+// Dostępność węzłów przed sesją.
+type NodesState =
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ready'; nodes: Record<Role, NodeAvailability> }
 
 // Nazwa uczestnika (też w dopełniaczu) i symbole we wzorach (Alice: a, A; Bob: b, B).
 const ROLES: Record<
@@ -36,6 +51,11 @@ const NODE_STATUS: Record<NodeStatus, { label: string; tone: Tone }> = {
   error: { label: 'błąd', tone: 'error' },
 }
 
+const AVAILABILITY: Record<NodeAvailability, { label: string; tone: Tone }> = {
+  online: { label: 'dostępny', tone: 'ok' },
+  offline: { label: 'niedostępny', tone: 'error' },
+}
+
 const SESSION_STATUS: Record<SessionStatus, { label: string; tone: Tone }> = {
   running: { label: 'w toku', tone: 'neutral' },
   completed: { label: 'zakończona', tone: 'ok' },
@@ -45,6 +65,18 @@ const SESSION_STATUS: Record<SessionStatus, { label: string; tone: Tone }> = {
 const EVENT_STATUS: Record<EventStatus, { label: string; tone: Tone }> = {
   accepted: { label: 'przyjęta', tone: 'ok' },
   rejected: { label: 'odrzucona', tone: 'error' },
+}
+
+// Pyta koordynatora o dostępność węzłów; błąd zamienia na stan do wyświetlenia.
+async function checkNodes(): Promise<NodesState> {
+  try {
+    return { status: 'ready', nodes: await fetchDhNodes() }
+  } catch (error) {
+    return {
+      status: 'error',
+      message: error instanceof ApiError ? error.message : 'Nie udało się sprawdzić węzłów.',
+    }
+  }
 }
 
 const DEFAULTS: Record<DhField, string> = {
@@ -58,11 +90,26 @@ export function DhExchange() {
   // Numer bieżącego żądania. Reset albo nowy start go zwiększa, więc spóźniona
   // odpowiedź starego żądania jest ignorowana i nie nadpisze nowszego stanu.
   const requestId = useRef(0)
+  const [nodes, setNodes] = useState<NodesState>({ status: 'loading' })
   const isLoading = view.status === 'loading'
+  const nodesReady =
+    nodes.status === 'ready' && nodes.nodes.alice === 'online' && nodes.nodes.bob === 'online'
+
+  // Dostępność węzłów sprawdzamy przy otwarciu widoku i po resecie.
+  // (Odświeżanie w odstępach czasu dojdzie razem z pollingiem.)
+  useEffect(() => {
+    let active = true
+    void checkNodes().then((state) => {
+      if (active) setNodes(state)
+    })
+    return () => {
+      active = false
+    }
+  }, [])
 
   async function handleStart(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (isLoading) return
+    if (isLoading || !nodesReady) return
     const id = ++requestId.current
     setView({ status: 'empty' })
 
@@ -97,6 +144,8 @@ export function DhExchange() {
     requestId.current++
     setFieldErrors({})
     setView({ status: 'empty' })
+    setNodes({ status: 'loading' })
+    void checkNodes().then(setNodes)
   }
 
   return (
@@ -105,15 +154,16 @@ export function DhExchange() {
 
       <div className="layout">
         <section className="dh-scene" aria-label="Przebieg sesji">
-          {view.status === 'session' ? (
-            <SessionView session={view.session} />
-          ) : (
-            <p className="dh-placeholder">
-              {isLoading
-                ? 'Uruchamianie sesji…'
-                : 'Podaj parametry publiczne i kliknij „Rozpocznij sesję”.'}
-            </p>
-          )}
+          {/* Węzły widać zawsze: przed sesją z dostępnością, w sesji z fazą. */}
+          <Scene session={view.status === 'session' ? view.session : null} nodes={nodes}>
+            {view.status !== 'session' && (
+              <p className="dh-placeholder">
+                {isLoading
+                  ? 'Uruchamianie sesji…'
+                  : 'Podaj parametry publiczne i kliknij „Rozpocznij sesję”.'}
+              </p>
+            )}
+          </Scene>
         </section>
 
         <aside className="panel" aria-label="Parametry sesji">
@@ -136,13 +186,20 @@ export function DhExchange() {
             </p>
 
             <div className="dh-buttons">
-              <button type="submit" disabled={isLoading} aria-busy={isLoading}>
+              <button
+                type="submit"
+                disabled={isLoading || !nodesReady}
+                aria-busy={isLoading}
+                aria-describedby={nodesReady ? undefined : 'dh-nodes-hint'}
+              >
                 {isLoading ? 'Uruchamianie…' : 'Rozpocznij sesję'}
               </button>
               <button type="button" onClick={handleReset}>
                 Reset
               </button>
             </div>
+
+            <NodesHint nodes={nodes} />
 
             {view.status === 'error' && (
               <p className="api-error" role="alert">
@@ -156,48 +213,92 @@ export function DhExchange() {
   )
 }
 
-// Parametry, węzły, wynik i dziennik jednej sesji.
-function SessionView({ session }: { session: DhSession }) {
-  const sessionStatus = SESSION_STATUS[session.status]
+type SceneProps = {
+  session: DhSession | null
+  nodes: NodesState
+  children?: ReactNode
+}
+
+// Parametry, węzły, wynik i dziennik. Bez sesji: same węzły z dostępnością.
+function Scene({ session, nodes, children }: SceneProps) {
+  const sessionStatus = session && SESSION_STATUS[session.status]
 
   return (
     <>
-      <section className="dh-shared" aria-labelledby="dh-shared-title">
-        <div className="dh-shared-header">
-          <h2 id="dh-shared-title">Parametry wspólne</h2>
-          <Badge tone={sessionStatus.tone}>sesja {sessionStatus.label}</Badge>
-        </div>
-        <p className="formula">
-          p = <output>{session.p}</output>
-        </p>
-        <p className="formula">
-          g = <output>{session.g}</output>
-        </p>
-      </section>
+      {session && sessionStatus ? (
+        <section className="dh-shared" aria-labelledby="dh-shared-title">
+          <div className="dh-shared-header">
+            <h2 id="dh-shared-title">Parametry wspólne</h2>
+            <Badge tone={sessionStatus.tone}>sesja {sessionStatus.label}</Badge>
+          </div>
+          <p className="formula">
+            p = <output>{session.p}</output>
+          </p>
+          <p className="formula">
+            g = <output>{session.g}</output>
+          </p>
+        </section>
+      ) : (
+        children
+      )}
 
       <div className="dh-parties">
-        <NodePanel role="alice" session={session} />
+        <NodePanel role="alice" node={session?.nodes.alice} nodes={nodes} />
 
         {/* Środek: wiadomości idą przez koordynatora. M3: tu stanie Mallory. */}
         <div className="dh-channel">
           <span className="dh-channel-label">koordynator</span>
         </div>
 
-        <NodePanel role="bob" session={session} />
+        <NodePanel role="bob" node={session?.nodes.bob} nodes={nodes} />
       </div>
 
-      <SessionResult session={session} />
+      {session && <SessionResult session={session} />}
 
-      <EventLog events={session.events} />
+      {session && <EventLog events={session.events} />}
     </>
   )
 }
 
+// Plakietka węzła: w sesji jego faza, poza sesją dostępność procesu.
+function nodeBadge(role: Role, node: DhNode | undefined, nodes: NodesState) {
+  if (node) return NODE_STATUS[node.status]
+  if (nodes.status === 'ready') return AVAILABILITY[nodes.nodes[role]]
+  if (nodes.status === 'error') return { label: 'nieznany', tone: 'error' as const }
+  return { label: 'sprawdzanie…', tone: 'neutral' as const }
+}
+
+// Komunikat pod przyciskiem, gdy nie da się rozpocząć sesji z powodu węzłów.
+function NodesHint({ nodes }: { nodes: NodesState }) {
+  let text: string | null = null
+  if (nodes.status === 'loading') text = 'Sprawdzanie dostępności węzłów…'
+  if (nodes.status === 'error') text = nodes.message
+  if (nodes.status === 'ready') {
+    const offline = (['alice', 'bob'] as const).filter((role) => nodes.nodes[role] === 'offline')
+    if (offline.length > 0) {
+      const names = offline.map((role) => ROLES[role].nameOf).join(' i ')
+      text = `Uruchom proces ${names}, żeby rozpocząć sesję.`
+    }
+  }
+  if (!text) return null
+  return (
+    <p className="dh-note" id="dh-nodes-hint">
+      {text}
+    </p>
+  )
+}
+
+type NodePanelProps = {
+  role: Role
+  // Stan węzła w sesji; bez sesji undefined.
+  node: DhNode | undefined
+  nodes: NodesState
+}
+
 // Panel jednego węzła: status, tajny klucz (bez wartości), wartości publiczne, sekret.
-function NodePanel({ role, session }: { role: Role; session: DhSession }) {
+function NodePanel({ role, node, nodes }: NodePanelProps) {
   const { name, nameOf, priv, pub, other } = ROLES[role]
-  const node = session.nodes[role]
-  const status = NODE_STATUS[node.status]
+  const status = nodeBadge(role, node, nodes)
   const otherPub = ROLES[other].pub
   const titleId = `dh-${role}-title`
 
@@ -212,15 +313,15 @@ function NodePanel({ role, session }: { role: Role; session: DhSession }) {
         <span className="formula">{priv}</span> – zna go tylko proces {nameOf}
       </DhValue>
 
-      <DhValue kind="public" label="Wartość publiczna" value={node.publicValue}>
+      <DhValue kind="public" label="Wartość publiczna" value={node?.publicValue}>
         {pub} = g<sup>{priv}</sup> mod p
       </DhValue>
 
-      <DhValue kind="public" label="Otrzymana wartość" value={node.receivedValue}>
+      <DhValue kind="public" label="Otrzymana wartość" value={node?.receivedValue}>
         {otherPub}
       </DhValue>
 
-      <DhValue kind="private" label="Wspólny sekret" value={node.sharedKey}>
+      <DhValue kind="private" label="Wspólny sekret" value={node?.sharedKey}>
         K = {otherPub}
         <sup>{priv}</sup> mod p
       </DhValue>
@@ -286,7 +387,7 @@ function SessionResult({ session }: { session: DhSession }) {
         </p>
       )}
       <p className="dh-note">
-        Wartości K pochodzą z diagnostyki węzłów, nie z wiadomości protokołu.
+        K nie jest przesyłane – pokazujemy je tylko na potrzeby demonstracji.
       </p>
     </section>
   )
