@@ -4,8 +4,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.datastructures import State
 
 from app.main import app
+from app.node_presence import PresenceStore
 from app.sessions import SessionStore
 
 BASE = "/api/v1/dh/sessions"
@@ -15,9 +17,13 @@ B = dict(message_id="bob-public", sender="bob", recipient="alice", type="public_
 
 @pytest.fixture
 def api(monkeypatch):
-    monkeypatch.setattr(app.state, "dh_sessions", SessionStore())
-    with TestClient(app) as client:
-        yield client
+    # State przechowuje atrybuty dynamicznie; podmieniamy zwykły atrybut aplikacji.
+    with monkeypatch.context() as isolated:
+        isolated.setattr(app, "state", State({
+            "dh_sessions": SessionStore(), "dh_presence": PresenceStore(),
+        }))
+        with TestClient(app) as client:
+            yield client
 
 
 def create(api, session_id="ref", **extra):
