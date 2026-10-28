@@ -8,6 +8,8 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 
 from .api import dh_router, router
+from .node_presence import PresenceStore, router as presence_router
+from .sessions import SessionError, SessionStore, router as sessions_router
 from .crypto_core import (
     CryptoCoreCallError,
     CryptoCoreInputError,
@@ -28,6 +30,10 @@ app = FastAPI(
 )
 app.include_router(router)
 app.include_router(dh_router)
+app.state.dh_sessions = SessionStore()
+app.include_router(sessions_router)
+app.state.dh_presence = PresenceStore()
+app.include_router(presence_router)
 
 
 def _error_response(
@@ -44,6 +50,14 @@ def _error_response(
 async def request_validation_error(
     _request: Request, _exception: RequestValidationError
 ) -> JSONResponse:
+    messages = {
+        "INVALID_PRIME": "Parametr prime musi być liczbą pierwszą w zakresie uint32.",
+        "INVALID_GENERATOR": "Generator musi spełniać 2 <= generator < prime i mieścić się w uint32.",
+    }
+    errors = _exception.errors()
+    if errors and all(error["type"] in messages for error in errors):
+        code = errors[0]["type"]
+        return _error_response(422, code, messages[code])
     return _error_response(422, "INVALID_REQUEST", "Niepoprawne dane wejściowe.")
 
 
@@ -107,3 +121,8 @@ async def http_error(_request: Request, exception: HTTPException) -> JSONRespons
     return _error_response(
         exception.status_code, code, message, headers=exception.headers,
     )
+
+
+@app.exception_handler(SessionError)
+async def session_error(_request: Request, exception: SessionError) -> JSONResponse:
+    return _error_response(exception.status, exception.code, exception.message)

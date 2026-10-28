@@ -170,3 +170,9 @@ w `tests/test_api_robustness.py` (testy z PR #27, usunięte `xfail`).
 Testy jednostkowe w `tests/test_backend_unit.py` sprawdzają adapter DH/RSA,
 modele DH, mapowanie statusów i zachowanie nagłówków HTTP bez serwera i biblioteki C.
 Testy integracyjne DH są zakresem osobnego zadania QA #30.
+
+## Sesje DH (#37)
+
+Kontrakt koordynatora, kolejki HTTP, klient transportu dla węzłów #36 oraz
+instrukcja uruchomienia: [DH_SESSIONS.md](DH_SESSIONS.md).
+Serwer sesji uruchamiaj z jednym workerem; jego stan jest ulotny.
