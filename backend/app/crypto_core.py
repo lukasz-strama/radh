@@ -186,6 +186,35 @@ class CryptoCore:
         exchange.restype = ctypes.c_int
         self._exchange = exchange
 
+        try:
+            modexp = library.radh_modexp_u32
+        except AttributeError as exc:
+            raise CryptoCoreLoadError(
+                "Biblioteka CryptoCore nie eksportuje funkcji radh_modexp_u32."
+            ) from exc
+        modexp.argtypes = [
+            ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_uint32),
+        ]
+        modexp.restype = ctypes.c_int
+        self._modexp = modexp
+
+    def modexp(self, base: int, exponent: int, modulus: int) -> int:
+        """Wywołaj C: base^exponent mod modulus, także dla wykładnika 0."""
+
+        for name, value in (("base", base), ("exponent", exponent), ("modulus", modulus)):
+            _require_uint32(name, value)
+        result = ctypes.c_uint32()
+        status = self._modexp(
+            ctypes.c_uint32(base), ctypes.c_uint32(exponent),
+            ctypes.c_uint32(modulus), ctypes.byref(result),
+        )
+        # RSA wymaga modułu >= 2; modexp dopuszcza również moduł 1.
+        if status == CryptoCoreStatus.INVALID_MODULUS:
+            raise CryptoCoreCallError(status, "INVALID_MODULUS", "Moduł musi być większy od 0.")
+        self._check_status(status, {CryptoCoreStatus.INVALID_MODULUS})
+        return result.value
+
     def encrypt(self, message: int, public_exponent: int, modulus: int) -> int:
         """Wywołaj C: message^public_exponent mod modulus."""
 

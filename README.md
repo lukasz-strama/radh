@@ -15,6 +15,7 @@ Konwencje językowe, zasady branchowania, commitowania i tworzenia Pull Request�
 - [`crypto-core/`](crypto-core/) – edukacyjne operacje kryptograficzne w C11.
 - [`backend/`](backend/) – API FastAPI integrujące Python z CryptoCore przez `ctypes`.
 - [`frontend/`](frontend/) – interfejs React + TypeScript + Vite.
+- [`nodes/`](nodes/README.md) – niezależne procesy Alice i Bob z lokalnym interfejsem DH.
 
 Obecnie można zaszyfrować pojedynczą liczbę za pomocą edukacyjnego RSA.
 Formularz wysyła dane do backendu, który wykonuje obliczenia w bibliotece C.
