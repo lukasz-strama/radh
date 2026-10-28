@@ -430,3 +430,10 @@
 .dh-buttons button:disabled:not([aria-busy='true']) {
   cursor: not-allowed;
 }
+
+/* Wzór w wyniku w jednej linii; na wąskim ekranie przewija się zamiast łamać */
+.dh-result-formula {
+  overflow-x: auto;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}

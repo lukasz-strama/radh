@@ -515,18 +515,21 @@ function SessionResult({ session }: { session: DhSession }) {
       className={`dh-result dh-result--${match ? 'ok' : 'error'}`}
       aria-labelledby="dh-result-title"
     >
+      {/* Same K są już w panelach węzłów, tu tylko werdykt i wyjaśnienie. */}
       <h2 id="dh-result-title">
         {match ? 'Sekrety zgodne' : 'Sekrety niezgodne'}
       </h2>
-      <p className="formula">
-        K<sub>A</sub> = <output>{kA}</output>, K<sub>B</sub> = <output>{kB}</output>
-      </p>
       {match && (
-        <p>
-          Obie strony doszły do tej samej liczby, choć żadna nie poznała klucza
-          prywatnego drugiej: B<sup>a</sup> = (g<sup>b</sup>)<sup>a</sup> = g<sup>ab</sup> =
-          (g<sup>a</sup>)<sup>b</sup> = A<sup>b</sup> (mod p).
-        </p>
+        <>
+          <p>
+            Obie strony doszły do tej samej liczby, choć żadna nie poznała klucza
+            prywatnego drugiej:
+          </p>
+          <p className="formula dh-result-formula">
+            B<sup>a</sup> = (g<sup>b</sup>)<sup>a</sup> = g<sup>ab</sup> = (g<sup>a</sup>)
+            <sup>b</sup> = A<sup>b</sup> (mod p)
+          </p>
+        </>
       )}
       <p className="dh-note">
         K nie jest przesyłane – pokazujemy je tylko na potrzeby demonstracji.
