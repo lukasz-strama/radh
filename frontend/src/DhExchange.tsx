@@ -15,6 +15,7 @@ import {
 } from './api'
 import type {
   DhEvent,
+  DhMode,
   DhNode,
   DhSession,
   EventType,
@@ -56,6 +57,11 @@ const PARTICIPANT_STATUS: Record<ParticipantStatus, { label: string; tone: Tone 
   waiting: { label: 'oczekuje', tone: 'neutral' },
   published: { label: 'wysłał wartość publiczną', tone: 'neutral' },
   received: { label: 'przetworzył wartość partnera', tone: 'ok' },
+}
+
+const MODE_LABEL: Record<DhMode, string> = {
+  normal: 'Zwykła wymiana',
+  mitm: 'Atak MITM',
 }
 
 const SESSION_STATUS: Record<SessionStatus, { label: string; tone: Tone }> = {
@@ -119,6 +125,7 @@ function errorMessage(error: unknown, fallback: string): string {
 export function DhExchange() {
   const [fieldErrors, setFieldErrors] = useState<DhFieldErrors>({})
   const [view, setView] = useState<ViewState>({ status: 'empty' })
+  const [mode, setMode] = useState<DhMode>('normal')
   // Numer bieżącego żądania. Reset albo nowy start go zwiększa, więc spóźniona
   // odpowiedź starego żądania jest ignorowana i nie nadpisze nowszego stanu.
   const requestId = useRef(0)
@@ -229,7 +236,7 @@ export function DhExchange() {
 
     setView({ status: 'loading' })
     try {
-      const session = await startDhSession(validation.data)
+      const session = await startDhSession(validation.data, mode)
       if (id !== requestId.current) return
       setView({ status: 'session', session })
     } catch (error) {
@@ -295,6 +302,22 @@ export function DhExchange() {
         <aside className="panel" aria-label="Parametry sesji">
           {/* noValidate: walidację robimy sami, z polskimi komunikatami. */}
           <form className="dh-form" onSubmit={handleStart} noValidate>
+            {/* Scenariusz wybiera się przed startem sesji. */}
+            <fieldset className="dh-mode" disabled={isLoading}>
+              <legend>Scenariusz</legend>
+              {(['normal', 'mitm'] as const).map((value) => (
+                <label key={value}>
+                  <input
+                    type="radio"
+                    name="mode"
+                    value={value}
+                    checked={mode === value}
+                    onChange={() => setMode(value)}
+                  />
+                  {MODE_LABEL[value]}
+                </label>
+              ))}
+            </fieldset>
             <Field
               name="prime"
               label="Liczba pierwsza (p)"
@@ -348,7 +371,12 @@ function SessionHeader({ session }: { session: DhSession }) {
     <section className="dh-shared" aria-labelledby="dh-shared-title">
       <div className="dh-shared-header">
         <h2 id="dh-shared-title">Parametry wspólne</h2>
-        <Badge tone={status.tone}>sesja {status.label}</Badge>
+          <span className="dh-badges">
+            <Badge tone={session.mode === 'mitm' ? 'error' : 'neutral'}>
+              {MODE_LABEL[session.mode]}
+            </Badge>
+            <Badge tone={status.tone}>sesja {status.label}</Badge>
+          </span>
       </div>
       <p className="formula">
         p = <output>{session.p}</output>

@@ -437,3 +437,32 @@
   white-space: nowrap;
   overflow-wrap: normal;
 }
+
+/* Wybór scenariusza: radio w ramce, na wąskim ekranie jedno pod drugim */
+.dh-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0;
+  padding: 8px 12px 12px;
+  border: 1px solid #888;
+  border-radius: 4px;
+}
+
+.dh-mode legend {
+  padding: 0 4px;
+}
+
+/* .panel label to kolumna z polem pod etykietą; tu radio stoi obok tekstu */
+.panel .dh-mode label {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.dh-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}

@@ -35,6 +35,10 @@ export async function encryptRsa(data: RsaEncryptRequest): Promise<RsaEncryptRes
 
 const DH_SESSIONS_URL = '/api/v1/dh/sessions'
 
+// Scenariusz sesji: zwykła wymiana albo atak Man-in-the-Middle (#42).
+// Tryb wybiera się przed startem; od niego zależy routing wiadomości w koordynatorze.
+export type DhMode = 'normal' | 'mitm'
+
 export type DhSessionParams = {
   prime: number
   generator: number
@@ -81,6 +85,7 @@ export type DhEvent = {
 
 export type DhSession = {
   id: string
+  mode: DhMode
   p: number
   g: number
   status: SessionStatus
@@ -88,12 +93,11 @@ export type DhSession = {
   events: DhEvent[]
 }
 
-// Tworzy sesję i od razu ją uruchamia; zwraca stan po starcie.
-// Gdy start się nie uda, anulujemy utworzoną sesję, żeby nie blokowała następnej.
-export async function startDhSession(params: DhSessionParams): Promise<DhSession> {
-  const created = toDhSession(
-    await requestJson('POST', DH_SESSIONS_URL, { ...params, mode: 'normal' }),
-  )
+export async function startDhSession(
+  params: DhSessionParams,
+  mode: DhMode,
+): Promise<DhSession> {
+  const created = toDhSession(await requestJson('POST', DH_SESSIONS_URL, { ...params, mode }))
   try {
     return toDhSession(await requestJson('POST', `${DH_SESSIONS_URL}/${created.id}/start`))
   } catch (error) {
@@ -167,6 +171,7 @@ export async function fetchDhDiagnostics(id: string): Promise<Record<Role, numbe
 }
 
 const ROLES: readonly Role[] = ['alice', 'bob']
+const MODES: readonly DhMode[] = ['normal', 'mitm']
 const SESSION_STATUSES: readonly SessionStatus[] = ['created', 'running', 'completed', 'cancelled']
 const PARTICIPANT_STATUSES: readonly ParticipantStatus[] = ['waiting', 'published', 'received']
 const MESSAGE_STATUSES: readonly MessageStatus[] = ['queued', 'processed']
@@ -202,6 +207,7 @@ function toDhSession(body: unknown): DhSession {
   if (
     !raw ||
     typeof raw.session_id !== 'string' ||
+    !isOneOf(MODES, raw.mode) ||
     typeof raw.prime !== 'number' ||
     typeof raw.generator !== 'number' ||
     !isOneOf(SESSION_STATUSES, raw.status) ||
@@ -269,6 +275,7 @@ function toDhSession(body: unknown): DhSession {
 
   return {
     id: raw.session_id,
+    mode: raw.mode,
     p: raw.prime,
     g: raw.generator,
     status: raw.status,
