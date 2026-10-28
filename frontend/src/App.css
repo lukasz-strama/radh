@@ -249,6 +249,10 @@
   --party-color: #1f9d55;
 }
 
+.dh-party--mallory {
+  --party-color: #b0359e;
+}
+
 /* Pojedyncza wartość: tajne (pełna ramka, tło) vs jawne (przerywana ramka) */
 .dh-value {
   display: flex;
@@ -277,6 +281,9 @@
 }
 
 .dh-value-badge {
+  flex-shrink: 0;
+  align-self: flex-start;
+  white-space: nowrap;
   padding: 0 6px;
   font-size: 0.75rem;
   font-weight: bold;
@@ -465,4 +472,16 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+/* Atak MITM: trzy równe kolumny Alice | Mallory | Bob. Gdy widok jest węższy,
+   wszystkie panele jeden pod drugim, Mallory między ofiarami. */
+.dh-parties--mitm {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@container (max-width: 720px) {
+  .dh-parties--mitm {
+    grid-template-columns: 1fr;
+  }
 }

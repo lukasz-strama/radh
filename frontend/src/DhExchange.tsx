@@ -1,6 +1,6 @@
-// Laboratorium DH (#38): sesja dwóch niezależnych procesów, Alice i Boba.
-// Frontend niczego nie liczy i nie wymyśla zdarzeń: pokazuje stan sesji z API (#37).
-// Sekrety a i b nigdy nie przechodzą przez przeglądarkę.
+// Laboratorium DH (#38, #42): sesja niezależnych procesów Alice i Boba, a w scenariuszu
+// ataku także Mallory. Frontend niczego nie liczy i nie wymyśla zdarzeń: pokazuje stan
+// sesji z API (#37). Sekrety prywatne nigdy nie przechodzą przez przeglądarkę.
 
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
@@ -265,6 +265,8 @@ export function DhExchange() {
   }
 
   const session = view.status === 'session' ? view.session : null
+  // W sesji liczy się jej tryb, przed startem – wybrany scenariusz.
+  const shownMode = session?.mode ?? mode
 
   return (
     <div className="dh">
@@ -283,13 +285,18 @@ export function DhExchange() {
           )}
 
           {/* Węzły widać zawsze; bez sesji bez wartości. */}
-          <div className="dh-parties">
+          <div className={`dh-parties dh-parties--${shownMode}`}>
             <NodePanel role="alice" node={session?.nodes.alice} nodes={nodes} />
 
-            {/* Środek: wiadomości idą przez koordynatora. M3: tu stanie Mallory. */}
-            <div className="dh-channel">
-              <span className="dh-channel-label">koordynator</span>
-            </div>
+            {/* Środek: przy zwykłej wymianie wiadomości idą przez koordynatora,
+                przy ataku przechwytuje je Mallory. */}
+            {shownMode === 'mitm' ? (
+              <MalloryPanel />
+            ) : (
+              <div className="dh-channel">
+                <span className="dh-channel-label">koordynator</span>
+              </div>
+            )}
 
             <NodePanel role="bob" node={session?.nodes.bob} nodes={nodes} />
           </div>
@@ -318,6 +325,7 @@ export function DhExchange() {
                 </label>
               ))}
             </fieldset>
+
             <Field
               name="prime"
               label="Liczba pierwsza (p)"
@@ -331,7 +339,9 @@ export function DhExchange() {
               defaultValue={DEFAULTS.generator}
             />
             <p className="dh-note">
-              Klucze prywatne losują procesy Alice i Boba. Przeglądarka ich nie zna.
+              Klucze prywatne losują procesy{' '}
+              {mode === 'mitm' ? 'Alice, Boba i Mallory' : 'Alice i Boba'}. Przeglądarka ich
+              nie zna.
             </p>
 
             <div className="dh-buttons">
@@ -371,12 +381,12 @@ function SessionHeader({ session }: { session: DhSession }) {
     <section className="dh-shared" aria-labelledby="dh-shared-title">
       <div className="dh-shared-header">
         <h2 id="dh-shared-title">Parametry wspólne</h2>
-          <span className="dh-badges">
-            <Badge tone={session.mode === 'mitm' ? 'error' : 'neutral'}>
-              {MODE_LABEL[session.mode]}
-            </Badge>
-            <Badge tone={status.tone}>sesja {status.label}</Badge>
-          </span>
+        <span className="dh-badges">
+          <Badge tone={session.mode === 'mitm' ? 'error' : 'neutral'}>
+            {MODE_LABEL[session.mode]}
+          </Badge>
+          <Badge tone={status.tone}>sesja {status.label}</Badge>
+        </span>
       </div>
       <p className="formula">
         p = <output>{session.p}</output>
@@ -494,6 +504,48 @@ function NodePanel({ role, node, nodes }: NodePanelProps) {
           <sup>{priv}</sup> mod p
         </DhValue>
       )}
+    </section>
+  )
+}
+
+// Panel Mallory: dwa własne sekrety, przechwycone wartości, podstawione wartości
+// i dwa sekrety uzgodnione osobno z Alice i z Bobem.
+// Na razie bez danych – kształt odpowiedzi API dla MITM nie jest jeszcze ustalony (#42).
+function MalloryPanel() {
+  return (
+    <section className="dh-party dh-party--mallory" aria-labelledby="dh-mallory-title">
+      <div className="dh-party-header">
+        <h2 id="dh-mallory-title">Mallory</h2>
+      </div>
+
+      <DhValue kind="private" label="Klucze prywatne" withValue={false}>
+        <span className="formula">x</span>, <span className="formula">y</span> – zna je
+        tylko proces Mallory
+      </DhValue>
+
+      <DhValue kind="public" label="Przechwycona od Alice">
+        A
+      </DhValue>
+
+      <DhValue kind="public" label="Podstawiona Bobowi">
+        Y = g<sup>y</sup> mod p
+      </DhValue>
+
+      <DhValue kind="public" label="Przechwycona od Boba">
+        B
+      </DhValue>
+
+      <DhValue kind="public" label="Podstawiona Alice">
+        X = g<sup>x</sup> mod p
+      </DhValue>
+
+      <DhValue kind="private" label="Sekret z Alice">
+        K<sub>MA</sub> = A<sup>x</sup> mod p
+      </DhValue>
+
+      <DhValue kind="private" label="Sekret z Bobem">
+        K<sub>MB</sub> = B<sup>y</sup> mod p
+      </DhValue>
     </section>
   )
 }
