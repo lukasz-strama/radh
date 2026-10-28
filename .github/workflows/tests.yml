@@ -78,3 +78,31 @@ jobs:
           name: wyniki-testow
           path: pytest-results.xml
           if-no-files-found: ignore
+  
+  frontend:
+    name: Build i lint frontendu
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Pobierz kod
+        uses: actions/checkout@v4
+
+      - name: Ustaw Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Zainstaluj zależności
+        run: npm ci
+
+      - name: Sprawdź kod linterem
+        run: npm run lint
+
+      - name: Zbuduj aplikację (z kontrolą typów)
+        run: npm run build

@@ -135,7 +135,7 @@
   margin: 0.67em 0;
 }
 
-/* Wizualizacja po lewej (jak ekran w RSA), panel kroków po prawej */
+/* Sesja po lewej (jak ekran w RSA), panel parametrów po prawej */
 .dh-scene {
   flex: 1 1 500px;
   min-width: 0;
@@ -162,10 +162,6 @@
   padding: 12px;
   border: 1px dashed #888;
   border-radius: 6px;
-}
-
-.dh-shared h2 {
-  flex-basis: 100%;
 }
 
 /* Alice | kanał | Bob; na wąskim ekranie wszystko jedno pod drugim */
@@ -205,11 +201,6 @@
   background: Canvas;
 }
 
-/* Strzałki pakietów: domyślnie poziome, pionowe włącza container query niżej */
-.dh-arrow-v {
-  display: none;
-}
-
 /* Zależy od szerokości wizualizacji, nie całego okna */
 @container (max-width: 480px) {
   .dh-parties {
@@ -225,15 +216,7 @@
     transform: none;
   }
 
-  .dh-arrow-h {
-    display: none;
-  }
-
-  .dh-arrow-v {
-    display: inline;
-  }
-
-  /* Linia kanału pionowo, pakiety polecą z góry na dół */
+  /* Linia kanału pionowo */
   .dh-channel::before {
     top: 0;
     bottom: 0;
@@ -306,34 +289,12 @@
   font-weight: bold;
 }
 
-/* Wartość przed swoim etapem: tylko „symbol = ?” */
+/* Wartość, której węzeł jeszcze nie zgłosił: „= ?” */
 .dh-value--pending {
   opacity: 0.4;
 }
 
-/* Pakiet z wartością publiczną na kanale, w kolorze nadawcy */
-.dh-packet {
-  position: relative;
-  display: flex;
-  gap: 4px;
-  padding: 2px 8px;
-  font-size: 0.875rem;
-  font-weight: bold;
-  color: var(--party-color);
-  background: Canvas;
-  border: 2px solid var(--party-color);
-  border-radius: 999px;
-}
-
-.dh-packet--alice {
-  --party-color: #2f7bd8;
-}
-
-.dh-packet--bob {
-  --party-color: #1f9d55;
-}
-
-/* Wizualizacja przed pierwszym wynikiem lub w trakcie obliczania */
+/* Brak sesji albo jej uruchamianie */
 .dh-placeholder {
   padding: 24px;
   color: #888;
@@ -342,45 +303,137 @@
   border-radius: 8px;
 }
 
-/* Panel: formularz parametrów, pod nim etapy */
+/* Gdy panel nie mieści się obok sesji, idzie nad nią na całą szerokość,
+   żeby nie trzeba było przewijać do „Rozpocznij sesję” (500 + 24 + 300 + marginesy) */
+@media (max-width: 860px) {
+  .dh .panel {
+    order: -1;
+    flex-basis: 100%;
+  }
+}
+
+/* Panel: formularz parametrów sesji */
 .dh-form {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-.dh-steps {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding-top: 16px;
-  border-top: 2px solid #888;
-}
-
-.dh-steps h2 {
-  font-size: 1.1rem;
-}
-
-.dh-steps p {
-  margin: 8px 0 0;
-}
-
-.dh-steps .dh-step-counter {
-  margin: 0 0 4px;
-  font-size: 0.875rem;
-  color: #888;
-}
-
-.dh-step-buttons {
+.dh-buttons {
   display: flex;
   gap: 8px;
 }
 
-.dh-step-buttons button {
+.dh-buttons button {
   flex: 1;
 }
 
-/* Nieaktywny przycisk to nie „czekaj”, tylko brak kolejnego kroku */
-.dh-step-buttons button:disabled {
+.dh-note {
+  font-size: 0.875rem;
+  color: #888;
+}
+
+/* Nagłówki z plakietką statusu (sesja, węzły) */
+.dh-shared-header,
+.dh-party-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dh-shared-header {
+  flex-basis: 100%;
+}
+
+.dh-badge {
+  --badge-color: #888;
+  padding: 1px 8px;
+  font-size: 0.75rem;
+  font-weight: bold;
+  white-space: nowrap;
+  color: var(--badge-color);
+  border: 1px solid var(--badge-color);
+  border-radius: 999px;
+}
+
+.dh-badge--ok {
+  --badge-color: #1f9d55;
+}
+
+.dh-badge--error {
+  --badge-color: #d33;
+}
+
+/* Wynik: porównanie sekretów obu stron */
+.dh-result {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 2px solid var(--result-color);
+  border-radius: 6px;
+}
+
+.dh-result h2 {
+  color: var(--result-color);
+}
+
+.dh-result--ok {
+  --result-color: #1f9d55;
+}
+
+.dh-result--error {
+  --result-color: #d33;
+}
+
+/* Dziennik wiadomości; na wąskim ekranie tabela przewija się w poziomie */
+.dh-log {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dh-log-scroll {
+  overflow-x: auto;
+}
+
+.dh-log table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.dh-log th,
+.dh-log td {
+  padding: 6px 8px;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid #888;
+}
+
+.dh-role {
+  font-weight: bold;
+  color: var(--party-color);
+}
+
+.dh-role--alice {
+  --party-color: #2f7bd8;
+}
+
+.dh-role--bob {
+  --party-color: #1f9d55;
+}
+
+/* Przycisk wyłączony z powodu węzłów to nie „czekaj”, tylko „nie da się” */
+.dh-buttons button:disabled:not([aria-busy='true']) {
   cursor: not-allowed;
+}
+
+/* Wzór w wyniku w jednej linii; na wąskim ekranie przewija się zamiast łamać */
+.dh-result-formula {
+  overflow-x: auto;
+  white-space: nowrap;
+  overflow-wrap: normal;
 }
