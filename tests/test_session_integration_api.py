@@ -8,7 +8,6 @@ from urllib.error import URLError
 import pytest
 
 from app.main import app
-from app.node_presence import PresenceStore
 from backend.dh_transport import HttpTransport
 from test_sessions import api, start, send, ack, create, A, B, BASE
 
@@ -26,7 +25,7 @@ def complete(api):
 
 def test_presence_expires_without_mutating_session(api, monkeypatch):
     now = [0.0]
-    monkeypatch.setattr(app.state, "dh_presence", PresenceStore(clock=lambda: now[0]))
+    monkeypatch.setattr(app.state.dh_presence, "_clock", lambda: now[0])
     empty = {role: {"online": False, "last_seen": None} for role in ("alice", "bob")}
     assert api.get(NODES).json() == empty
     response = api.post(NODES + "/alice/heartbeat")
