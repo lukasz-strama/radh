@@ -283,6 +283,7 @@ def test_transport_rejects_invalid_json_and_closes_response(monkeypatch):
     import io
     from backend.dh_transport import HttpTransport, InvalidResponse
     response = io.BytesIO(b'{broken')
+    response.status = 200
     monkeypatch.setattr("backend.dh_transport.urlopen", lambda *args, **kwargs: response)
     with pytest.raises(InvalidResponse):
         HttpTransport("http://unused", "alice", None).request("/current")

@@ -3,11 +3,11 @@
 from threading import RLock
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 
 from .models import ErrorResponse
 from .session_models import (
-    Acknowledge, CreateSession, Event, Identifier, Message, PublicMessage, Role, Session,
+    DiagnosticReport, SessionDiagnostics, Acknowledge, CreateSession, Event, Identifier, Message, PublicMessage, Role, Session,
 )
 
 
@@ -29,6 +29,7 @@ class SessionStore:
         self.lock = RLock()
         self.session: Session | None = None
         self.used_ids: set[str] = set()
+        self._diagnostics = SessionDiagnostics()
 
     def _get(self, session_id: str) -> Session:
         if self.session is None or self.session.session_id != session_id:
@@ -47,6 +48,7 @@ class SessionStore:
                 if self.session.status in {"created", "running"}:
                     conflict("SESSION_BUSY", "Najpierw zakończ lub anuluj bieżącą sesję.")
             self.session = Session(**request.model_dump())
+            self._diagnostics = SessionDiagnostics()
             self.used_ids.add(request.session_id)
             self._event(self.session, "session_created")
             return self.session.model_copy(deep=True)
@@ -127,6 +129,26 @@ class SessionStore:
             return message.model_copy(deep=True)
 
 
+    def diagnostics(self, session_id: str) -> SessionDiagnostics:
+        with self.lock:
+            self._get(session_id)
+            return self._diagnostics.model_copy(deep=True)
+
+    def report_diagnostics(self, session_id: str, report: DiagnosticReport) -> None:
+        with self.lock:
+            session = self._get(session_id)
+            if session.status not in {"running", "completed"}:
+                conflict("INVALID_SESSION_STATE", "Sesja nie jest uruchomiona ani ukończona.")
+            if session.participants[report.participant] != "received":
+                conflict("ACK_REQUIRED", "Najpierw potwierdź przetworzenie wiadomości partnera.")
+            if not 1 <= report.shared_secret < session.prime:
+                raise SessionError(422, "INVALID_DIAGNOSTIC", "Wynik diagnostyczny musi spełniać 1 <= K < prime.")
+            previous = getattr(self._diagnostics, report.participant)
+            if previous is not None and previous != report.shared_secret:
+                conflict("DIAGNOSTIC_CONFLICT", "Uczestnik zgłosił już inny wynik diagnostyczny.")
+            setattr(self._diagnostics, report.participant, report.shared_secret)
+
+
 def get_session_store(request: Request) -> SessionStore:
     return request.app.state.dh_sessions
 
@@ -180,3 +202,16 @@ def acknowledge_message(session_id: Identifier, message_id: Identifier, body: Ac
 @router.get("/{session_id}/events", response_model=list[Event], summary="Odczytaj zdarzenia po wskazanym numerze")
 def get_events(session_id: Identifier, store: Store, after: Annotated[int, Query(ge=0)] = 0):
     return [e for e in store.get(session_id).events if e.sequence > after]
+
+
+@router.get("/{session_id}/diagnostics", response_model=SessionDiagnostics,
+            summary="Odczytaj opcjonalne wyniki edukacyjne poza protokołem DH")
+def get_diagnostics(session_id: Identifier, store: Store):
+    return store.diagnostics(session_id)
+
+
+@router.post("/{session_id}/diagnostics", status_code=204,
+             summary="Zapisz jawny wynik diagnostyczny po potwierdzeniu przetworzenia")
+def report_diagnostics(session_id: Identifier, body: DiagnosticReport, store: Store) -> Response:
+    store.report_diagnostics(session_id, body)
+    return Response(status_code=204)

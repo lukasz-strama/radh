@@ -4,9 +4,11 @@ from math import isqrt
 from typing import Annotated, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .models import Uint32
+from pydantic_core import PydanticCustomError
+
+from .models import Uint32, UINT32_MAX
 
 Role = Literal["alice", "bob"]
 Identifier = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")]
@@ -22,6 +24,14 @@ class CreateSession(ProtocolModel):
     generator: Uint32
     mode: Literal["normal", "mitm"] = "normal"
 
+    @field_validator("prime", "generator", mode="before")
+    @classmethod
+    def validate_integer_range(cls, value, info):
+        if type(value) is int and not 0 <= value <= UINT32_MAX:
+            code = "INVALID_PRIME" if info.field_name == "prime" else "INVALID_GENERATOR"
+            raise PydanticCustomError(code, "Parametr poza zakresem uint32.")
+        return value
+
     @model_validator(mode="after")
     def validate_parameters(self):
         # Walidacja publicznych parametrów; koordynator nie wykonuje wymiany DH.
@@ -29,9 +39,9 @@ class CreateSession(ProtocolModel):
         if p < 2 or (p != 2 and (p % 2 == 0 or any(
             p % d == 0 for d in range(3, isqrt(p) + 1, 2)
         ))):
-            raise ValueError("prime musi być liczbą pierwszą")
+            raise PydanticCustomError("INVALID_PRIME", "Parametr prime musi być liczbą pierwszą.")
         if not 2 <= self.generator < p:
-            raise ValueError("generator musi należeć do zakresu 2..prime-1")
+            raise PydanticCustomError("INVALID_GENERATOR", "Generator musi spełniać 2 <= generator < prime.")
         return self
 
 
@@ -68,3 +78,15 @@ class Session(CreateSession):
     )
     messages: list[Message] = Field(default_factory=list)
     events: list[Event] = Field(default_factory=list)
+
+
+class DiagnosticReport(ProtocolModel):
+    """Jawna diagnostyka edukacyjna, poza standardowym protokołem DH."""
+
+    participant: Role
+    shared_secret: Uint32
+
+
+class SessionDiagnostics(ProtocolModel):
+    alice: Uint32 | None = None
+    bob: Uint32 | None = None

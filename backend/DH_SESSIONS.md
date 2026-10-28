@@ -1,7 +1,8 @@
 # Sesje i transport DH — #37
 
 Koordynator przechowuje jedną bieżącą sesję w pamięci procesu. Przekazuje
-wyłącznie wartości publiczne i metadane. Nie tworzy procesów Alice/Bob,
+w protokole wyłącznie wartości publiczne i metadane. Opcjonalna diagnostyka
+edukacyjna K jest przechowywana osobno. Nie tworzy procesów Alice/Bob,
 nie wywołuje `CryptoCore.exchange()` i nie oblicza kluczy. Dotychczasowe
 endpointy RSA i `/api/v1/dh/demo/exchange` pozostają bez zmian.
 
@@ -23,7 +24,8 @@ Nie stosujemy bazy, WebSocketów ani uwierzytelniania — zgodnie z PBI-012.
 `backend/dh_transport.py` jest cienką pętlą HTTP, uruchamianą w osobnym
 procesie dla każdej roli. Korzysta z `DhNode.start_session()` i
 `DhNode.receive_public()` dostarczanych przez #36. Nie implementuje obliczeń,
-losowania sekretów ani diagnostyki. Wymaga obecności modułu `nodes` i adaptera
+losowania sekretów. Opcjonalnie publikuje wynik `diagnostics()` przez osobny
+endpoint po włączeniu flagi `--allow-diagnostics`. Wymaga obecności modułu `nodes` i adaptera
 z #36 (sprawdzono draft #44, commit `40ec537b786ede29be3fe5158bc40502a9037b20`).
 Na samym `main` sprzed scalenia #36 klient zgłasza brak modułu; API sesji działa
 niezależnie i może być sprawdzane przez Swagger lub dowolnych klientów HTTP.
@@ -57,7 +59,7 @@ RADH_NODE_TEST_SECRET=15 python -m backend.dh_transport --role bob --test-mode
 
 W PowerShell ustaw `$env:RADH_NODE_TEST_SECRET = '6'` (u Boba `'15'`), a następnie
 uruchom odpowiednie polecenie z `--test-mode`. Sekret jest odczytywany lokalnie;
-żadne żądanie HTTP go nie zawiera. Klient transportu nie eksportuje diagnostyki K.
+żadne żądanie HTTP go nie zawiera. Bez flagi `--allow-diagnostics` klient transportu nie eksportuje diagnostyki K.
 
 ## Kontrakt HTTP
 
@@ -135,7 +137,8 @@ Log jest dopisywany i uporządkowany; wcześniejsze zdarzenie `queued` nie jest
 nadpisywane po ACK. Aktualny status wiadomości znajduje się w `messages`.
 Brak wiadomości daje pustą kolejkę; sesja czeka, można ją anulować. Nie zgłaszamy
 fikcyjnej niedostępności węzła na podstawie pustej kolejki. #37 nie implementuje
-heartbeatów ani automatycznej detekcji awarii.
+automatycznego przerywania sesji po utracie heartbeatów. Dostępność procesów
+ma osobny endpoint opisany poniżej.
 
 ## Błędy i zakres integracji
 
@@ -149,7 +152,8 @@ Każdy błąd ma istniejący format `{"error":{"code":"...","message":"..."}}`.
 | 409 | `MESSAGE_ID_CONFLICT`, `PUBLIC_VALUE_ALREADY_SENT` | sprzeczne duplikaty |
 | 409 | `PUBLIC_VALUE_REQUIRED` | ACK przed publikacją własnej wartości |
 | 409 | `MITM_NOT_IMPLEMENTED` | próba startu MITM przed zadaniem M2 |
-| 422 | `INVALID_REQUEST` | błędne typy, role, parametry, dodatkowe/brakujące pola |
+| 422 | `INVALID_REQUEST` | błędne typy, role, dodatkowe/brakujące pola |
+| 422 | `INVALID_PRIME`, `INVALID_GENERATOR` | całkowite parametry o błędnej wartości |
 | 422 | `INVALID_MESSAGE`, `INVALID_RECIPIENT` | wartość spoza zakresu, zły odbiorca |
 
 Błędne żądania nie zmieniają stanu ani nie zapisują dowolnej treści wejścia w logu.
@@ -159,8 +163,8 @@ Nie wykonujemy zwykłej wymiany pod etykietą MITM.
 #38 powinno mapować odpowiedzi do swojego widoku: `session_id` to ID,
 `prime/generator` to p/g, `participants` to potwierdzony postęp, `messages`
 i `events` to publiczne wartości i rzeczywiste zdarzenia. Nie trzeba zmieniać
-starego endpointu. Dostępność procesów i diagnostyka edukacyjna klucza wymagają
-osobnego uzgodnienia; nie są udawane ani przemycane w standardowym protokole.
+starego endpointu. Dostępność procesów i diagnostyka edukacyjna klucza mają osobne endpointy
+opisane poniżej; nie są częścią standardowych wiadomości ani zdarzeń.
 
 ## Weryfikacja
 
@@ -182,3 +186,78 @@ Klient sprawdza wymagane pola sesji, schemat całej kolejki, role nadawcy i odbi
 status i zakres wartości przed wywołaniem obliczeń lub ACK. Odpowiedź uszkodzona,
 niepełna albo skierowana do innej roli nie trafia do węzła. Błędny JSON i zerwane
 połączenie są obsługiwane bez zakończenia pętli; diagnostyka nie wypisuje ich treści.
+
+
+## Dostępność węzłów — kontrakt integracyjny #38
+
+- `POST /api/v1/dh/nodes/{role}/heartbeat`, bez ciała, odpowiedź **204**.
+- `GET /api/v1/dh/nodes` zwraca np.:
+
+```json
+{"alice":{"online":true,"last_seen":"2026-10-28T12:00:00Z"},"bob":{"online":false,"last_seen":null}}
+```
+
+Klient wysyła heartbeat co 1 s w osobnym wątku, z timeoutem 2 s. Obsługa
+wymiany, ponowienia ACK i diagnostyki nie blokują tego wątku. Po błędzie sieci
+kolejna próba następuje w następnej iteracji; opóźnione próby nie są kolejkowane.
+Wątek nie dotyka stanu `DhNode`; wszystkie obliczenia pozostają sekwencyjne.
+`online` wygasa po 5 s bez kontaktu. TTL jest liczony zegarem monotonicznym,
+więc zmiana czasu systemowego go nie zaburza. `last_seen` nadaje serwer w UTC;
+`null` oznacza brak zgłoszenia od uruchomienia serwera. Dostępność nie jest
+powiązana z resetem sesji i nie zmienia jej stanu ani logu. Frontend może
+odpytywać co 3 s i blokować start, gdy brakuje węzła. Sam heartbeat nie
+jest gwarancją, że proces wykona następną operację.
+
+## Opcjonalna diagnostyka edukacyjna K
+
+Flaga klienta transportu to dokładnie **`--allow-diagnostics`**. Domyślnie
+wyłączona; zwykłe komunikaty i `GET /sessions/{id}` pozostają bez zmian.
+
+- `POST /api/v1/dh/sessions/{id}/diagnostics`, ciało
+  `{"participant":"alice","shared_secret":2}`, odpowiedź **204**.
+- `GET /api/v1/dh/sessions/{id}/diagnostics` zwraca
+  `{"alice":2,"bob":null}`. `null` oznacza brak opublikowanego wyniku.
+
+Serwer przyjmuje raport tylko po ACK danego uczestnika, w stanie `running`
+lub `completed`. Wymaga ścisłej liczby całkowitej `1 <= K < prime`. Wynik jest
+osobnym polem magazynu, poza modelem sesji, `messages` i `events`. Nie dodaje
+zdarzeń i nie jest wysyłany partnerowi przez klienta. GET diagnostyki jest
+jawnym odczytem edukacyjnym dla UI; API nie ma uwierzytelniania ani kontroli
+uprawnień, więc nie stanowi prywatnego kanału dostępu do K.
+
+Identyczny raport jest idempotentny (204), sprzeczny zwraca
+`409 DIAGNOSTIC_CONFLICT`; przed ACK zwracamy `409 ACK_REQUIRED`. Zła wartość
+numeryczna daje `422 INVALID_DIAGNOSTIC`, błędny typ lub dodatkowe pola —
+`422 INVALID_REQUEST`. Anulowana sesja odrzuca zapis. Nowa sesja usuwa poprzednią
+diagnostykę, a zapis/odczyt pod starym ID zwraca 404.
+
+Klient publikuje po ACK i ponawia przy utracie odpowiedzi, także po `completed`.
+Odczyt stanu uczestnika pozwala odzyskać sytuację utraty odpowiedzi na ostatni ACK.
+Po potwierdzonym zapisie nie publikuje ponownie. Bez flagi nie wywołuje
+`diagnostics()` i nie wysyła raportów. Frontend może odpytywać diagnostykę
+w trakcie sesji i do 10 s po `completed`; brak K nie jest błędem wymiany.
+Koordynator przechowuje zadeklarowane wyniki, nie potwierdza ich poprawności.
+
+Przykład po integracji modułu węzłów z #44, dwa osobne terminale Linux/macOS:
+
+```sh
+RADH_NODE_TEST_SECRET=6 python -m backend.dh_transport --role alice --test-mode --allow-diagnostics
+```
+
+```sh
+RADH_NODE_TEST_SECRET=15 python -m backend.dh_transport --role bob --test-mode --allow-diagnostics
+```
+
+W PowerShell ustaw lokalnie `$env:RADH_NODE_TEST_SECRET = '6'` (u Boba `'15'`)
+i uruchom odpowiednie polecenie `python -m backend.dh_transport ...` z obiema
+flagami. Prywatne wykładniki nie są przesyłane do serwera. Przy `p=23, g=5`
+wartości publiczne to A=8/B=19, diagnostyka zwraca oba K=2, a log nadal ma
+7 zdarzeń.
+
+## Kolejność integracji
+
+#45 nie zawiera kodu obliczeń z #44. API koordynatora działa samodzielnie,
+ale klient transportu wymaga #44. Dla pełnego uruchomienia na `main` należy
+scalić #44 przed uruchamianiem klientów (zalecana kolejność: #44, #45, #46).
+Nie jest wymagane łączenie zmian w jeden PR. Samo zatwierdzenie kontraktu nie
+scala żadnego PR; integrację wykonują opiekunowie repozytorium.
