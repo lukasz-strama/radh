@@ -9,14 +9,17 @@ import sys
 from dataclasses import asdict
 
 from backend.app.crypto_core import CryptoCoreCallError, CryptoCoreInputError, CryptoCoreLoadError
+from .mallory import MalloryNode
 from .node import DhNode, NodeError
 
 
-def dispatch(node: DhNode, request: object, allow_diagnostics: bool = False) -> dict[str, object]:
+def dispatch(node: DhNode | MalloryNode, request: object, allow_diagnostics: bool = False) -> dict[str, object]:
     """Obsłuż lokalne polecenie; żadne pole protokołu nie ustawia sekretu."""
     fields = {"start": {"op", "session_id", "p", "g"},
               "receive": {"op", "session_id", "public_value"},
               "state": {"op"}, "diagnostics": {"op"}}
+    if isinstance(node, MalloryNode):
+        fields["receive"].add("source")
     if not isinstance(request, dict) or not isinstance(request.get("op"), str):
         raise NodeError("INVALID_REQUEST", "Wymagany obiekt polecenia z polem op.")
     op = request["op"]
@@ -29,20 +32,41 @@ def dispatch(node: DhNode, request: object, allow_diagnostics: bool = False) -> 
     if op == "start":
         node.start_session(request["session_id"], request["p"], request["g"])
     elif op == "receive":
-        node.receive_public(request["session_id"], request["public_value"])
+        if isinstance(node, MalloryNode):
+            node.receive_public(request["session_id"], request["source"], request["public_value"])
+        else:
+            node.receive_public(request["session_id"], request["public_value"])
     return {"state": asdict(node.state), "pid": os.getpid()}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Lokalny uczestnik edukacyjnej wymiany DH.")
-    parser.add_argument("--role", choices=("alice", "bob"), required=True)
+    parser.add_argument("--role", choices=("alice", "bob", "mallory"), required=True)
     parser.add_argument("--test-mode", action="store_true", help="Użyj lokalnej RADH_NODE_TEST_SECRET.")
     parser.add_argument("--allow-diagnostics", action="store_true", help="Zezwól na jawny lokalny odczyt K.")
     args = parser.parse_args()
     # Usunięcie zmiennej ogranicza jej dziedziczenie przez ewentualne procesy potomne.
     configured_secret = os.environ.pop("RADH_NODE_TEST_SECRET", None)
+    mallory_secrets = [os.environ.pop(name, None) for name in
+                       ("RADH_MALLORY_TEST_X", "RADH_MALLORY_TEST_Y")]
     try:
-        if args.test_mode:
+        if any(value is not None for value in mallory_secrets) and (
+            not args.test_mode or args.role != "mallory"
+        ):
+            raise NodeError("TEST_MODE_REQUIRED", "Niepoprawna konfiguracja testowa.")
+        if args.role == "mallory":
+            if configured_secret is not None:
+                raise NodeError("INVALID_SECRET", "Niepoprawna konfiguracja testowa.")
+            if args.test_mode:
+                from .testing import DeterministicMalloryNode
+                try:
+                    x, y = (int(value) if value is not None else 0 for value in mallory_secrets)
+                except ValueError:
+                    raise NodeError("INVALID_SECRET", "Niepoprawna konfiguracja testowa.") from None
+                node = DeterministicMalloryNode(x, y)
+            else:
+                node = MalloryNode()
+        elif args.test_mode:
             from .testing import DeterministicDhNode
             try:
                 secret = int(configured_secret) if configured_secret is not None else 0

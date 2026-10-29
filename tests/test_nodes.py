@@ -207,6 +207,8 @@ def test_cli_survives_c_failure_without_leaking_details(alice, adapter, monkeypa
     monkeypatch.delenv("RADH_NODE_TEST_SECRET", raising=False)
     monkeypatch.setattr("nodes.__main__.DhNode", lambda role: alice)
     monkeypatch.setattr(adapter, "_modexp", lambda *args: 99)
+    # PID może zawierać cyfry statusu C; nie jest szczegółem błędu biblioteki.
+    monkeypatch.setattr("nodes.__main__.os.getpid", lambda: 2499)
     monkeypatch.setattr(sys, "argv", ["nodes", "--role", "alice"])
     monkeypatch.setattr(sys, "stdin", io.StringIO(
         '{"op":"receive","session_id":"ref","public_value":19}\n'
@@ -215,9 +217,12 @@ def test_cli_survives_c_failure_without_leaking_details(alice, adapter, monkeypa
     assert main() == 0
     output = capsys.readouterr()
     error, state = map(json.loads, output.out.splitlines())
-    assert error["error"]["code"] == "CRYPTO_CORE_ERROR"
+    assert error == {"error": {
+        "code": "CRYPTO_CORE_ERROR",
+        "message": "Nie udało się wykonać obliczenia C.",
+    }}
     assert state["state"]["phase"] == "public_ready"
-    assert "99" not in output.out
+    assert state["pid"] == 2499
     assert output.err == ""
 
 
