@@ -116,11 +116,11 @@ def test_missing_conflicting_and_out_of_order_messages(api):
     assert ack(api, B).status_code == 200
 
 
-def test_mitm_is_explicitly_unsupported_until_m2(api):
+def test_mitm_requires_online_mallory(api):
     assert create(api, mode="mitm").status_code == 201
     response = api.post(BASE + "/ref/start")
     assert response.status_code == 409
-    assert response.json()["error"]["code"] == "MITM_NOT_IMPLEMENTED"
+    assert response.json()["error"]["code"] == "MALLORY_UNAVAILABLE"
     assert send(api, A).status_code == 409
 
 

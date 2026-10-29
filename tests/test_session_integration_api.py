@@ -26,7 +26,7 @@ def complete(api):
 def test_presence_expires_without_mutating_session(api, monkeypatch):
     now = [0.0]
     monkeypatch.setattr(app.state.dh_presence, "_clock", lambda: now[0])
-    empty = {role: {"online": False, "last_seen": None} for role in ("alice", "bob")}
+    empty = {role: {"online": False, "last_seen": None} for role in ("alice", "bob", "mallory")}
     assert api.get(NODES).json() == empty
     response = api.post(NODES + "/alice/heartbeat")
     assert response.status_code == 204 and response.content == b""
@@ -42,7 +42,7 @@ def test_presence_expires_without_mutating_session(api, monkeypatch):
     assert api.get(NODES).json()["alice"]["last_seen"] == first["alice"]["last_seen"]
     assert api.post(NODES + "/alice/heartbeat").status_code == 204
     assert api.get(NODES).json()["alice"]["online"]
-    assert api.post(NODES + "/mallory/heartbeat").status_code == 422
+    assert api.post(NODES + "/unknown/heartbeat").status_code == 422
     assert api.get(BASE + "/ref").json() == before
 
 
