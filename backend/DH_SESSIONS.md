@@ -1,5 +1,7 @@
 # Sesje i transport DH — #37
 
+Rozszerzenie #41: [routing MITM i kontrakt Mallory](MITM_SESSIONS.md).
+
 Koordynator przechowuje jedną bieżącą sesję w pamięci procesu. Przekazuje
 w protokole wyłącznie wartości publiczne i metadane. Opcjonalna diagnostyka
 edukacyjna K jest przechowywana osobno. Nie tworzy procesów Alice/Bob,
@@ -151,14 +153,14 @@ Każdy błąd ma istniejący format `{"error":{"code":"...","message":"..."}}`.
 | 409 | `INVALID_SESSION_STATE` | operacja przed startem lub po anulowaniu |
 | 409 | `MESSAGE_ID_CONFLICT`, `PUBLIC_VALUE_ALREADY_SENT` | sprzeczne duplikaty |
 | 409 | `PUBLIC_VALUE_REQUIRED` | ACK przed publikacją własnej wartości |
-| 409 | `MITM_NOT_IMPLEMENTED` | próba startu MITM przed zadaniem M2 |
+| 409 | `MALLORY_UNAVAILABLE` | brak świeżego heartbeat Mallory przy starcie MITM |
 | 422 | `INVALID_REQUEST` | błędne typy, role, dodatkowe/brakujące pola |
 | 422 | `INVALID_PRIME`, `INVALID_GENERATOR` | całkowite parametry o błędnej wartości |
 | 422 | `INVALID_MESSAGE`, `INVALID_RECIPIENT` | wartość spoza zakresu, zły odbiorca |
 
 Błędne żądania nie zmieniają stanu ani nie zapisują dowolnej treści wejścia w logu.
-Tryb `mitm` można zapisać przy tworzeniu sesji; start zwraca jawne 409 do M2.
-Nie wykonujemy zwykłej wymiany pod etykietą MITM.
+Tryb `mitm` ma osobny routing przez Mallory opisany w `MITM_SESSIONS.md`.
+Start wymaga świeżego heartbeat Mallory; nie wykonujemy zwykłej wymiany pod etykietą MITM.
 
 #38 powinno mapować odpowiedzi do swojego widoku: `session_id` to ID,
 `prime/generator` to p/g, `participants` to potwierdzony postęp, `messages`
@@ -191,10 +193,10 @@ połączenie są obsługiwane bez zakończenia pętli; diagnostyka nie wypisuje 
 ## Dostępność węzłów — kontrakt integracyjny #38
 
 - `POST /api/v1/dh/nodes/{role}/heartbeat`, bez ciała, odpowiedź **204**.
-- `GET /api/v1/dh/nodes` zwraca np.:
+- `GET /api/v1/dh/nodes` zwraca trzy role (Mallory dodana w #41), np.:
 
 ```json
-{"alice":{"online":true,"last_seen":"2026-10-28T12:00:00Z"},"bob":{"online":false,"last_seen":null}}
+{"alice":{"online":true,"last_seen":"2026-10-28T12:00:00Z"},"bob":{"online":false,"last_seen":null},"mallory":{"online":false,"last_seen":null}}
 ```
 
 Klient wysyła heartbeat co 1 s w osobnym wątku, z timeoutem 2 s. Obsługa

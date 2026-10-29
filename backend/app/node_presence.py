@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel
 
 from .models import ErrorResponse
-from .session_models import Role
+from .session_models import NodeRole
 
 HEARTBEAT_TTL = 5.0
 
@@ -24,20 +24,20 @@ class PresenceStore:
     def __init__(self, clock: Callable[[], float] = monotonic) -> None:
         self._clock = clock
         self._lock = Lock()
-        self._seen: dict[Role, tuple[float, datetime]] = {}
+        self._seen: dict[NodeRole, tuple[float, datetime]] = {}
 
-    def heartbeat(self, role: Role) -> None:
+    def heartbeat(self, role: NodeRole) -> None:
         with self._lock:
             self._seen[role] = (self._clock(), datetime.now(timezone.utc))
 
-    def snapshot(self) -> dict[Role, NodePresence]:
+    def snapshot(self) -> dict[NodeRole, NodePresence]:
         with self._lock:
             now = self._clock()
             return {
                 role: NodePresence(
                     online=role in self._seen and now - self._seen[role][0] < HEARTBEAT_TTL,
                     last_seen=self._seen[role][1] if role in self._seen else None,
-                ) for role in ("alice", "bob")
+                ) for role in ("alice", "bob", "mallory")
             }
 
 
@@ -51,11 +51,11 @@ router = APIRouter(prefix="/api/v1/dh/nodes", tags=["Dostępność węzłów DH"
 
 
 @router.post("/{role}/heartbeat", status_code=204, summary="Zgłoś aktywność procesu węzła")
-def heartbeat(role: Role, presence: Presence) -> Response:
+def heartbeat(role: NodeRole, presence: Presence) -> Response:
     presence.heartbeat(role)
     return Response(status_code=204)
 
 
-@router.get("", response_model=dict[Role, NodePresence], summary="Odczytaj dostępność węzłów (TTL 5 s)")
+@router.get("", response_model=dict[NodeRole, NodePresence], summary="Odczytaj dostępność węzłów (TTL 5 s)")
 def get_nodes(presence: Presence):
     return presence.snapshot()

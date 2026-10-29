@@ -13,11 +13,14 @@ from urllib.request import Request, urlopen
 
 from pydantic import TypeAdapter, ValidationError
 
-from .app.session_models import DiagnosticReport, Message, Session
+from .app.session_models import (
+    DiagnosticReport, Interception, MalloryDiagnosticReport, Message, NodeRole, Session,
+)
 
 
 Role = Literal["alice", "bob"]
 MESSAGE_LIST = TypeAdapter(list[Message])
+INTERCEPTION_LIST = TypeAdapter(list[Interception])
 
 
 class NodeState(Protocol):
@@ -53,16 +56,9 @@ class TransportError(Exception):
         self.status = status
 
 
-class HttpTransport:
-    def __init__(self, base_url: str, role: Role, node: Node, *, allow_diagnostics: bool = False) -> None:
-        if role not in ("alice", "bob"):
-            raise ValueError("Niepoprawna rola transportu.")
+class HttpClient:
+    def __init__(self, base_url: str, role: NodeRole) -> None:
         self.base_url = base_url.rstrip("/") + "/api/v1/dh/sessions"
-        self.role = role
-        self.peer = "bob" if role == "alice" else "alice"
-        self.node = node
-        self.allow_diagnostics = allow_diagnostics
-        self._diagnostics_sent: str | None = None
         self._heartbeat_url = base_url.rstrip("/") + f"/api/v1/dh/nodes/{role}/heartbeat"
 
     def request(self, path: str, body: dict[str, object] | None = None) -> object:
@@ -101,6 +97,18 @@ class HttpTransport:
                 print("Heartbeat failed; retrying", file=sys.stderr)
             stop.wait(max(0, 1 - (time.monotonic() - started)))
 
+
+class HttpTransport(HttpClient):
+    def __init__(self, base_url: str, role: Role, node: Node, *, allow_diagnostics: bool = False) -> None:
+        if role not in ("alice", "bob"):
+            raise ValueError("Niepoprawna rola transportu.")
+        super().__init__(base_url, role)
+        self.role = role
+        self.peer = "bob" if role == "alice" else "alice"
+        self.node = node
+        self.allow_diagnostics = allow_diagnostics
+        self._diagnostics_sent: str | None = None
+
     def _publish_diagnostics(self, session_id: str) -> None:
         if (not self.allow_diagnostics or self._diagnostics_sent == session_id
                 or self.node.state.session_id != session_id):
@@ -123,8 +131,6 @@ class HttpTransport:
             raise InvalidResponse() from None
         if not {"session_id", "prime", "generator", "mode", "status"} <= session.model_fields_set:
             raise InvalidResponse()
-        if session.mode != "normal":
-            return
         session_id = session.session_id
         if (session.status in {"running", "completed"}
                 and session.participants[self.role] == "received"):
@@ -162,9 +168,95 @@ class HttpTransport:
             self._publish_diagnostics(session_id)
 
 
+class MalloryState(Protocol):
+    session_id: str | None
+    phase: str
+    substitute_to_alice: int | None
+    substitute_to_bob: int | None
+
+
+class MalloryAgent(Protocol):
+    @property
+    def state(self) -> MalloryState: ...
+
+    def start_session(self, session_id: str, p: int, g: int) -> object: ...
+
+    def receive_public(self, session_id: str, source: str, public_value: int) -> object: ...
+
+    def diagnostics(self) -> dict[str, str | int]: ...
+
+
+class MalloryTransport(HttpClient):
+    """Obliczenia odbywają się tylko w lokalnym agencie z #40, poza FastAPI."""
+
+    def __init__(self, base_url: str, node: MalloryAgent, *, allow_diagnostics: bool = False) -> None:
+        super().__init__(base_url, "mallory")
+        self.node = node
+        self.allow_diagnostics = allow_diagnostics
+        self._diagnostics_sent: str | None = None
+
+    def poll(self) -> None:
+        try:
+            session = Session.model_validate(self.request("/current"))
+        except ValidationError:
+            raise InvalidResponse() from None
+        if not {"session_id", "prime", "generator", "mode", "status"} <= session.model_fields_set:
+            raise InvalidResponse()
+        if session.mode != "mitm" or session.status not in {"running", "completed"}:
+            return
+        session_id = session.session_id
+        # Nie odtwarzamy sekretów już zakończonej sesji po restarcie procesu.
+        if self.node.state.session_id != session_id and session.status == "completed":
+            return
+        try:
+            interceptions = INTERCEPTION_LIST.validate_python(
+                self.request(f"/{session_id}/interceptions"))
+        except ValidationError:
+            raise InvalidResponse() from None
+        if (len(interceptions) > 2
+                or len({i.message_id for i in interceptions}) != len(interceptions)
+                or len({i.original_sender for i in interceptions}) != len(interceptions)
+                or any(not {"message_id", "original_sender", "recipient", "original_value",
+                            "delivered_value", "intercepted_by", "actual_sender", "status"} <= i.model_fields_set
+                       or i.original_sender == i.recipient
+                       or not 1 <= i.original_value < session.prime
+                       or (i.status == "pending") != (i.delivered_value is None)
+                       or (i.status == "pending") != (i.actual_sender is None)
+                       or (i.delivered_value is not None and not 1 <= i.delivered_value < session.prime)
+                       for i in interceptions)):
+            raise InvalidResponse()
+        if self.node.state.session_id != session_id:
+            self.node.start_session(session_id, session.prime, session.generator)
+        # Sprawdź całą historię przed wysłaniem czegokolwiek: restart procesu
+        # mógł utracić sekrety użyte przy wcześniejszej podmianie drugiej strony.
+        substitutes = {"alice": self.node.state.substitute_to_alice,
+                       "bob": self.node.state.substitute_to_bob}
+        if any(i.delivered_value is not None and i.delivered_value != substitutes[i.recipient]
+               for i in interceptions):
+            raise InvalidResponse()
+        for item in interceptions:
+            # Po utracie odpowiedzi HTTP odtwarzamy odbiór idempotentnie.
+            self.node.receive_public(session_id, source=item.original_sender, public_value=item.original_value)
+            value = substitutes[item.recipient]
+            if item.status == "pending":
+                self.request(f"/{session_id}/interceptions/{item.message_id}/forward", {"public_value": value})
+        if (self.allow_diagnostics and self.node.state.phase == "complete"
+                and self._diagnostics_sent != session_id):
+            raw = self.node.diagnostics()
+            if raw.get("participant") != "mallory" or raw.get("session_id") != session_id:
+                raise InvalidResponse()
+            try:
+                report = MalloryDiagnosticReport(
+                    shared_with_alice=raw.get("shared_with_alice"), shared_with_bob=raw.get("shared_with_bob"))
+            except ValidationError:
+                raise InvalidResponse() from None
+            self.request(f"/{session_id}/diagnostics/mallory", report.model_dump())
+            self._diagnostics_sent = session_id
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Transport HTTP dla osobnego węzła DH (#37).")
-    parser.add_argument("--role", choices=("alice", "bob"), required=True)
+    parser.add_argument("--role", choices=("alice", "bob", "mallory"), required=True)
     parser.add_argument("--url", default="http://127.0.0.1:8000")
     parser.add_argument("--test-mode", action="store_true")
     parser.add_argument("--allow-diagnostics", action="store_true",
@@ -177,18 +269,38 @@ def main() -> int:
         print("Wymagany moduł nodes z zadania #36. Uruchom z katalogu głównego repozytorium.", file=sys.stderr)
         return 1
     configured_secret = os.environ.pop("RADH_NODE_TEST_SECRET", None)
+    mallory_secrets = [os.environ.pop(name, None) for name in
+                       ("RADH_MALLORY_TEST_X", "RADH_MALLORY_TEST_Y")]
     try:
-        if args.test_mode:
+        if args.role != "mallory" and any(value is not None for value in mallory_secrets):
+            raise ValueError("Konfiguracja Mallory wymaga roli mallory.")
+        if args.role == "mallory":
+            from nodes import MalloryNode
+            if configured_secret is not None:
+                raise ValueError("Mallory wymaga dwóch lokalnych sekretów.")
+            if args.test_mode:
+                from nodes.testing import DeterministicMalloryNode
+                node = DeterministicMalloryNode(*(int(value or "0") for value in mallory_secrets))
+            elif any(value is not None for value in mallory_secrets):
+                raise ValueError("Konfiguracja testowa wymaga --test-mode.")
+            else:
+                node = MalloryNode()
+        elif args.test_mode:
             from nodes.testing import DeterministicDhNode
             node = DeterministicDhNode(args.role, int(configured_secret or "0"))
         elif configured_secret is not None:
             raise ValueError("Konfiguracja testowa wymaga --test-mode.")
         else:
             node = DhNode(args.role)
+    except ImportError:
+        print("Wymagany moduł Mallory z #40 (PR #49).", file=sys.stderr)
+        return 1
     except (ValueError, CryptoCoreLoadError):
         print("Nie można uruchomić węzła; sprawdź bibliotekę C i konfigurację lokalną.", file=sys.stderr)
         return 1
-    transport = HttpTransport(args.url, args.role, node, allow_diagnostics=args.allow_diagnostics)
+    transport = (MalloryTransport(args.url, node, allow_diagnostics=args.allow_diagnostics)
+                 if args.role == "mallory" else
+                 HttpTransport(args.url, args.role, node, allow_diagnostics=args.allow_diagnostics))
     stop = Event()
     heartbeat_thread = Thread(target=transport.heartbeat_loop, args=(stop,), daemon=True)
     heartbeat_thread.start()
@@ -200,7 +312,7 @@ def main() -> int:
     return 0
 
 
-def run_exchange(transport: HttpTransport, node_errors: tuple[type[Exception], ...]) -> None:
+def run_exchange(transport: HttpTransport | MalloryTransport, node_errors: tuple[type[Exception], ...]) -> None:
     while True:
         try:
             transport.poll()

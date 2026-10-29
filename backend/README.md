@@ -176,3 +176,5 @@ Testy integracyjne DH są zakresem osobnego zadania QA #30.
 Kontrakt koordynatora, kolejki HTTP, klient transportu dla węzłów #36 oraz
 instrukcja uruchomienia: [DH_SESSIONS.md](DH_SESSIONS.md).
 Serwer sesji uruchamiaj z jednym workerem; jego stan jest ulotny.
+
+Routing MITM i uruchomienie Mallory (#41): [MITM_SESSIONS.md](MITM_SESSIONS.md).

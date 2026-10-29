@@ -11,6 +11,7 @@ from pydantic_core import PydanticCustomError
 from .models import Uint32, UINT32_MAX
 
 Role = Literal["alice", "bob"]
+NodeRole = Literal["alice", "bob", "mallory"]
 Identifier = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")]
 
 
@@ -54,7 +55,7 @@ class PublicMessage(ProtocolModel):
 
 
 class Message(PublicMessage):
-    status: Literal["queued", "processed"] = "queued"
+    status: Literal["intercepted", "queued", "processed"] = "queued"
 
 
 class Acknowledge(ProtocolModel):
@@ -63,12 +64,37 @@ class Acknowledge(ProtocolModel):
 
 class Event(ProtocolModel):
     sequence: int
-    type: Literal["session_created", "session_started", "public_value", "message_processed", "session_completed", "session_cancelled"]
-    sender: Role | None = None
+    type: Literal["session_created", "session_started", "public_value", "message_processed", "session_completed", "session_cancelled", "message_intercepted", "message_forwarded"]
+    sender: NodeRole | None = None
     recipient: Role | None = None
     public_value: Uint32 | None = None
     message_id: str | None = None
-    status: Literal["queued", "processed"] = "processed"
+    status: Literal["intercepted", "queued", "processed"] = "processed"
+
+
+class Interception(ProtocolModel):
+    message_id: Identifier
+    original_sender: Role
+    recipient: Role
+    original_value: Uint32
+    delivered_value: Uint32 | None = None
+    intercepted_by: Literal["mallory"] = "mallory"
+    actual_sender: Literal["mallory"] | None = None
+    status: Literal["pending", "forwarded", "processed"] = "pending"
+
+
+class Replacement(ProtocolModel):
+    public_value: Uint32
+
+
+class MalloryDiagnostics(ProtocolModel):
+    shared_with_alice: Uint32 | None = None
+    shared_with_bob: Uint32 | None = None
+
+
+class MalloryDiagnosticReport(ProtocolModel):
+    shared_with_alice: Uint32
+    shared_with_bob: Uint32
 
 
 class Session(CreateSession):
@@ -76,6 +102,7 @@ class Session(CreateSession):
     participants: dict[Role, Literal["waiting", "published", "received"]] = Field(
         default_factory=lambda: {"alice": "waiting", "bob": "waiting"}
     )
+    interceptions: list[Interception] = Field(default_factory=list)
     messages: list[Message] = Field(default_factory=list)
     events: list[Event] = Field(default_factory=list)
 
