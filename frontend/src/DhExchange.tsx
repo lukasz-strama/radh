@@ -1,6 +1,6 @@
 // Laboratorium DH (#38, #42): sesja niezależnych procesów Alice i Boba, a w scenariuszu
 // ataku także Mallory. Frontend niczego nie liczy i nie wymyśla zdarzeń: pokazuje stan
-// sesji z API (#37). Sekrety prywatne nigdy nie przechodzą przez przeglądarkę.
+// sesji z API (#37, #41). Sekrety prywatne nigdy nie przechodzą przez przeglądarkę.
 
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
@@ -9,18 +9,23 @@ import {
   cancelActiveDhSession,
   cancelDhSession,
   fetchDhDiagnostics,
+  fetchDhMalloryDiagnostics,
   fetchDhNodes,
   fetchDhSession,
   startDhSession,
 } from './api'
 import type {
   DhEvent,
+  DhInterception,
+  DhMallory,
   DhMode,
   DhNode,
   DhSession,
   EventType,
   MessageStatus,
   NodeAvailability,
+  NodeRole,
+  NodesAvailability,
   ParticipantStatus,
   Role,
   SessionStatus,
@@ -40,15 +45,30 @@ type ViewState =
 type NodesState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ready'; nodes: Record<Role, NodeAvailability> }
+  | { status: 'ready'; nodes: NodesAvailability }
+
+// K z diagnostyki: Alice, Bob i (w MITM) oba sekrety Mallory.
+type Diagnostics = {
+  alice: number | null
+  bob: number | null
+  withAlice: number | null
+  withBob: number | null
+}
 
 // Nazwa uczestnika (też w dopełniaczu) i symbole we wzorach (Alice: a, A; Bob: b, B).
+// fake: wartość Mallory, którą ofiara dostaje w MITM zamiast wartości partnera.
 const ROLES: Record<
   Role,
-  { name: string; nameOf: string; priv: string; pub: string; other: Role }
+  { name: string; nameOf: string; priv: string; pub: string; fake: string; other: Role }
 > = {
-  alice: { name: 'Alice', nameOf: 'Alice', priv: 'a', pub: 'A', other: 'bob' },
-  bob: { name: 'Bob', nameOf: 'Boba', priv: 'b', pub: 'B', other: 'alice' },
+  alice: { name: 'Alice', nameOf: 'Alice', priv: 'a', pub: 'A', fake: 'X', other: 'bob' },
+  bob: { name: 'Bob', nameOf: 'Boba', priv: 'b', pub: 'B', fake: 'Y', other: 'alice' },
+}
+
+const NODE_NAME: Record<NodeRole, { name: string; nameOf: string }> = {
+  alice: ROLES.alice,
+  bob: ROLES.bob,
+  mallory: { name: 'Mallory', nameOf: 'Mallory' },
 }
 
 type Tone = 'neutral' | 'ok' | 'error'
@@ -75,12 +95,15 @@ const EVENT_TYPE: Record<EventType, string> = {
   session_created: 'utworzenie sesji',
   session_started: 'start sesji',
   public_value: 'wartość publiczna',
+  message_intercepted: 'przechwycenie',
+  message_forwarded: 'podmiana',
   message_processed: 'przetworzenie wiadomości',
   session_completed: 'koniec sesji',
   session_cancelled: 'anulowanie sesji',
 }
 
 const MESSAGE_STATUS: Record<MessageStatus, { label: string; tone: Tone }> = {
+  intercepted: { label: 'przechwycona', tone: 'error' },
   queued: { label: 'w kolejce', tone: 'neutral' },
   processed: { label: 'przetworzona', tone: 'ok' },
 }
@@ -89,7 +112,7 @@ const MESSAGE_STATUS: Record<MessageStatus, { label: string; tone: Tone }> = {
 const SESSION_POLL_MS = 1000
 const NODES_POLL_MS = 3000
 // Ostatni ACK może zakończyć sesję, zanim węzły zgłoszą K, więc diagnostykę
-// czytamy jeszcze przez tyle po zakończeniu (albo krócej, gdy przyjdą obie wartości).
+// czytamy jeszcze przez tyle po zakończeniu (albo krócej, gdy przyjdą wszystkie wartości).
 const DIAGNOSTICS_GRACE_MS = 10_000
 
 // Pyta koordynatora o dostępność węzłów; błąd zamienia na stan do wyświetlenia.
@@ -101,16 +124,51 @@ async function checkNodes(): Promise<NodesState> {
   }
 }
 
+const NO_DIAGNOSTICS: Diagnostics = { alice: null, bob: null, withAlice: null, withBob: null }
+
 // Dokłada K z diagnostyki do stanu sesji; null zostaje jako brak wartości.
-function withDiagnostics(
-  session: DhSession,
-  diagnostics: Record<Role, number | null>,
-): DhSession {
+function withDiagnostics(session: DhSession, diagnostics: Diagnostics): DhSession {
   const node = (role: Role): DhNode => ({
     ...session.nodes[role],
     sharedKey: diagnostics[role] ?? undefined,
   })
-  return { ...session, nodes: { alice: node('alice'), bob: node('bob') } }
+  const mallory: DhMallory | null = session.mallory && {
+    ...session.mallory,
+    withAlice: diagnostics.withAlice ?? undefined,
+    withBob: diagnostics.withBob ?? undefined,
+  }
+  return { ...session, nodes: { alice: node('alice'), bob: node('bob') }, mallory }
+}
+
+// Czy mamy już wszystkie K, jakie sesja może zgłosić (w MITM także oba od Mallory).
+function allKeysKnown(mode: DhMode, diagnostics: Diagnostics): boolean {
+  const victims = diagnostics.alice !== null && diagnostics.bob !== null
+  if (mode === 'normal') return victims
+  return victims && diagnostics.withAlice !== null && diagnostics.withBob !== null
+}
+
+// Węzły potrzebne w danym scenariuszu.
+function requiredNodes(mode: DhMode): NodeRole[] {
+  return mode === 'mitm' ? ['alice', 'bob', 'mallory'] : ['alice', 'bob']
+}
+
+// Węzły, o których heartbeat mówi, że nie działają. Brak Mallory w odpowiedzi
+// (backend bez MITM) nie blokuje – start i tak zwróci czytelny błąd.
+function offlineNodes(nodes: NodesState, mode: DhMode): NodeRole[] {
+  if (nodes.status !== 'ready') return []
+  return requiredNodes(mode).filter((role) => nodes.nodes[role]?.online === false)
+}
+
+// Polecenie uruchomienia węzła (bez trybu testowego i diagnostyki).
+function runCommand(role: NodeRole): string {
+  return `python -m backend.dh_transport --role ${role}`
+}
+
+function joinNames(roles: NodeRole[]): string {
+  const names = roles.map((role) => NODE_NAME[role].nameOf)
+  return names.length <= 1
+    ? names.join('')
+    : `${names.slice(0, -1).join(', ')} i ${names[names.length - 1]}`
 }
 
 const DEFAULTS: Record<DhField, string> = {
@@ -134,10 +192,9 @@ export function DhExchange() {
   const requestId = useRef(0)
   const [nodes, setNodes] = useState<NodesState>({ status: 'loading' })
   const isLoading = view.status === 'loading'
-  // Start blokujemy tylko, gdy wiadomo, że któryś węzeł nie działa. Gdy dostępności
-  // nie da się sprawdzić, nie blokujemy – sesja i tak pokaże, czy węzły odpowiadają.
-  const nodesOffline =
-    nodes.status === 'ready' && (!nodes.nodes.alice.online || !nodes.nodes.bob.online)
+  // Start blokujemy tylko, gdy wiadomo, że któryś potrzebny węzeł nie działa. Gdy
+  // dostępności nie da się sprawdzić, nie blokujemy – sesja i tak pokaże, czy węzły odpowiadają.
+  const nodesOffline = offlineNodes(nodes, mode).length > 0
 
   const sessionId = view.status === 'session' ? view.session.id : null
   const activeId =
@@ -171,7 +228,7 @@ export function DhExchange() {
     const id = requestId.current
     let active = true
     let timer: number | undefined
-    let diagnostics: Record<Role, number | null> = { alice: null, bob: null }
+    let diagnostics: Diagnostics = NO_DIAGNOSTICS
     let completedAt: number | null = null
 
     async function tick() {
@@ -192,9 +249,16 @@ export function DhExchange() {
       // Błąd diagnostyki nie psuje sesji: K jest dodatkiem, zostają poprzednie wartości.
       if (session.status === 'running' || session.status === 'completed') {
         try {
-          diagnostics = await fetchDhDiagnostics(session.id)
+          diagnostics = { ...diagnostics, ...(await fetchDhDiagnostics(session.id)) }
         } catch {
           // ignorujemy, spróbujemy przy następnym odczycie
+        }
+        if (session.mode === 'mitm') {
+          try {
+            diagnostics = { ...diagnostics, ...(await fetchDhMalloryDiagnostics(session.id)) }
+          } catch {
+            // jak wyżej
+          }
         }
         if (!active || id !== requestId.current) return
       }
@@ -206,12 +270,11 @@ export function DhExchange() {
       }
 
       if (session.status === 'completed' && completedAt === null) completedAt = Date.now()
-      const bothKnown = diagnostics.alice !== null && diagnostics.bob !== null
       const keepPolling =
         session.status === 'created' ||
         session.status === 'running' ||
         (session.status === 'completed' &&
-          !bothKnown &&
+          !allKeysKnown(session.mode, diagnostics) &&
           Date.now() - (completedAt ?? 0) < DIAGNOSTICS_GRACE_MS)
       if (keepPolling) timer = window.setTimeout(tick, SESSION_POLL_MS)
     }
@@ -293,19 +356,28 @@ export function DhExchange() {
 
           {/* Węzły widać zawsze; bez sesji bez wartości. */}
           <div className={`dh-parties dh-parties--${shownMode}`}>
-            <NodePanel role="alice" node={session?.nodes.alice} nodes={nodes} />
+            <NodePanel
+              role="alice"
+              mode={shownMode}
+              node={session?.nodes.alice}
+              nodes={nodes}
+            />
 
             {/* Środek: przy zwykłej wymianie wiadomości idą przez koordynatora,
                 przy ataku przechwytuje je Mallory. */}
             {shownMode === 'mitm' ? (
-              <MalloryPanel />
+              <MalloryPanel
+                mallory={session?.mallory ?? undefined}
+                completed={session?.status === 'completed'}
+                nodes={nodes}
+              />
             ) : (
               <div className="dh-channel">
                 <span className="dh-channel-label">koordynator</span>
               </div>
             )}
 
-            <NodePanel role="bob" node={session?.nodes.bob} nodes={nodes} />
+            <NodePanel role="bob" mode={shownMode} node={session?.nodes.bob} nodes={nodes} />
           </div>
 
           {shownMode === 'mitm' && <MitmExplanation />}
@@ -313,7 +385,12 @@ export function DhExchange() {
           {session && <WaitingHint session={session} nodes={nodes} />}
           {session && <SessionResult session={session} />}
           <ScenarioComparison sessions={lastByMode} />
-          {session && <EventLog events={session.events} />}
+          {session && (
+            <EventLog
+              events={session.events}
+              interceptions={session.mallory?.interceptions ?? []}
+            />
+          )}
         </section>
 
         <aside className="panel" aria-label="Parametry sesji">
@@ -370,7 +447,7 @@ export function DhExchange() {
               </button>
             </div>
 
-            <NodesHint nodes={nodes} />
+            <NodesHint nodes={nodes} mode={mode} />
 
             {view.status === 'error' && (
               <p className="api-error" role="alert">
@@ -408,48 +485,60 @@ function SessionHeader({ session }: { session: DhSession }) {
   )
 }
 
-// Sesja trwa, a ktoś jeszcze nie wysłał wartości: mówimy, na kogo czekamy, a jeśli
-// heartbeat mówi, że proces nie działa, podpowiadamy, jak go uruchomić.
+// Sesja trwa, a ktoś jeszcze nie wysłał wartości (albo Mallory nie odesłała podmiany):
+// mówimy, na kogo czekamy, a jeśli heartbeat mówi, że proces nie działa, podpowiadamy,
+// jak go uruchomić.
 function WaitingHint({ session, nodes }: { session: DhSession; nodes: NodesState }) {
   if (session.status !== 'running') return null
-  const waiting = (['alice', 'bob'] as const).filter(
+  const waiting: NodeRole[] = (['alice', 'bob'] as const).filter(
     (role) => session.nodes[role].status === 'waiting',
   )
-  if (waiting.length === 0) return null
-  const offline =
-    nodes.status === 'ready' ? waiting.filter((role) => !nodes.nodes[role].online) : []
-  const names = waiting.map((role) => ROLES[role].nameOf).join(' i ')
+  const malloryPending = session.mallory?.interceptions.some((i) => i.status === 'pending')
+  if (waiting.length === 0 && !malloryPending) return null
+  const offline = offlineNodes(nodes, session.mode).filter(
+    (role) => waiting.includes(role) || (role === 'mallory' && malloryPending),
+  )
   return (
     <p className="dh-note" role="status">
-      Czekamy na wartość publiczną od {names}.
+      {waiting.length > 0 && `Czekamy na wartość publiczną od ${joinNames(waiting)}.`}
+      {waiting.length > 0 && malloryPending && ' '}
+      {malloryPending && 'Czekamy, aż Mallory odeśle podmienioną wartość.'}
       {offline.length > 0 && (
         <>
           {' '}
-          Proces {offline.map((role) => ROLES[role].nameOf).join(' i ')} nie odpowiada –
-          uruchom go: <code>python -m backend.dh_transport --role {offline[0]}</code>.
+          Proces {joinNames(offline)} nie odpowiada – uruchom go:{' '}
+          <code>{runCommand(offline[0])}</code>.
         </>
       )}
     </p>
   )
 }
 
-// Komunikat pod przyciskami o dostępności węzłów.
-function NodesHint({ nodes }: { nodes: NodesState }) {
+// Komunikat pod przyciskami o dostępności węzłów potrzebnych w wybranym scenariuszu.
+function NodesHint({ nodes, mode }: { nodes: NodesState; mode: DhMode }) {
   let text: string | null = null
   if (nodes.status === 'error') text = `Nie udało się sprawdzić dostępności węzłów: ${nodes.message}`
-  if (nodes.status === 'ready') {
-    const offline = (['alice', 'bob'] as const).filter((role) => !nodes.nodes[role].online)
-    if (offline.length > 0) {
-      const names = offline.map((role) => ROLES[role].nameOf).join(' i ')
-      text = `Uruchom proces ${names}, żeby rozpocząć sesję.`
-    }
-  }
+  const offline = offlineNodes(nodes, mode)
+  if (offline.length > 0) text = `Uruchom proces ${joinNames(offline)}, żeby rozpocząć sesję.`
   if (!text) return null
   return (
     <p className="dh-note" id="dh-nodes-hint">
       {text}
     </p>
   )
+}
+
+// Plakietka dostępności procesu (poza sesją).
+function availabilityBadge(
+  availability: NodeAvailability | undefined,
+  nodes: NodesState,
+): { label: string; tone: Tone } | null {
+  if (nodes.status === 'loading') return { label: 'sprawdzanie…', tone: 'neutral' }
+  if (!availability) return null
+  if (availability.online) return { label: 'dostępny', tone: 'ok' }
+  return availability.lastSeen === null
+    ? { label: 'nie zgłosił się', tone: 'error' }
+    : { label: 'niedostępny', tone: 'error' }
 }
 
 // Plakietka węzła: w sesji jego postęp, poza sesją dostępność procesu.
@@ -459,27 +548,23 @@ function nodeBadge(
   nodes: NodesState,
 ): { label: string; tone: Tone } | null {
   if (node) return PARTICIPANT_STATUS[node.status]
-  if (nodes.status === 'loading') return { label: 'sprawdzanie…', tone: 'neutral' }
-  if (nodes.status === 'error') return null
-  const availability = nodes.nodes[role]
-  if (availability.online) return { label: 'dostępny', tone: 'ok' }
-  return availability.lastSeen === null
-    ? { label: 'nie zgłosił się', tone: 'error' }
-    : { label: 'niedostępny', tone: 'error' }
+  return availabilityBadge(nodes.status === 'ready' ? nodes.nodes[role] : undefined, nodes)
 }
 
 // Panel jednego węzła: status, tajny klucz (bez wartości), wartości publiczne, sekret.
 type NodePanelProps = {
   role: Role
+  mode: DhMode
   // Stan uczestnika w sesji; bez sesji undefined.
   node: DhNode | undefined
   nodes: NodesState
 }
 
-function NodePanel({ role, node, nodes }: NodePanelProps) {
-  const { name, nameOf, priv, pub, other } = ROLES[role]
+function NodePanel({ role, mode, node, nodes }: NodePanelProps) {
+  const { name, nameOf, priv, pub, fake, other } = ROLES[role]
   const status = nodeBadge(role, node, nodes)
-  const otherPub = ROLES[other].pub
+  // W MITM ofiara dostaje wartość Mallory, choć myśli, że to wartość partnera.
+  const received = mode === 'mitm' ? fake : ROLES[other].pub
   const titleId = `dh-${role}-title`
 
   return (
@@ -497,8 +582,12 @@ function NodePanel({ role, node, nodes }: NodePanelProps) {
         {pub} = g<sup>{priv}</sup> mod p
       </DhValue>
 
-      <DhValue kind="public" label="Otrzymana wartość" value={node?.receivedValue}>
-        {otherPub}
+      <DhValue
+        kind="public"
+        label={mode === 'mitm' ? `Otrzymana „od ${ROLES[other].nameOf}”` : 'Otrzymana wartość'}
+        value={node?.receivedValue}
+      >
+        {received}
       </DhValue>
 
       {/* Bez diagnostyki K zostaje w procesie: po przetworzeniu wartości partnera
@@ -510,7 +599,7 @@ function NodePanel({ role, node, nodes }: NodePanelProps) {
         </DhValue>
       ) : (
         <DhValue kind="private" label="Wspólny sekret" value={node?.sharedKey}>
-          K = {otherPub}
+          K = {received}
           <sup>{priv}</sup> mod p
         </DhValue>
       )}
@@ -519,13 +608,39 @@ function NodePanel({ role, node, nodes }: NodePanelProps) {
 }
 
 // Panel Mallory: dwa własne sekrety, przechwycone wartości, podstawione wartości
-// i dwa sekrety uzgodnione osobno z Alice i z Bobem.
-// Na razie bez danych – kształt odpowiedzi API dla MITM nie jest jeszcze ustalony (#42).
-function MalloryPanel() {
+// i dwa sekrety uzgodnione osobno z Alice i z Bobem. Wszystko z rekordów przechwyceń
+// i diagnostyki Mallory (#41); bez sesji same wzory.
+type MalloryPanelProps = {
+  mallory: DhMallory | undefined
+  completed: boolean
+  nodes: NodesState
+}
+
+// Postęp Mallory w sesji: ile wartości przechwyciła i ile już podmieniła.
+function malloryBadge(mallory: DhMallory): { label: string; tone: Tone } {
+  const { interceptions } = mallory
+  const forwarded = interceptions.filter((i) => i.status !== 'pending').length
+  if (interceptions.length === 0) return { label: 'czeka na wiadomości', tone: 'neutral' }
+  if (forwarded < interceptions.length) {
+    return { label: `przechwyciła ${interceptions.length}/2`, tone: 'neutral' }
+  }
+  return { label: `podmieniła ${forwarded}/2`, tone: forwarded === 2 ? 'error' : 'neutral' }
+}
+
+function MalloryPanel({ mallory, completed, nodes }: MalloryPanelProps) {
+  const status = mallory
+    ? malloryBadge(mallory)
+    : availabilityBadge(nodes.status === 'ready' ? nodes.nodes.mallory : undefined, nodes)
+  // Mallory liczy K z ofiarą, gdy obsłuży jej wiadomość (odeśle podmianę).
+  const handled = (role: Role) =>
+    mallory?.interceptions.some((i) => i.originalSender === role && i.status !== 'pending') ??
+    false
+
   return (
     <section className="dh-party dh-party--mallory" aria-labelledby="dh-mallory-title">
       <div className="dh-party-header">
         <h2 id="dh-mallory-title">Mallory</h2>
+        {status && <Badge tone={status.tone}>{status.label}</Badge>}
       </div>
 
       <DhValue kind="private" label="Klucze prywatne" withValue={false}>
@@ -533,30 +648,65 @@ function MalloryPanel() {
         tylko proces Mallory
       </DhValue>
 
-      <DhValue kind="public" label="Przechwycona od Alice">
+      <DhValue kind="public" label="Przechwycona od Alice" value={mallory?.fromAlice}>
         A
       </DhValue>
 
-      <DhValue kind="public" label="Podstawiona Bobowi">
+      <DhValue kind="public" label="Podstawiona Bobowi" value={mallory?.toBob}>
         Y = g<sup>y</sup> mod p
       </DhValue>
 
-      <DhValue kind="public" label="Przechwycona od Boba">
+      <DhValue kind="public" label="Przechwycona od Boba" value={mallory?.fromBob}>
         B
       </DhValue>
 
-      <DhValue kind="public" label="Podstawiona Alice">
+      <DhValue kind="public" label="Podstawiona Alice" value={mallory?.toAlice}>
         X = g<sup>x</sup> mod p
       </DhValue>
 
-      <DhValue kind="private" label="Sekret z Alice">
+      <MalloryKey
+        label="Sekret z Alice"
+        value={mallory?.withAlice}
+        computed={completed && handled('alice')}
+      >
         K<sub>MA</sub> = A<sup>x</sup> mod p
-      </DhValue>
+      </MalloryKey>
 
-      <DhValue kind="private" label="Sekret z Bobem">
+      <MalloryKey
+        label="Sekret z Bobem"
+        value={mallory?.withBob}
+        computed={completed && handled('bob')}
+      >
         K<sub>MB</sub> = B<sup>y</sup> mod p
-      </DhValue>
+      </MalloryKey>
     </section>
+  )
+}
+
+// Sekret Mallory. Jak w panelu węzła: bez diagnostyki mówimy wprost, że K jest
+// obliczony, ale zostaje w procesie.
+function MalloryKey({
+  label,
+  value,
+  computed,
+  children,
+}: {
+  label: string
+  value: number | undefined
+  computed: boolean
+  children: ReactNode
+}) {
+  if (computed && value === undefined) {
+    return (
+      <DhValue kind="private" label={label} withValue={false}>
+        <span className="formula">K</span> – obliczony, zna go tylko proces Mallory
+      </DhValue>
+    )
+  }
+  return (
+    <DhValue kind="private" label={label} value={value}>
+      {children}
+    </DhValue>
   )
 }
 
@@ -644,6 +794,7 @@ function SessionResult({ session }: { session: DhSession }) {
       <h2 id="dh-result-title">
         {match ? 'Sekrety zgodne' : 'Sekrety niezgodne'}
       </h2>
+      {session.mode === 'mitm' && <MitmResult session={session} />}
       {match && (
         <>
           <p>
@@ -660,6 +811,43 @@ function SessionResult({ session }: { session: DhSession }) {
         K nie jest przesyłane – pokazujemy je tylko na potrzeby demonstracji.
       </p>
     </section>
+  )
+}
+
+// Wynik ataku: każda ofiara uzgodniła sekret z Mallory, nie z partnerem.
+// Pokazujemy, gdy Mallory zgłosiła oba swoje K; porównujemy tylko liczby z diagnostyki.
+function MitmResult({ session }: { session: DhSession }) {
+  const kA = session.nodes.alice.sharedKey
+  const kB = session.nodes.bob.sharedKey
+  const kMA = session.mallory?.withAlice
+  const kMB = session.mallory?.withBob
+  if (kA === undefined || kB === undefined || kMA === undefined || kMB === undefined) {
+    return (
+      <p className="dh-note">Brak sekretów Mallory w diagnostyce – nie da się ich porównać.</p>
+    )
+  }
+  const sign = (x: number, y: number) => (x === y ? '=' : '≠')
+  const success = kA === kMA && kB === kMB && kA !== kB
+  return (
+    <>
+      <p>
+        {success
+          ? 'Atak się udał: Alice ma sekret wspólny z Mallory, Bob – też z Mallory, a nie ze sobą nawzajem.'
+          : 'Wartości nie układają się w udany atak.'}
+      </p>
+      <p className="formula dh-result-formula">
+        K<sub>A</sub> = <output>{kA}</output> {sign(kA, kMA)} <output>{kMA}</output> = K
+        <sub>MA</sub>
+      </p>
+      <p className="formula dh-result-formula">
+        K<sub>B</sub> = <output>{kB}</output> {sign(kB, kMB)} <output>{kMB}</output> = K
+        <sub>MB</sub>
+      </p>
+      <p className="formula dh-result-formula">
+        K<sub>A</sub> = <output>{kA}</output> {sign(kA, kB)} <output>{kB}</output> = K
+        <sub>B</sub>
+      </p>
+    </>
   )
 }
 
@@ -684,6 +872,22 @@ const COMPARE_ROWS: { label: ReactNode; value: (session: DhSession) => number | 
       </>
     ),
     value: (s) => s.nodes.bob.sharedKey,
+  },
+  {
+    label: (
+      <>
+        K<sub>MA</sub> – Mallory z Alice
+      </>
+    ),
+    value: (s) => s.mallory?.withAlice,
+  },
+  {
+    label: (
+      <>
+        K<sub>MB</sub> – Mallory z Bobem
+      </>
+    ),
+    value: (s) => s.mallory?.withBob,
   },
 ]
 
@@ -783,7 +987,13 @@ function ScenarioComparison({ sessions }: { sessions: Partial<Record<DhMode, DhS
 }
 
 // Uporządkowany dziennik zdarzeń koordynatora.
-function EventLog({ events }: { events: DhEvent[] }) {
+function EventLog({
+  events,
+  interceptions,
+}: {
+  events: DhEvent[]
+  interceptions: DhInterception[]
+}) {
   return (
     <section className="dh-log" aria-labelledby="dh-log-title">
       <h2 id="dh-log-title">Dziennik zdarzeń</h2>
@@ -803,7 +1013,11 @@ function EventLog({ events }: { events: DhEvent[] }) {
             </thead>
             <tbody>
               {events.map((event) => (
-                <EventRow key={event.seq} event={event} />
+                <EventRow
+                  key={event.seq}
+                  event={event}
+                  interception={interceptions.find((i) => i.messageId === event.messageId)}
+                />
               ))}
             </tbody>
           </table>
@@ -815,8 +1029,14 @@ function EventLog({ events }: { events: DhEvent[] }) {
 
 // Wiersz dziennika. Zdarzenia sesji (utworzenie, start, koniec) nie mają nadawcy
 // ani wartości, więc w tych kolumnach jest kreska.
-function EventRow({ event }: { event: DhEvent }) {
+// Po podmianie (message_forwarded, a potem message_processed) wiadomość naprawdę
+// wysyła Mallory, podszywając się pod oryginalnego nadawcę – pokazujemy oba fakty
+// i wartość, którą zastąpiła.
+function EventRow({ event, interception }: { event: DhEvent; interception?: DhInterception }) {
   const status = MESSAGE_STATUS[event.status]
+  const substituted =
+    interception !== undefined &&
+    (event.type === 'message_forwarded' || event.type === 'message_processed')
   return (
     <tr>
       <td>{event.seq}</td>
@@ -824,20 +1044,32 @@ function EventRow({ event }: { event: DhEvent }) {
       <td>
         {event.from && event.to ? (
           <>
-            <RoleName role={event.from} /> → <RoleName role={event.to} />
+            {substituted ? (
+              <>
+                <RoleName role="mallory" /> jako <RoleName role={interception.originalSender} />
+              </>
+            ) : (
+              <RoleName role={event.from} />
+            )}{' '}
+            → <RoleName role={event.to} />
           </>
         ) : (
           '–'
         )}
       </td>
-      <td className="formula">{event.value ?? '–'}</td>
+      <td className="formula">
+        {event.value ?? '–'}
+        {substituted && event.value !== interception.originalValue && (
+          <span className="dh-replaced"> zamiast {interception.originalValue}</span>
+        )}
+      </td>
       <td>{event.from ? <Badge tone={status.tone}>{status.label}</Badge> : '–'}</td>
     </tr>
   )
 }
 
-function RoleName({ role }: { role: Role }) {
-  return <span className={`dh-role dh-role--${role}`}>{ROLES[role].name}</span>
+function RoleName({ role }: { role: NodeRole }) {
+  return <span className={`dh-role dh-role--${role}`}>{NODE_NAME[role].name}</span>
 }
 
 function Badge({ tone, children }: { tone: Tone; children: ReactNode }) {

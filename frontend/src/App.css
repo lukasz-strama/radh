@@ -514,3 +514,13 @@
   font-weight: bold;
   background: color-mix(in srgb, #b0359e 12%, transparent);
 }
+
+.dh-role--mallory {
+  --party-color: #b0359e;
+}
+
+/* Oryginał zastąpiony przez Mallory, obok podstawionej wartości w dzienniku */
+.dh-replaced {
+  font-size: 0.85em;
+  opacity: 0.75;
+}

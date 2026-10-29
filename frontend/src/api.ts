@@ -30,7 +30,7 @@ export async function encryptRsa(data: RsaEncryptRequest): Promise<RsaEncryptRes
   return { ciphertext }
 }
 
-// Sesja DH (#38) z koordynatora (#37, backend/DH_SESSIONS.md).
+// Sesja DH (#38, #42) z koordynatora (#37, #41: backend/DH_SESSIONS.md, MITM_SESSIONS.md).
 // Odpowiedź backendu sprawdzamy i mapujemy na model widoku w toDhSession().
 
 const DH_SESSIONS_URL = '/api/v1/dh/sessions'
@@ -44,12 +44,13 @@ export type DhSessionParams = {
   generator: number
 }
 
-// Uczestnicy sesji. M3: dojdzie 'mallory'.
+// Ofiary wymiany. Mallory jest osobnym węzłem, ale nie uczestnikiem sesji (#41).
 export type Role = 'alice' | 'bob'
+export type NodeRole = Role | 'mallory'
 
 // Postęp uczestnika potwierdzony przez koordynatora: waiting → published → received.
 // published: koordynator przyjął jego wartość publiczną;
-// received: węzeł potwierdził przetworzenie wartości partnera.
+// received: węzeł potwierdził przetworzenie otrzymanej wartości.
 export type ParticipantStatus = 'waiting' | 'published' | 'received'
 
 export type SessionStatus = 'created' | 'running' | 'completed' | 'cancelled'
@@ -58,11 +59,28 @@ export type EventType =
   | 'session_created'
   | 'session_started'
   | 'public_value'
+  | 'message_intercepted'
+  | 'message_forwarded'
   | 'message_processed'
   | 'session_completed'
   | 'session_cancelled'
 
-export type MessageStatus = 'queued' | 'processed'
+// intercepted: oryginał zatrzymany u Mallory, nigdy nie trafia do kolejki ofiary.
+export type MessageStatus = 'intercepted' | 'queued' | 'processed'
+
+// Przechwycenie w MITM: pending (czeka na Mallory) → forwarded (Mallory odesłała
+// podmianę) → processed (odbiorca potwierdził jej przetworzenie).
+export type InterceptionStatus = 'pending' | 'forwarded' | 'processed'
+
+export type DhInterception = {
+  messageId: string
+  originalSender: Role
+  recipient: Role
+  originalValue: number
+  // null, dopóki Mallory nie odeśle podmiany.
+  deliveredValue: number | null
+  status: InterceptionStatus
+}
 
 // Stan jednego uczestnika. Brak wartości = jeszcze jej nie ma.
 export type DhNode = {
@@ -73,13 +91,27 @@ export type DhNode = {
   sharedKey?: number
 }
 
+// Mallory w sesji MITM, wyprowadzona z rekordów przechwyceń i jej diagnostyki.
+export type DhMallory = {
+  fromAlice?: number
+  toBob?: number
+  fromBob?: number
+  toAlice?: number
+  // K uzgodnione z każdą ofiarą (fetchDhMalloryDiagnostics).
+  withAlice?: number
+  withBob?: number
+  interceptions: DhInterception[]
+}
+
 // Zdarzenie z dziennika koordynatora. Zdarzenia sesji nie mają nadawcy ani wartości.
+// W message_forwarded nadawcą jest Mallory; w message_processed – deklarowany nadawca.
 export type DhEvent = {
   seq: number
   type: EventType
-  from: Role | null
+  from: NodeRole | null
   to: Role | null
   value: number | null
+  messageId: string | null
   status: MessageStatus
 }
 
@@ -90,9 +122,14 @@ export type DhSession = {
   g: number
   status: SessionStatus
   nodes: Record<Role, DhNode>
+  // Tylko w trybie MITM; w zwykłej wymianie null.
+  mallory: DhMallory | null
   events: DhEvent[]
 }
 
+// Tworzy sesję i od razu ją uruchamia; zwraca stan po starcie.
+// Gdy start się nie uda (np. 409 MALLORY_UNAVAILABLE), anulujemy utworzoną sesję,
+// żeby nie blokowała następnej.
 export async function startDhSession(
   params: DhSessionParams,
   mode: DhMode,
@@ -106,7 +143,7 @@ export async function startDhSession(
   }
 }
 
-// Zwraca bieżący stan sesji: postęp uczestników, wiadomości i dziennik zdarzeń.
+// Zwraca bieżący stan sesji: postęp uczestników, wiadomości, przechwycenia i dziennik.
 export async function fetchDhSession(id: string): Promise<DhSession> {
   return toDhSession(await requestJson('GET', `${DH_SESSIONS_URL}/${id}`))
 }
@@ -138,9 +175,14 @@ export type NodeAvailability = {
   lastSeen: string | null
 }
 
-export async function fetchDhNodes(): Promise<Record<Role, NodeAvailability>> {
+export type NodesAvailability = Record<Role, NodeAvailability> & {
+  // Starszy backend bez MITM nie zgłasza Mallory.
+  mallory?: NodeAvailability
+}
+
+export async function fetchDhNodes(): Promise<NodesAvailability> {
   const body = (await requestJson('GET', '/api/v1/dh/nodes')) as Record<string, unknown> | null
-  function node(role: Role): NodeAvailability {
+  function node(role: NodeRole): NodeAvailability {
     const raw = body?.[role] as Record<string, unknown> | undefined
     if (
       !raw ||
@@ -151,7 +193,11 @@ export async function fetchDhNodes(): Promise<Record<Role, NodeAvailability>> {
     }
     return { online: raw.online, lastSeen: raw.last_seen }
   }
-  return { alice: node('alice'), bob: node('bob') }
+  return {
+    alice: node('alice'),
+    bob: node('bob'),
+    ...(body?.mallory === undefined ? {} : { mallory: node('mallory') }),
+  }
 }
 
 // K zgłoszone przez węzły uruchomione z --allow-diagnostics; null = brak zgłoszenia.
@@ -161,24 +207,43 @@ export async function fetchDhDiagnostics(id: string): Promise<Record<Role, numbe
     string,
     unknown
   > | null
-  function value(role: Role): number | null {
-    const raw = body?.[role]
-    if (raw !== null && typeof raw !== 'number') throw unexpectedFormat()
-    return raw
-  }
   if (!body) throw unexpectedFormat()
-  return { alice: value('alice'), bob: value('bob') }
+  return { alice: numberOrNull(body.alice), bob: numberOrNull(body.bob) }
+}
+
+// Dwa K Mallory: uzgodnione z Alice i z Bobem; null = brak raportu.
+export async function fetchDhMalloryDiagnostics(
+  id: string,
+): Promise<{ withAlice: number | null; withBob: number | null }> {
+  const body = (await requestJson(
+    'GET',
+    `${DH_SESSIONS_URL}/${id}/diagnostics/mallory`,
+  )) as Record<string, unknown> | null
+  if (!body) throw unexpectedFormat()
+  return {
+    withAlice: numberOrNull(body.shared_with_alice),
+    withBob: numberOrNull(body.shared_with_bob),
+  }
+}
+
+function numberOrNull(value: unknown): number | null {
+  if (value !== null && typeof value !== 'number') throw unexpectedFormat()
+  return value
 }
 
 const ROLES: readonly Role[] = ['alice', 'bob']
+const NODE_ROLES: readonly NodeRole[] = ['alice', 'bob', 'mallory']
 const MODES: readonly DhMode[] = ['normal', 'mitm']
 const SESSION_STATUSES: readonly SessionStatus[] = ['created', 'running', 'completed', 'cancelled']
 const PARTICIPANT_STATUSES: readonly ParticipantStatus[] = ['waiting', 'published', 'received']
-const MESSAGE_STATUSES: readonly MessageStatus[] = ['queued', 'processed']
+const MESSAGE_STATUSES: readonly MessageStatus[] = ['intercepted', 'queued', 'processed']
+const INTERCEPTION_STATUSES: readonly InterceptionStatus[] = ['pending', 'forwarded', 'processed']
 const EVENT_TYPES: readonly EventType[] = [
   'session_created',
   'session_started',
   'public_value',
+  'message_intercepted',
+  'message_forwarded',
   'message_processed',
   'session_completed',
   'session_cancelled',
@@ -195,8 +260,8 @@ function isOneOf<T extends string>(values: readonly T[], value: unknown): value 
   return typeof value === 'string' && (values as readonly string[]).includes(value)
 }
 
-function isRoleOrNull(value: unknown): value is Role | null {
-  return value === null || isOneOf(ROLES, value)
+function isOneOfOrNull<T extends string>(values: readonly T[], value: unknown): value is T | null {
+  return value === null || isOneOf(values, value)
 }
 
 // Sprawdza odpowiedź sesji i zamienia ją na model widoku. Niepełna albo
@@ -204,6 +269,8 @@ function isRoleOrNull(value: unknown): value is Role | null {
 function toDhSession(body: unknown): DhSession {
   const raw = body as Record<string, unknown> | null
   const participants = raw?.participants as Record<string, unknown> | undefined
+  // Starszy backend (#37 bez #41) nie zwraca interceptions – wtedy brak przechwyceń.
+  const rawInterceptions = raw?.interceptions ?? []
   if (
     !raw ||
     typeof raw.session_id !== 'string' ||
@@ -214,7 +281,8 @@ function toDhSession(body: unknown): DhSession {
     !participants ||
     !ROLES.every((role) => isOneOf(PARTICIPANT_STATUSES, participants[role])) ||
     !Array.isArray(raw.messages) ||
-    !Array.isArray(raw.events)
+    !Array.isArray(raw.events) ||
+    !Array.isArray(rawInterceptions)
   ) {
     throw unexpectedFormat()
   }
@@ -238,16 +306,42 @@ function toDhSession(body: unknown): DhSession {
     }
   })
 
+  const interceptions = rawInterceptions.map((item): DhInterception => {
+    const record = item as Record<string, unknown> | null
+    const delivered = record?.delivered_value
+    if (
+      !record ||
+      typeof record.message_id !== 'string' ||
+      !isOneOf(ROLES, record.original_sender) ||
+      !isOneOf(ROLES, record.recipient) ||
+      typeof record.original_value !== 'number' ||
+      (delivered !== null && typeof delivered !== 'number') ||
+      !isOneOf(INTERCEPTION_STATUSES, record.status)
+    ) {
+      throw unexpectedFormat()
+    }
+    return {
+      messageId: record.message_id,
+      originalSender: record.original_sender,
+      recipient: record.recipient,
+      originalValue: record.original_value,
+      deliveredValue: delivered as number | null,
+      status: record.status,
+    }
+  })
+
   const events = raw.events.map((item): DhEvent => {
     const event = item as Record<string, unknown> | null
     const value = event?.public_value
+    const messageId = event?.message_id
     if (
       !event ||
       typeof event.sequence !== 'number' ||
       !isOneOf(EVENT_TYPES, event.type) ||
-      !isRoleOrNull(event.sender) ||
-      !isRoleOrNull(event.recipient) ||
+      !isOneOfOrNull(NODE_ROLES, event.sender) ||
+      !isOneOfOrNull(ROLES, event.recipient) ||
       (value !== null && typeof value !== 'number') ||
+      (messageId !== null && messageId !== undefined && typeof messageId !== 'string') ||
       !isOneOf(MESSAGE_STATUSES, event.status)
     ) {
       throw unexpectedFormat()
@@ -258,18 +352,47 @@ function toDhSession(body: unknown): DhSession {
       from: event.sender,
       to: event.recipient,
       value: value as number | null,
+      messageId: (messageId as string | null | undefined) ?? null,
       status: event.status,
     }
   })
 
-  // Wartość publiczna uczestnika: jego wiadomość przyjęta przez koordynatora.
-  // Otrzymana: wiadomość do niego, której przetworzenie potwierdził.
+  const mitm = raw.mode === 'mitm'
+
+  // Zwykła wymiana: wartość własna to wiadomość od uczestnika, otrzymana – wiadomość
+  // do niego, której przetworzenie potwierdził.
+  // MITM: messages[].public_value po podmianie zawiera już zamiennik, a sender to
+  // deklarowana (podszyta) tożsamość. Dlatego wartość własną bierzemy z oryginału
+  // przechwycenia, a otrzymaną z wartości doręczonej po jej przetworzeniu (#41).
   function node(role: Role): DhNode {
+    const status = participants![role] as ParticipantStatus
+    if (mitm) {
+      const own = interceptions.find((i) => i.originalSender === role)
+      const received = interceptions.find((i) => i.recipient === role && i.status === 'processed')
+      return {
+        status,
+        publicValue: own?.originalValue,
+        receivedValue: received?.deliveredValue ?? undefined,
+      }
+    }
     return {
-      status: participants![role] as ParticipantStatus,
+      status,
       publicValue: messages.find((m) => m.sender === role)?.public_value,
       receivedValue: messages.find((m) => m.recipient === role && m.status === 'processed')
         ?.public_value,
+    }
+  }
+
+  // Mallory: oryginał od Alice zastępuje wartością dla Boba (Y) i odwrotnie (X).
+  function mallory(): DhMallory {
+    const fromAlice = interceptions.find((i) => i.originalSender === 'alice')
+    const fromBob = interceptions.find((i) => i.originalSender === 'bob')
+    return {
+      fromAlice: fromAlice?.originalValue,
+      toBob: fromAlice?.deliveredValue ?? undefined,
+      fromBob: fromBob?.originalValue,
+      toAlice: fromBob?.deliveredValue ?? undefined,
+      interceptions,
     }
   }
 
@@ -280,6 +403,7 @@ function toDhSession(body: unknown): DhSession {
     g: raw.generator,
     status: raw.status,
     nodes: { alice: node('alice'), bob: node('bob') },
+    mallory: mitm ? mallory() : null,
     events: [...events].sort((x, y) => x.seq - y.seq),
   }
 }
