@@ -126,6 +126,9 @@ export function DhExchange() {
   const [fieldErrors, setFieldErrors] = useState<DhFieldErrors>({})
   const [view, setView] = useState<ViewState>({ status: 'empty' })
   const [mode, setMode] = useState<DhMode>('normal')
+  // Ostatnia zakończona sesja każdego scenariusza – do porównania obok siebie.
+  // Sesje idą po kolei (koordynator obsługuje jedną naraz), a porównanie zostaje po resecie.
+  const [lastByMode, setLastByMode] = useState<Partial<Record<DhMode, DhSession>>>({})
   // Numer bieżącego żądania. Reset albo nowy start go zwiększa, więc spóźniona
   // odpowiedź starego żądania jest ignorowana i nie nadpisze nowszego stanu.
   const requestId = useRef(0)
@@ -196,7 +199,11 @@ export function DhExchange() {
         if (!active || id !== requestId.current) return
       }
 
-      setView({ status: 'session', session: withDiagnostics(session, diagnostics) })
+      const shown = withDiagnostics(session, diagnostics)
+      setView({ status: 'session', session: shown })
+      if (shown.status === 'completed') {
+        setLastByMode((previous) => ({ ...previous, [shown.mode]: shown }))
+      }
 
       if (session.status === 'completed' && completedAt === null) completedAt = Date.now()
       const bothKnown = diagnostics.alice !== null && diagnostics.bob !== null
@@ -305,6 +312,7 @@ export function DhExchange() {
 
           {session && <WaitingHint session={session} nodes={nodes} />}
           {session && <SessionResult session={session} />}
+          <ScenarioComparison sessions={lastByMode} />
           {session && <EventLog events={session.events} />}
         </section>
 
@@ -650,6 +658,125 @@ function SessionResult({ session }: { session: DhSession }) {
       )}
       <p className="dh-note">
         K nie jest przesyłane – pokazujemy je tylko na potrzeby demonstracji.
+      </p>
+    </section>
+  )
+}
+
+// Wiersze porównania: te same wartości z ostatniej sesji każdego scenariusza.
+const COMPARE_ROWS: { label: ReactNode; value: (session: DhSession) => number | undefined }[] = [
+  { label: 'A – wysłała Alice', value: (s) => s.nodes.alice.publicValue },
+  { label: 'B – wysłał Bob', value: (s) => s.nodes.bob.publicValue },
+  { label: 'Alice otrzymała', value: (s) => s.nodes.alice.receivedValue },
+  { label: 'Bob otrzymał', value: (s) => s.nodes.bob.receivedValue },
+  {
+    label: (
+      <>
+        K<sub>A</sub> – sekret Alice
+      </>
+    ),
+    value: (s) => s.nodes.alice.sharedKey,
+  },
+  {
+    label: (
+      <>
+        K<sub>B</sub> – sekret Boba
+      </>
+    ),
+    value: (s) => s.nodes.bob.sharedKey,
+  },
+]
+
+const COMPARED_MODES = ['normal', 'mitm'] as const
+
+// Werdykt sesji: czy Alice i Bob mają ten sam K (o ile węzły zgłosiły diagnostykę).
+function secretsVerdict(session: DhSession): { label: string; tone: Tone } {
+  const kA = session.nodes.alice.sharedKey
+  const kB = session.nodes.bob.sharedKey
+  if (kA === undefined || kB === undefined) return { label: 'brak K w diagnostyce', tone: 'neutral' }
+  return kA === kB ? { label: 'zgodne', tone: 'ok' } : { label: 'różne', tone: 'error' }
+}
+
+// Porównanie ostatniej zakończonej sesji zwykłej i ataku. Pokazuje tylko to, co przyszło
+// z API; wartości różniące się między scenariuszami są wyróżnione.
+function ScenarioComparison({ sessions }: { sessions: Partial<Record<DhMode, DhSession>> }) {
+  const { normal, mitm } = sessions
+  if (!normal && !mitm) return null
+  const missing = COMPARED_MODES.filter((mode) => !sessions[mode])
+
+  return (
+    <section className="dh-compare" aria-labelledby="dh-compare-title">
+      <h2 id="dh-compare-title">Porównanie scenariuszy</h2>
+      <p className="dh-note">Ostatnia zakończona sesja każdego scenariusza.</p>
+      <div className="dh-log-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Wartość</th>
+              {COMPARED_MODES.map((mode) => (
+                <th scope="col" key={mode}>
+                  {MODE_LABEL[mode]}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">p, g</th>
+              {COMPARED_MODES.map((mode) => {
+                const s = sessions[mode]
+                return (
+                  <td className="formula" key={mode}>
+                    {s ? `${s.p}, ${s.g}` : '–'}
+                  </td>
+                )
+              })}
+            </tr>
+            {COMPARE_ROWS.map((row, index) => {
+              const values = COMPARED_MODES.map((mode) => {
+                const s = sessions[mode]
+                return s ? row.value(s) : undefined
+              })
+              const differs =
+                normal !== undefined &&
+                mitm !== undefined &&
+                values[0] !== undefined &&
+                values[1] !== undefined &&
+                values[0] !== values[1]
+              return (
+                <tr key={index}>
+                  <th scope="row">{row.label}</th>
+                  {values.map((value, column) => (
+                    <td
+                      className={`formula${differs ? ' dh-compare-diff' : ''}`}
+                      key={COMPARED_MODES[column]}
+                    >
+                      {value ?? '–'}
+                    </td>
+                  ))}
+                </tr>
+              )
+            })}
+            <tr>
+              <th scope="row">Sekrety Alice i Boba</th>
+              {COMPARED_MODES.map((mode) => {
+                const s = sessions[mode]
+                if (!s) return <td key={mode}>–</td>
+                const verdict = secretsVerdict(s)
+                return (
+                  <td key={mode}>
+                    <Badge tone={verdict.tone}>{verdict.label}</Badge>
+                  </td>
+                )
+              })}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p className="dh-note">
+        {missing.length > 0
+          ? `Uruchom też scenariusz „${MODE_LABEL[missing[0]]}”, żeby zobaczyć różnice.`
+          : 'Wyróżnione wartości różnią się między scenariuszami.'}
       </p>
     </section>
   )

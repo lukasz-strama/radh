@@ -396,7 +396,8 @@
 }
 
 /* Dziennik wiadomości; na wąskim ekranie tabela przewija się w poziomie */
-.dh-log {
+.dh-log,
+.dh-compare {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -406,14 +407,17 @@
   overflow-x: auto;
 }
 
-.dh-log table {
+.dh-log table,
+.dh-compare table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.875rem;
 }
 
 .dh-log th,
-.dh-log td {
+.dh-log td,
+.dh-compare th,
+.dh-compare td {
   padding: 6px 8px;
   text-align: left;
   white-space: nowrap;
@@ -499,4 +503,14 @@
 
 .dh-explain h2 {
   color: #b0359e;
+}
+
+/* Porównanie scenariuszy: nagłówki wierszy zwykłą czcionką, różnice wyróżnione */
+.dh-compare tbody th {
+  font-weight: normal;
+}
+
+.dh-compare-diff {
+  font-weight: bold;
+  background: color-mix(in srgb, #b0359e 12%, transparent);
 }
