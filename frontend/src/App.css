@@ -485,3 +485,18 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Wyjaśnienie ataku MITM, w kolorze Mallory */
+.dh-explain {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-left: 4px solid #b0359e;
+  border-radius: 4px;
+  background: color-mix(in srgb, #b0359e 6%, transparent);
+}
+
+.dh-explain h2 {
+  color: #b0359e;
+}

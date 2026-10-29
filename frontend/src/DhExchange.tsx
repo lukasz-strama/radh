@@ -301,6 +301,8 @@ export function DhExchange() {
             <NodePanel role="bob" node={session?.nodes.bob} nodes={nodes} />
           </div>
 
+          {shownMode === 'mitm' && <MitmExplanation />}
+
           {session && <WaitingHint session={session} nodes={nodes} />}
           {session && <SessionResult session={session} />}
           {session && <EventLog events={session.events} />}
@@ -546,6 +548,41 @@ function MalloryPanel() {
       <DhValue kind="private" label="Sekret z Bobem">
         K<sub>MB</sub> = B<sup>y</sup> mod p
       </DhValue>
+    </section>
+  )
+}
+
+// Stałe wyjaśnienie scenariusza ataku: nie zależy od danych sesji.
+function MitmExplanation() {
+  return (
+    <section className="dh-explain" aria-labelledby="dh-explain-title">
+      <h2 id="dh-explain-title">Dlaczego atak się udaje</h2>
+      <p>
+        Alice i Bob dostają same liczby. Nic w wartości publicznej nie mówi, kto ją
+        naprawdę wysłał.
+      </p>
+      <p>
+        Mallory przechwytuje A i B, a w zamian wysyła własne X i Y. Z każdą ofiarą wykonuje
+        osobną, całkowicie poprawną wymianę DH: z Alice uzgadnia K<sub>MA</sub>, z Bobem
+        K<sub>MB</sub>.
+      </p>
+      <div>
+        <p className="formula dh-result-formula">
+          K<sub>A</sub> = X<sup>a</sup> = A<sup>x</sup> = K<sub>MA</sub> (mod p)
+        </p>
+        <p className="formula dh-result-formula">
+          K<sub>B</sub> = Y<sup>b</sup> = B<sup>y</sup> = K<sub>MB</sub> (mod p)
+        </p>
+      </div>
+      <p>
+        Obliczenia się zgadzają, ale Alice i Bob mają różne sekrety, a Mallory zna oba. Gdyby
+        dalej szyfrowali rozmowę tymi kluczami, Mallory mogłaby ją czytać i przekazywać dalej
+        niezauważona.
+      </p>
+      <p>
+        Przed tym chroni dopiero uwierzytelnienie wartości publicznych, np. podpis RSA:
+        podstawione X i Y nie miałyby ważnego podpisu Boba ani Alice.
+      </p>
     </section>
   )
 }
