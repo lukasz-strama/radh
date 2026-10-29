@@ -65,6 +65,24 @@ Szybkie sprawdzenie: dla `p = 23`, `g = 5` i węzłów w trybie testowym
 z sekretami 6 i 15 interfejs powinien pokazać `A = 8`, `B = 19`,
 a z diagnostyką `K = 2` po obu stronach.
 
+#### Scenariusz „Atak MITM”
+
+Scenariusz ataku wymaga trzeciego procesu – Mallory – uruchomionego obok
+Alice i Boba, w osobnym terminalu. Instrukcja w
+[`backend/MITM_SESSIONS.md`](../backend/MITM_SESSIONS.md).
+
+- Bez działającego procesu Mallory przycisk „Rozpocznij sesję” jest nieaktywny
+  w tym scenariuszu; zwykła wymiana działa bez niej.
+- Sekrety Mallory (K<sub>MA</sub>, K<sub>MB</sub>) widać tylko wtedy, gdy jej proces
+  też uruchomiono z `--allow-diagnostics`.
+- Tabela „Porównanie scenariuszy” pokazuje ostatnią zakończoną sesję każdego
+  scenariusza, więc oba trzeba uruchomić po kolei – koordynator obsługuje
+  jedną sesję naraz.
+
+Szybkie sprawdzenie: z węzłami jak wyżej i Mallory w trybie testowym
+z sekretami 7 i 11 interfejs powinien pokazać, że Alice otrzymała `X = 17`,
+a Bob `Y = 22`, oraz `K_A = K_MA = 12`, `K_B = K_MB = 22`.
+
 ## Kompilacja produkcyjna
 
 ```bash
