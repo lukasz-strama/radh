@@ -226,6 +226,9 @@ def test_cli_survives_c_failure_without_leaking_details(alice, adapter, monkeypa
     assert output.err == ""
 
 
+VENV_LAUNCHER = sys.platform == "win32" and sys.prefix != sys.base_prefix
+
+
 class AgentProcess:
     """Czytanie przez wątek zapewnia limit czasu także dla potoków Windows."""
 
@@ -238,7 +241,8 @@ class AgentProcess:
             args.append("--test-mode")
         if diagnostics:
             args.append("--allow-diagnostics")
-        self.process = subprocess.Popen(args, cwd=Path(__file__).resolve().parents[1],
+        # Katalog główny repozytorium (plik leży w tests/test_dh_nodes/).
+        self.process = subprocess.Popen(args, cwd=Path(__file__).resolve().parents[2],
                                         env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE, text=True, encoding="utf-8")
         self.lines = queue.Queue()
@@ -281,8 +285,10 @@ def test_subprocess_reference_exchange_and_restart(core):
         agents.append(bob)
         a = alice.call(op="start", session_id="ref", p=23, g=5)
         b = bob.call(op="start", session_id="ref", p=23, g=5)
-        assert a["pid"] == alice.process.pid
-        assert b["pid"] == bob.process.pid
+        # Na Windows python.exe z venv to launcher: Popen.pid != PID interpretera.
+        if not VENV_LAUNCHER:
+            assert a["pid"] == alice.process.pid
+            assert b["pid"] == bob.process.pid
         assert len({a["pid"], b["pid"], os.getpid()}) == 3
         assert a["state"]["public_value"] == 8
         assert b["state"]["public_value"] == 19

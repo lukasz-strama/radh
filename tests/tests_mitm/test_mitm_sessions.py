@@ -6,7 +6,7 @@ import pytest
 
 from app.main import app
 from backend.dh_transport import InvalidResponse, MalloryTransport, TransportError
-from test_sessions import A, B, BASE, ack, api, create, send, start
+from tests.test_dh_nodes.test_sessions import A, B, BASE, ack, api, create, send, start
 
 PATH = BASE + "/ref"
 

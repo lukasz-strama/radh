@@ -18,7 +18,9 @@ def test_three_processes_normal_mitm_normal(live_server, core, tmp_path, diagnos
     if importlib.util.find_spec("nodes.mallory") is None:
         pytest.skip("Integracja wymaga #40 (PR #49); backend i jego testy działają niezależnie.")
     _, url, _ = live_server
-    root = Path(__file__).resolve().parents[1]
+    
+    # Przejście do głównego katalogu repozytorium (root)
+    root = Path(__file__).resolve().parents[2]
     processes = {}
 
     def stop(process):
@@ -33,20 +35,32 @@ def test_three_processes_normal_mitm_normal(live_server, core, tmp_path, diagnos
     with ExitStack() as stack, httpx.Client(base_url=url, timeout=2) as client:
         for role in ("alice", "bob", "mallory"):
             env = dict(os.environ, RADH_CRYPTO_CORE_LIBRARY=str(core.path))
+            
+            # Ustawienie PYTHONPATH, aby subprocesy widziały pakiety 'backend' oraz 'nodes'
+            current_pythonpath = env.get("PYTHONPATH", "")
+            backend_dir = str(root / "backend")
+            paths_to_add = [str(root), backend_dir]
+            if current_pythonpath:
+                paths_to_add.append(current_pythonpath)
+            env["PYTHONPATH"] = os.pathsep.join(paths_to_add)
+
             for key in ("RADH_NODE_TEST_SECRET", "RADH_MALLORY_TEST_X", "RADH_MALLORY_TEST_Y"):
                 env.pop(key, None)
             if role == "mallory":
                 env.update(RADH_MALLORY_TEST_X="7", RADH_MALLORY_TEST_Y="11")
             else:
                 env["RADH_NODE_TEST_SECRET"] = "6" if role == "alice" else "15"
+                
             log = stack.enter_context((tmp_path / f"{role}.log").open("w"))
             command = [sys.executable, "-m", "backend.dh_transport", "--role", role,
                        "--url", url, "--test-mode"]
             if diagnostics:
                 command.append("--allow-diagnostics")
+            
             process = subprocess.Popen(command, cwd=root, env=env, stdout=log, stderr=log)
             stack.callback(stop, process)
             processes[role] = process
+        
         assert len({p.pid for p in processes.values()}) == 3
 
         def wait_for(read, predicate):

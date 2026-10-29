@@ -167,13 +167,35 @@ def test_protocol(mallory):
 
 
 def run_process(core, requests, env_values, flags):
+    # Wyznaczenie katalogu głównego projektu (np. C:\Users\Lenovo\radh)
+    root_dir = str(Path(__file__).resolve().parents[2])
+    
     env = dict(os.environ, RADH_CRYPTO_CORE_LIBRARY=str(core.path))
+    
+    # Ustawienie/rozszerzenie PYTHONPATH, aby subproces widział moduł 'nodes' oraz 'backend'
+    current_pythonpath = env.get("PYTHONPATH", "")
+    backend_dir = str(Path(root_dir) / "backend")
+    paths_to_add = [root_dir, backend_dir]
+    
+    if current_pythonpath:
+        paths_to_add.append(current_pythonpath)
+        
+    env["PYTHONPATH"] = os.pathsep.join(paths_to_add)
+
     for name in ("RADH_NODE_TEST_SECRET", "RADH_MALLORY_TEST_X", "RADH_MALLORY_TEST_Y"):
         env.pop(name, None)
+        
     env.update(env_values)
-    return subprocess.run([sys.executable, "-m", "nodes", "--role", "mallory", *flags],
-                          input="\n".join(requests) + "\n", text=True, capture_output=True,
-                          timeout=10, cwd=Path(__file__).resolve().parents[1], env=env)
+    
+    return subprocess.run(
+        [sys.executable, "-m", "nodes", "--role", "mallory", *flags],
+        input="\n".join(requests) + "\n",
+        text=True,
+        capture_output=True,
+        timeout=10,
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+    )
 
 
 def test_process(core):

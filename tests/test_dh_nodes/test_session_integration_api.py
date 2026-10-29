@@ -9,7 +9,7 @@ import pytest
 
 from app.main import app
 from backend.dh_transport import HttpTransport
-from test_sessions import api, start, send, ack, create, A, B, BASE
+from tests.test_dh_nodes.test_sessions import api, start, send, ack, create, A, B, BASE
 
 NODES = "/api/v1/dh/nodes"
 DIAG = BASE + "/ref/diagnostics"

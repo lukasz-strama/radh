@@ -4,7 +4,7 @@ from contextlib import contextmanager, nullcontext
 
 from app.main import app
 from app.session_models import CreateSession
-from test_sessions import api
+from tests.test_dh_nodes.test_sessions import api
 
 
 def test_api_fixture_isolates_stores_and_restores_application_state(monkeypatch):

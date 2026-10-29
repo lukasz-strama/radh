@@ -155,7 +155,8 @@ def test_two_waiting_processes_exchange_over_http(live_server, tmp_path):
     import httpx
 
     _, url, _ = live_server
-    worker = Path(__file__).parent / "helpers" / "session_peer.py"
+    # Plik leży w tests/test_dh_nodes/, a pomocnik w tests/helpers/.
+    worker = Path(__file__).resolve().parents[1] / "helpers" / "session_peer.py"
     processes = []
     try:
         for role in ("alice", "bob"):
@@ -191,7 +192,7 @@ def test_transport_retries_lost_send_and_ack_without_restarting_node(api):
     import sys
     from pathlib import Path
     from types import SimpleNamespace
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # katalog repozytorium
     from backend.dh_transport import HttpTransport
 
     class Node:
