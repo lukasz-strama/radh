@@ -153,7 +153,7 @@ result = node.diagnostics()
 Przekazuj stan przez `dataclasses.asdict(node.state)`, nie serializuj wnętrza
 obiektu `DhNode`. Nazwa uczestnika może być innym identyfikatorem Pythona,
 co pozwala wykorzystać ten sam moduł obliczeń w #40 bez implementowania MITM tutaj.
-CLI ogranicza role do Alice i Boba.
+CLI obsługuje także Mallory, opisany poniżej.
 
 Zasady sesji:
 
@@ -211,3 +211,110 @@ procesy. Sprawdza też błędne polecenia, brak sekretów w standardowych odpowi
 zatrzymanie i restart. Pozostałe testy sprawdzają walidację, reset, niezależność
 stanów, ABI adaptera i zachowanie po błędzie C. Istniejący workflow CI zbiera
 nowy plik przez zwykłe `python -m pytest`.
+
+## Mallory — Issue #40
+
+`MalloryNode` z `nodes/mallory.py` składa się z dwóch prywatnych instancji
+`DhNode`. Pierwsza losuje x do wymiany z Alice, druga y do wymiany z Bobem.
+Obie używają istniejącego adaptera i C. Nowa sesja zastępuje starą dopiero po
+udanym wyliczeniu obu wartości publicznych. Błąd C lub walidacji zachowuje
+ostatni poprawny stan. Losowania są niezależne (mogą przypadkiem dać tę samą
+liczbę). Restart procesu usuwa sesję. Python nie gwarantuje fizycznego
+wyzerowania zwolnionej pamięci.
+
+Normalne uruchomienie trzeciego terminala, po kompilacji opisanej powyżej:
+
+```sh
+python -m nodes --role mallory
+```
+
+Lokalny test referencyjny Linux/macOS:
+
+```sh
+RADH_MALLORY_TEST_X=7 RADH_MALLORY_TEST_Y=11 python -m nodes --role mallory --test-mode --allow-diagnostics
+```
+
+PowerShell:
+
+```powershell
+$env:RADH_MALLORY_TEST_X = '7'
+$env:RADH_MALLORY_TEST_Y = '11'
+python -m nodes --role mallory --test-mode --allow-diagnostics
+Remove-Item Env:RADH_MALLORY_TEST_X, Env:RADH_MALLORY_TEST_Y
+```
+
+Obie zmienne są wymagane w trybie testowym Mallory. Bez `--test-mode`
+ich obecność jest błędem konfiguracji. Mallory odrzuca
+`RADH_NODE_TEST_SECRET`; zmienne Mallory są odrzucane dla roli Alice/Bob.
+Nie przesyłaj konfiguracji sekretów przez JSON ani koordynator.
+W trybie testowym wartości są celowo ponownie używane w kolejnych sesjach.
+
+Wpisz po jednej linii:
+
+```json
+{"op":"start","session_id":"attack-1","p":23,"g":5}
+{"op":"receive","session_id":"attack-1","source":"alice","public_value":8}
+{"op":"receive","session_id":"attack-1","source":"bob","public_value":19}
+{"op":"state"}
+{"op":"diagnostics"}
+```
+
+Start daje `substitute_to_alice=17` (X) i `substitute_to_bob=22` (Y).
+Po odbiorze stan zawiera `original_from_alice=8` (A),
+`original_from_bob=19` (B). Diagnostyka zwraca:
+
+```json
+{"diagnostics":{"participant":"mallory","session_id":"attack-1","shared_with_alice":12,"shared_with_bob":22}}
+```
+
+Alice z lokalnym a=6, otrzymując X=17, obliczy K_A=12.
+Bob z lokalnym b=15, otrzymując Y=22, obliczy K_B=22.
+Mallory zna tylko x, y oraz publiczne A, B: K_MA=12, K_MB=22.
+Zwykły stan i odpowiedzi nie zawierają x, y ani K. Diagnostyka CLI wymaga
+`--allow-diagnostics` i ukończenia obu wymian; wcześniej daje
+`DIAGNOSTICS_DISABLED` lub `NOT_COMPLETE`. Wyników diagnostycznych nie
+należy przekazywać jako wiadomości protokołu.
+
+### Kontrakt obliczeń dla #41
+
+```python
+from nodes import MalloryNode
+
+node = MalloryNode()
+node.start_session("attack-1", 23, 5)
+node.receive_public("attack-1", source="alice", public_value=8)
+node.receive_public("attack-1", source="bob", public_value=19)
+state = node.state
+# Wyłącznie na jawne żądanie diagnostyki lokalnej:
+diagnostics = node.diagnostics()
+```
+
+`MalloryState` jest niemutowalny i zawiera dokładnie:
+`participant`, `session_id`, `phase`, `p`, `g`,
+`original_from_alice`, `original_from_bob`,
+`substitute_to_alice`, `substitute_to_bob`.
+Przed startem pola sesji mają wartość `None`.
+Fazy: `idle`, `public_ready`, `partial` (odebrana jedna strona),
+`complete` (obie strony). A i B można dostarczyć w dowolnej kolejności.
+
+`source` jest obowiązkowe tylko dla polecenia odbioru Mallory.
+Dopuszczalne wartości to dokładnie `alice` i `bob`; inne dają
+`INVALID_SOURCE`. Pozostałe reguły walidacji i kody błędów pochodzą z
+`DhNode`: identyczny duplikat jest idempotentny, konflikt odrzucany,
+stary identyfikator niedopuszczalny, ponowny start aktywnego ID odrzucany.
+Nowe ID resetuje obie strony i oba wyniki. Wywołania muszą być sekwencyjne.
+
+Routing #41 powinien dostarczyć oryginalne A/B do odpowiedniej strony Mallory,
+a Alice wysłać X i Bobowi Y. Rzeczywisty routing MITM, HTTP, heartbeat Mallory
+i ewentualny osobny format diagnostyki koordynatora pozostają zakresem #41.
+Obecny `backend.dh_transport` oraz modele HTTP obsługują Alice/Bob;
+nie uruchamiaj nimi Mallory przed implementacją #41.
+To nadal demonstracja edukacyjna na liczbach 32-bitowych.
+
+Testy lokalne:
+
+```sh
+python -m pytest tests/test_mallory_nodes.py -v
+python -m pytest tests/test_nodes.py -v
+python -m pytest
+```
