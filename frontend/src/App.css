@@ -591,3 +591,8 @@
   border-left: 4px solid #d9a400;
   background: rgba(217, 164, 0, 0.1);
 }
+
+/* „Użyj klucza publicznego” bez klucza to nie „czekaj”, tylko „nie da się” */
+.rsa-side button:disabled:not([aria-busy='true']) {
+  cursor: not-allowed;
+}

@@ -13,12 +13,35 @@ type EncryptResult = {
   ciphertext: number
 }
 
+// Para kluczy z backendu razem z parametrami, z których powstała.
+type RsaKeys = {
+  p: number
+  q: number
+  e: number
+  n: number
+  phi: number
+  d: number
+}
+
 // Zakładka RSA: generowanie kluczy, formularz szyfrowania i ekran wizualizacji.
 export function RsaView() {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [apiError, setApiError] = useState<string | null>(null)
   const [result, setResult] = useState<EncryptResult | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  // e i n trzymamy w stanie, żeby „Użyj klucza publicznego” mógł je wpisać.
+  const [publicExponent, setPublicExponent] = useState('')
+  const [modulus, setModulus] = useState('')
+
+  // Wpisuje klucz publiczny (n, e) do formularza szyfrowania. Stary szyfrogram
+  // dotyczył innego klucza, więc go usuwamy razem z błędami pól e i n.
+  function applyPublicKey(keys: RsaKeys) {
+    setPublicExponent(String(keys.e))
+    setModulus(String(keys.n))
+    setResult(null)
+    setApiError(null)
+    setFieldErrors(({ message }) => ({ message }))
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -63,7 +86,7 @@ export function RsaView() {
         <section className="screen" aria-label="Ekran wizualizacji"></section>
 
         <div className="rsa-side">
-          <KeyGenPanel />
+          <KeyGenPanel onUsePublicKey={applyPublicKey} />
 
           {/* Panel szyfrowania. noValidate: walidację robimy sami, z polskimi komunikatami. */}
           <form
@@ -78,8 +101,16 @@ export function RsaView() {
               name="public_exponent"
               label="Wykładnik publiczny (e)"
               error={fieldErrors.public_exponent}
+              value={publicExponent}
+              onChange={setPublicExponent}
             />
-            <Field name="modulus" label="Moduł (n)" error={fieldErrors.modulus} />
+            <Field
+              name="modulus"
+              label="Moduł (n)"
+              error={fieldErrors.modulus}
+              value={modulus}
+              onChange={setModulus}
+            />
 
             <button type="submit" disabled={isLoading} aria-busy={isLoading}>
               {isLoading ? 'Szyfrowanie…' : 'Szyfruj'}
@@ -121,13 +152,16 @@ const KEY_DEFAULTS: Record<RsaKeyField, string> = {
 
 // Panel generowania pary kluczy. Wszystkie wartości (n, φ(n), d) liczy backend;
 // tutaj tylko formularz, walidacja i czytelne oznaczenia wyniku.
-function KeyGenPanel() {
+function KeyGenPanel({ onUsePublicKey }: { onUsePublicKey: (keys: RsaKeys) => void }) {
   const [fieldErrors, setFieldErrors] = useState<RsaKeyFieldErrors>({})
   const [apiError, setApiError] = useState<string | null>(null)
+  // Ostatnia wygenerowana para; null = brak (także po nowej próbie, zanim przyjdzie wynik).
+  const [keys, setKeys] = useState<RsaKeys | null>(null)
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setApiError(null)
+    setKeys(null)
 
     const form = new FormData(event.currentTarget)
     const validation = validateRsaKeyParams({
@@ -170,7 +204,11 @@ function KeyGenPanel() {
 
       <button type="submit">Generuj klucze</button>
 
-      <KeyResult />
+      <KeyResult keys={keys} />
+
+      <button type="button" disabled={!keys} onClick={() => keys && onUsePublicKey(keys)}>
+        Użyj klucza publicznego
+      </button>
 
       <p className="rsa-warning">
         Klucze 32-bitowe służą wyłącznie do nauki – da się je złamać w ułamku sekundy. Nie używaj
@@ -187,15 +225,16 @@ function KeyGenPanel() {
 }
 
 // Wynik generowania z oznaczeniami: nazwa i wartość w jednym wierszu, wzór pod spodem.
-// Na razie bez wartości („?”).
-function KeyResult() {
+// Bez wyniku w miejscu wartości jest „?”.
+function KeyResult({ keys }: { keys: RsaKeys | null }) {
+  const show = (value: number | undefined) => (value === undefined ? '?' : String(value))
   return (
     <dl className="result rsa-keys">
-      <KeyRow label="Moduł" value="?" formula={<>n = p · q</>} />
-      <KeyRow label="Funkcja Eulera" value="?" formula={<>φ(n) = (p − 1)(q − 1)</>} />
+      <KeyRow label="Moduł" value={show(keys?.n)} formula={<>n = p · q</>} />
+      <KeyRow label="Funkcja Eulera" value={show(keys?.phi)} formula={<>φ(n) = (p − 1)(q − 1)</>} />
       <KeyRow
         label="Wykładnik prywatny"
-        value="?"
+        value={show(keys?.d)}
         formula={
           <>
             d = e<sup>−1</sup> mod φ(n)
@@ -208,7 +247,7 @@ function KeyResult() {
             Klucz publiczny <span className="rsa-key-badge">jawny</span>
           </>
         }
-        value="(?, ?)"
+        value={`(${show(keys?.n)}, ${show(keys?.e)})`}
         formula={<>(n, e)</>}
       />
       <KeyRow
@@ -217,7 +256,7 @@ function KeyResult() {
             Klucz prywatny <span className="rsa-key-badge rsa-key-badge--private">tajny</span>
           </>
         }
-        value="(?, ?)"
+        value={`(${show(keys?.n)}, ${show(keys?.d)})`}
         formula={<>(n, d)</>}
       />
     </dl>
