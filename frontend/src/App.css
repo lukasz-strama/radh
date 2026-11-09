@@ -524,3 +524,70 @@
   font-size: 0.85em;
   opacity: 0.75;
 }
+
+
+/* Zakładka RSA: prawa kolumna z panelem kluczy i panelem szyfrowania */
+.rsa-side {
+  flex: 0 1 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+}
+
+.rsa-side .panel {
+  flex: none;
+}
+
+.rsa-side h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+/* Wynik generowania: nazwa i wartość w wierszu, wzór pod spodem */
+.rsa-keys div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0 8px;
+}
+
+.rsa-keys dt {
+  font-size: 0.875rem;
+}
+
+.rsa-keys dd {
+  margin: 0;
+  font-family: ui-monospace, Consolas, monospace;
+  font-weight: bold;
+  overflow-wrap: anywhere;
+}
+
+.rsa-keys .rsa-key-formula {
+  flex-basis: 100%;
+  font-size: 0.8rem;
+  font-weight: normal;
+  color: #888;
+}
+
+.rsa-key-badge {
+  margin-left: 6px;
+  padding: 0 6px;
+  font-size: 0.75rem;
+  border: 1px solid #888;
+  border-radius: 999px;
+}
+
+.rsa-key-badge--private {
+  color: #b5651d;
+  border-color: #b5651d;
+}
+
+.rsa-warning {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 0.875rem;
+  border-left: 4px solid #d9a400;
+  background: rgba(217, 164, 0, 0.1);
+}

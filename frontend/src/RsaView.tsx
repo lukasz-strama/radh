@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import type { FormEvent } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 import { ApiError, encryptRsa } from './api'
 import type { RsaEncryptRequest } from './api'
-import { validateRsaInput } from './validation'
-import type { FieldErrors } from './validation'
+import { validateRsaInput, validateRsaKeyParams } from './validation'
+import type { FieldErrors, RsaKeyField, RsaKeyFieldErrors } from './validation'
 import { Field } from './Field'
 
 // Wynik szyfrowania razem z parametrami, które faktycznie zostały wysłane.
@@ -13,7 +13,7 @@ type EncryptResult = {
   ciphertext: number
 }
 
-// Zakładka RSA: formularz szyfrowania i ekran wizualizacji.
+// Zakładka RSA: generowanie kluczy, formularz szyfrowania i ekran wizualizacji.
 export function RsaView() {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [apiError, setApiError] = useState<string | null>(null)
@@ -62,43 +62,184 @@ export function RsaView() {
         {/* Ekran: tu później trafi wizualizacja (Alice, Bob, Mallory, pakiety) */}
         <section className="screen" aria-label="Ekran wizualizacji"></section>
 
-        {/* Panel sterowania. noValidate: walidację robimy sami, z polskimi komunikatami. */}
-        <form className="panel" onSubmit={handleSubmit} noValidate>
-          <Field name="message" label="Wiadomość (m)" error={fieldErrors.message} />
-          <Field
-            name="public_exponent"
-            label="Wykładnik publiczny (e)"
-            error={fieldErrors.public_exponent}
-          />
-          <Field name="modulus" label="Moduł (n)" error={fieldErrors.modulus} />
+        <div className="rsa-side">
+          <KeyGenPanel />
 
-          <button type="submit" disabled={isLoading} aria-busy={isLoading}>
-            {isLoading ? 'Szyfrowanie…' : 'Szyfruj'}
-          </button>
+          {/* Panel szyfrowania. noValidate: walidację robimy sami, z polskimi komunikatami. */}
+          <form
+            className="panel"
+            onSubmit={handleSubmit}
+            noValidate
+            aria-labelledby="rsa-encrypt-title"
+          >
+            <h2 id="rsa-encrypt-title">Szyfrowanie</h2>
+            <Field name="message" label="Wiadomość (m)" error={fieldErrors.message} />
+            <Field
+              name="public_exponent"
+              label="Wykładnik publiczny (e)"
+              error={fieldErrors.public_exponent}
+            />
+            <Field name="modulus" label="Moduł (n)" error={fieldErrors.modulus} />
 
-          {result && (
-            <div className="result" role="status">
-              <p>
-                Szyfrogram (c): <output>{result.ciphertext}</output>
-              </p>
-              <p className="formula">
-                c = m<sup>e</sup> mod n
-              </p>
-              <p className="formula">
-                c = {result.request.message}
-                <sup>{result.request.public_exponent}</sup> mod {result.request.modulus} ={' '}
-                {result.ciphertext}
-              </p>
-            </div>
-          )}
+            <button type="submit" disabled={isLoading} aria-busy={isLoading}>
+              {isLoading ? 'Szyfrowanie…' : 'Szyfruj'}
+            </button>
 
-          {apiError && (
-            <p className="api-error" role="alert">
-              {apiError}
-            </p>
-          )}
-        </form>
+            {result && (
+              <div className="result" role="status">
+                <p>
+                  Szyfrogram (c): <output>{result.ciphertext}</output>
+                </p>
+                <p className="formula">
+                  c = m<sup>e</sup> mod n
+                </p>
+                <p className="formula">
+                  c = {result.request.message}
+                  <sup>{result.request.public_exponent}</sup> mod {result.request.modulus} ={' '}
+                  {result.ciphertext}
+                </p>
+              </div>
+            )}
+
+            {apiError && (
+              <p className="api-error" role="alert">
+                {apiError}
+              </p>
+            )}
+          </form>
+        </div>
       </div>
     </>
+  )
+}
+
+const KEY_DEFAULTS: Record<RsaKeyField, string> = {
+  p: '61',
+  q: '53',
+  e: '17',
+}
+
+// Panel generowania pary kluczy. Wszystkie wartości (n, φ(n), d) liczy backend;
+// tutaj tylko formularz, walidacja i czytelne oznaczenia wyniku.
+function KeyGenPanel() {
+  const [fieldErrors, setFieldErrors] = useState<RsaKeyFieldErrors>({})
+  const [apiError, setApiError] = useState<string | null>(null)
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setApiError(null)
+
+    const form = new FormData(event.currentTarget)
+    const validation = validateRsaKeyParams({
+      p: String(form.get('p') ?? ''),
+      q: String(form.get('q') ?? ''),
+      e: String(form.get('e') ?? ''),
+    })
+
+    if (!validation.ok) {
+      setFieldErrors(validation.errors)
+      return
+    }
+    setFieldErrors({})
+    // Tymczasowo: backend nie udostępnia jeszcze generowania kluczy.
+    setApiError('Generowanie kluczy nie jest jeszcze dostępne w backendzie.')
+  }
+
+  return (
+    <form className="panel" onSubmit={handleSubmit} noValidate aria-labelledby="rsa-keygen-title">
+      <h2 id="rsa-keygen-title">Generowanie kluczy</h2>
+
+      <Field
+        name="p"
+        label="Liczba pierwsza (p)"
+        error={fieldErrors.p}
+        defaultValue={KEY_DEFAULTS.p}
+      />
+      <Field
+        name="q"
+        label="Liczba pierwsza (q)"
+        error={fieldErrors.q}
+        defaultValue={KEY_DEFAULTS.q}
+      />
+      <Field
+        name="e"
+        label="Wykładnik publiczny (e)"
+        error={fieldErrors.e}
+        defaultValue={KEY_DEFAULTS.e}
+      />
+
+      <button type="submit">Generuj klucze</button>
+
+      <KeyResult />
+
+      <p className="rsa-warning">
+        Klucze 32-bitowe służą wyłącznie do nauki – da się je złamać w ułamku sekundy. Nie używaj
+        ich do ochrony prawdziwych danych.
+      </p>
+
+      {apiError && (
+        <p className="api-error" role="alert">
+          {apiError}
+        </p>
+      )}
+    </form>
+  )
+}
+
+// Wynik generowania z oznaczeniami: nazwa i wartość w jednym wierszu, wzór pod spodem.
+// Na razie bez wartości („?”).
+function KeyResult() {
+  return (
+    <dl className="result rsa-keys">
+      <KeyRow label="Moduł" value="?" formula={<>n = p · q</>} />
+      <KeyRow label="Funkcja Eulera" value="?" formula={<>φ(n) = (p − 1)(q − 1)</>} />
+      <KeyRow
+        label="Wykładnik prywatny"
+        value="?"
+        formula={
+          <>
+            d = e<sup>−1</sup> mod φ(n)
+          </>
+        }
+      />
+      <KeyRow
+        label={
+          <>
+            Klucz publiczny <span className="rsa-key-badge">jawny</span>
+          </>
+        }
+        value="(?, ?)"
+        formula={<>(n, e)</>}
+      />
+      <KeyRow
+        label={
+          <>
+            Klucz prywatny <span className="rsa-key-badge rsa-key-badge--private">tajny</span>
+          </>
+        }
+        value="(?, ?)"
+        formula={<>(n, d)</>}
+      />
+    </dl>
+  )
+}
+
+function KeyRow({
+  label,
+  value,
+  formula,
+}: {
+  label: ReactNode
+  value: string
+  formula: ReactNode
+}) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>
+        <output>{value}</output>
+      </dd>
+      <dd className="formula rsa-key-formula">{formula}</dd>
+    </div>
   )
 }
