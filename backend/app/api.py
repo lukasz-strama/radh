@@ -71,11 +71,9 @@ def encrypt_rsa(
         503: {"model": ErrorResponse, "description": "CryptoCore lub operacja keygen są niedostępne"},
     },
 )
-def generate_rsa_keys(
-    request: RsaKeygenRequest,
-    crypto_core: Annotated[CryptoCore, Depends(get_crypto_core)],
-) -> RsaKeygenResponse:
-    result = crypto_core.generate_rsa_keys(request.p, request.q, request.e)
+def generate_rsa_keys(request: RsaKeygenRequest) -> RsaKeygenResponse:
+    # Załaduj bibliotekę dopiero po walidacji żądania.
+    result = get_crypto_core().generate_rsa_keys(request.p, request.q, request.e)
     return RsaKeygenResponse(n=result.n, e=result.e, d=result.d, phi=result.phi)
 
 
