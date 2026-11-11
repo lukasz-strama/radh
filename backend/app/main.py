@@ -79,6 +79,12 @@ async def crypto_core_call_error(
         "INVALID_PRIME",
         "INVALID_GENERATOR",
         "INVALID_SECRET",
+        "INVALID_P",
+        "INVALID_Q",
+        "EQUAL_PRIMES",
+        "MODULUS_OVERFLOW",
+        "INVALID_KEYGEN_EXPONENT",
+        "EXPONENT_NOT_COPRIME",
     }:
         return _error_response(422, exception.code, exception.message)
     logger.error(
