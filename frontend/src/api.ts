@@ -30,6 +30,38 @@ export async function encryptRsa(data: RsaEncryptRequest): Promise<RsaEncryptRes
   return { ciphertext }
 }
 
+// Generowanie edukacyjnej pary kluczy RSA (#56, backend/README.md).
+// Wszystkie wartości liczy CryptoCore; frontend tylko je pokazuje.
+export type RsaKeygenRequest = {
+  p: number
+  q: number
+  e: number
+}
+
+export type RsaKeygenResponse = {
+  n: number
+  e: number
+  d: number
+  phi: number
+}
+
+export async function generateRsaKeys(data: RsaKeygenRequest): Promise<RsaKeygenResponse> {
+  const body = (await requestJson('POST', '/api/v1/rsa/demo/keygen', data)) as Record<
+    string,
+    unknown
+  > | null
+  const { n, e, d, phi } = body ?? {}
+  if (
+    typeof n !== 'number' ||
+    typeof e !== 'number' ||
+    typeof d !== 'number' ||
+    typeof phi !== 'number'
+  ) {
+    throw unexpectedFormat()
+  }
+  return { n, e, d, phi }
+}
+
 // Sesja DH (#38, #42) z koordynatora (#37, #41: backend/DH_SESSIONS.md, MITM_SESSIONS.md).
 // Odpowiedź backendu sprawdzamy i mapujemy na model widoku w toDhSession().
 

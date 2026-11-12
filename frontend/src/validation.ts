@@ -5,7 +5,7 @@
 //   message:         0 .. modulus - 1
 // Backend i tak sprawdza wszystko sam – tutaj chodzi o szybkie, czytelne komunikaty.
 
-import type { DhSessionParams, RsaEncryptRequest } from './api'
+import type { DhSessionParams, RsaEncryptRequest, RsaKeygenRequest } from './api'
 
 const UINT32_MAX = 4_294_967_295
 
@@ -102,4 +102,34 @@ export function validateDhParams(raw: Record<DhField, string>): DhValidationResu
   if (Object.keys(errors).length > 0) return { ok: false, errors }
 
   return { ok: true, data: { prime: prime as number, generator: generator as number } }
+}
+
+export type RsaKeyField = keyof RsaKeygenRequest
+export type RsaKeyFieldErrors = Partial<Record<RsaKeyField, string>>
+
+export type RsaKeyValidationResult =
+  | { ok: true; data: RsaKeygenRequest }
+  | { ok: false; errors: RsaKeyFieldErrors }
+
+export function validateRsaKeyParams(raw: Record<RsaKeyField, string>): RsaKeyValidationResult {
+  const errors: RsaKeyFieldErrors = {}
+
+  const p = parseUint32(raw.p)
+  const q = parseUint32(raw.q)
+  const e = parseUint32(raw.e)
+
+  if (typeof p === 'string') errors.p = p
+  if (typeof q === 'string') errors.q = q
+  if (typeof e === 'string') errors.e = e
+
+  if (typeof p === 'number' && p < 2) errors.p = 'Liczba p musi być co najmniej równa 2.'
+  if (typeof q === 'number' && q < 2) errors.q = 'Liczba q musi być co najmniej równa 2.'
+  if (typeof p === 'number' && typeof q === 'number' && !errors.p && !errors.q && p === q) {
+    errors.q = 'Liczby p i q muszą być różne.'
+  }
+  if (typeof e === 'number' && e < 2) errors.e = 'Wykładnik e musi być co najmniej równy 2.'
+
+  if (Object.keys(errors).length > 0) return { ok: false, errors }
+
+  return { ok: true, data: { p: p as number, q: q as number, e: e as number } }
 }

@@ -903,90 +903,106 @@ function secretsVerdict(session: DhSession): { label: string; tone: Tone } {
 
 // Porównanie ostatniej zakończonej sesji zwykłej i ataku. Pokazuje tylko to, co przyszło
 // z API; wartości różniące się między scenariuszami są wyróżnione.
+// Domyślnie zwinięte. Po sesji tylko jednego scenariusza nie da się go rozwinąć –
+// z jedną sesją nie ma czego porównać, więc podpowiadamy, który scenariusz uruchomić.
 function ScenarioComparison({ sessions }: { sessions: Partial<Record<DhMode, DhSession>> }) {
   const { normal, mitm } = sessions
   if (!normal && !mitm) return null
-  const missing = COMPARED_MODES.filter((mode) => !sessions[mode])
+  const missing = COMPARED_MODES.find((mode) => !sessions[mode])
+
+  if (missing) {
+    return (
+      <section className="dh-compare" aria-labelledby="dh-compare-title">
+        <div className="dh-collapsible-header dh-collapsible-header--disabled">
+          <h2 id="dh-compare-title">Porównanie scenariuszy</h2>
+        </div>
+        <p className="dh-note">
+          Uruchom scenariusz „{MODE_LABEL[missing]}”, żeby porównać go z ostatnią sesją.
+        </p>
+      </section>
+    )
+  }
 
   return (
     <section className="dh-compare" aria-labelledby="dh-compare-title">
-      <h2 id="dh-compare-title">Porównanie scenariuszy</h2>
-      <p className="dh-note">Ostatnia zakończona sesja każdego scenariusza.</p>
-      <div className="dh-log-scroll">
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">Wartość</th>
-              {COMPARED_MODES.map((mode) => (
-                <th scope="col" key={mode}>
-                  {MODE_LABEL[mode]}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <th scope="row">p, g</th>
-              {COMPARED_MODES.map((mode) => {
-                const s = sessions[mode]
-                return (
-                  <td className="formula" key={mode}>
-                    {s ? `${s.p}, ${s.g}` : '–'}
-                  </td>
-                )
-              })}
-            </tr>
-            {COMPARE_ROWS.map((row, index) => {
-              const values = COMPARED_MODES.map((mode) => {
-                const s = sessions[mode]
-                return s ? row.value(s) : undefined
-              })
-              const differs =
-                normal !== undefined &&
-                mitm !== undefined &&
-                values[0] !== undefined &&
-                values[1] !== undefined &&
-                values[0] !== values[1]
-              return (
-                <tr key={index}>
-                  <th scope="row">{row.label}</th>
-                  {values.map((value, column) => (
-                    <td
-                      className={`formula${differs ? ' dh-compare-diff' : ''}`}
-                      key={COMPARED_MODES[column]}
-                    >
-                      {value ?? '–'}
+      <details>
+        <summary className="dh-collapsible-header">
+          <h2 id="dh-compare-title">Porównanie scenariuszy</h2>
+        </summary>
+        <p className="dh-note">Ostatnia zakończona sesja każdego scenariusza.</p>
+        <div className="dh-log-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Wartość</th>
+                {COMPARED_MODES.map((mode) => (
+                  <th scope="col" key={mode}>
+                    {MODE_LABEL[mode]}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">p, g</th>
+                {COMPARED_MODES.map((mode) => {
+                  const s = sessions[mode]
+                  return (
+                    <td className="formula" key={mode}>
+                      {s ? `${s.p}, ${s.g}` : '–'}
                     </td>
-                  ))}
-                </tr>
-              )
-            })}
-            <tr>
-              <th scope="row">Sekrety Alice i Boba</th>
-              {COMPARED_MODES.map((mode) => {
-                const s = sessions[mode]
-                if (!s) return <td key={mode}>–</td>
-                const verdict = secretsVerdict(s)
+                  )
+                })}
+              </tr>
+              {COMPARE_ROWS.map((row, index) => {
+                const values = COMPARED_MODES.map((mode) => {
+                  const s = sessions[mode]
+                  return s ? row.value(s) : undefined
+                })
+                const differs =
+                  normal !== undefined &&
+                  mitm !== undefined &&
+                  values[0] !== undefined &&
+                  values[1] !== undefined &&
+                  values[0] !== values[1]
                 return (
-                  <td key={mode}>
-                    <Badge tone={verdict.tone}>{verdict.label}</Badge>
-                  </td>
+                  <tr key={index}>
+                    <th scope="row">{row.label}</th>
+                    {values.map((value, column) => (
+                      <td
+                        className={`formula${differs ? ' dh-compare-diff' : ''}`}
+                        key={COMPARED_MODES[column]}
+                      >
+                        {value ?? '–'}
+                      </td>
+                    ))}
+                  </tr>
                 )
               })}
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p className="dh-note">
-        {missing.length > 0
-          ? `Uruchom też scenariusz „${MODE_LABEL[missing[0]]}”, żeby zobaczyć różnice.`
-          : 'Wyróżnione wartości różnią się między scenariuszami.'}
-      </p>
+              <tr>
+                <th scope="row">Sekrety Alice i Boba</th>
+                {COMPARED_MODES.map((mode) => {
+                  const s = sessions[mode]
+                  if (!s) return <td key={mode}>–</td>
+                  const verdict = secretsVerdict(s)
+                  return (
+                    <td key={mode}>
+                      <Badge tone={verdict.tone}>{verdict.label}</Badge>
+                    </td>
+                  )
+                })}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="dh-note">Wyróżnione wartości różnią się między scenariuszami.</p>
+      </details>
     </section>
   )
 }
 
-// Uporządkowany dziennik zdarzeń koordynatora.
+// Uporządkowany dziennik zdarzeń koordynatora. Domyślnie zwinięty; rozwinięty zostaje
+// rozwinięty przy kolejnych odczytach sesji.
 function EventLog({
   events,
   interceptions,
@@ -996,33 +1012,38 @@ function EventLog({
 }) {
   return (
     <section className="dh-log" aria-labelledby="dh-log-title">
-      <h2 id="dh-log-title">Dziennik zdarzeń</h2>
-      {events.length === 0 ? (
-        <p className="dh-note">Brak zdarzeń w tej sesji.</p>
-      ) : (
-        <div className="dh-log-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th scope="col">Nr</th>
-                <th scope="col">Zdarzenie</th>
-                <th scope="col">Nadawca → odbiorca</th>
-                <th scope="col">Wartość</th>
-                <th scope="col">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {events.map((event) => (
-                <EventRow
-                  key={event.seq}
-                  event={event}
-                  interception={interceptions.find((i) => i.messageId === event.messageId)}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <details>
+        <summary className="dh-collapsible-header">
+          <h2 id="dh-log-title">Dziennik zdarzeń</h2>
+          <span className="dh-log-count">({events.length})</span>
+        </summary>
+        {events.length === 0 ? (
+          <p className="dh-note">Brak zdarzeń w tej sesji.</p>
+        ) : (
+          <div className="dh-log-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Nr</th>
+                  <th scope="col">Zdarzenie</th>
+                  <th scope="col">Nadawca → odbiorca</th>
+                  <th scope="col">Wartość</th>
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {events.map((event) => (
+                  <EventRow
+                    key={event.seq}
+                    event={event}
+                    interception={interceptions.find((i) => i.messageId === event.messageId)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </details>
     </section>
   )
 }
