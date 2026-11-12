@@ -15,14 +15,6 @@
   align-items: flex-start;
 }
 
-/* Ekran wizualizacji – na razie pusty prostokąt */
-.screen {
-  flex: 1 1 500px;
-  min-height: 400px;
-  border: 2px solid #888;
-  border-radius: 8px;
-}
-
 /* Panel sterowania */
 .panel {
   flex: 0 1 300px;
@@ -524,22 +516,13 @@
   font-size: 0.85em;
   opacity: 0.75;
 }
-
-
-/* Zakładka RSA: prawa kolumna z panelem kluczy i panelem szyfrowania */
-.rsa-side {
-  flex: 0 1 300px;
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
+/* Zakładka RSA: panel kluczy i panel szyfrowania obok siebie */
+.rsa-layout .panel {
+  flex: 1 1 320px;
   min-width: 0;
 }
 
-.rsa-side .panel {
-  flex: none;
-}
-
-.rsa-side h2 {
+.rsa-layout h2 {
   margin: 0;
   font-size: 1.1rem;
 }
@@ -593,6 +576,6 @@
 }
 
 /* „Użyj klucza publicznego” bez klucza to nie „czekaj”, tylko „nie da się” */
-.rsa-side button:disabled:not([aria-busy='true']) {
+.rsa-layout button:disabled:not([aria-busy='true']) {
   cursor: not-allowed;
 }

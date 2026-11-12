@@ -23,7 +23,7 @@ type RsaKeys = {
   d: number
 }
 
-// Zakładka RSA: generowanie kluczy, formularz szyfrowania i ekran wizualizacji.
+// Zakładka RSA: generowanie kluczy i formularz szyfrowania.
 export function RsaView() {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [apiError, setApiError] = useState<string | null>(null)
@@ -81,64 +81,60 @@ export function RsaView() {
     <>
       <h1>RADH – szyfrowanie RSA</h1>
 
-      <div className="layout">
-        {/* Ekran: tu później trafi wizualizacja (Alice, Bob, Mallory, pakiety) */}
-        <section className="screen" aria-label="Ekran wizualizacji"></section>
+      {/* Dwa panele obok siebie; na wąskim ekranie jeden pod drugim. */}
+      <div className="layout rsa-layout">
+        <KeyGenPanel onUsePublicKey={applyPublicKey} />
 
-        <div className="rsa-side">
-          <KeyGenPanel onUsePublicKey={applyPublicKey} />
+        {/* Panel szyfrowania. noValidate: walidację robimy sami, z polskimi komunikatami. */}
+        <form
+          className="panel"
+          onSubmit={handleSubmit}
+          noValidate
+          aria-labelledby="rsa-encrypt-title"
+        >
+          <h2 id="rsa-encrypt-title">Szyfrowanie</h2>
+          <Field name="message" label="Wiadomość (m)" error={fieldErrors.message} />
+          <Field
+            name="public_exponent"
+            label="Wykładnik publiczny (e)"
+            error={fieldErrors.public_exponent}
+            value={publicExponent}
+            onChange={setPublicExponent}
+          />
+          <Field
+            name="modulus"
+            label="Moduł (n)"
+            error={fieldErrors.modulus}
+            value={modulus}
+            onChange={setModulus}
+          />
 
-          {/* Panel szyfrowania. noValidate: walidację robimy sami, z polskimi komunikatami. */}
-          <form
-            className="panel"
-            onSubmit={handleSubmit}
-            noValidate
-            aria-labelledby="rsa-encrypt-title"
-          >
-            <h2 id="rsa-encrypt-title">Szyfrowanie</h2>
-            <Field name="message" label="Wiadomość (m)" error={fieldErrors.message} />
-            <Field
-              name="public_exponent"
-              label="Wykładnik publiczny (e)"
-              error={fieldErrors.public_exponent}
-              value={publicExponent}
-              onChange={setPublicExponent}
-            />
-            <Field
-              name="modulus"
-              label="Moduł (n)"
-              error={fieldErrors.modulus}
-              value={modulus}
-              onChange={setModulus}
-            />
+          <button type="submit" disabled={isLoading} aria-busy={isLoading}>
+            {isLoading ? 'Szyfrowanie…' : 'Szyfruj'}
+          </button>
 
-            <button type="submit" disabled={isLoading} aria-busy={isLoading}>
-              {isLoading ? 'Szyfrowanie…' : 'Szyfruj'}
-            </button>
-
-            {result && (
-              <div className="result" role="status">
-                <p>
-                  Szyfrogram (c): <output>{result.ciphertext}</output>
-                </p>
-                <p className="formula">
-                  c = m<sup>e</sup> mod n
-                </p>
-                <p className="formula">
-                  c = {result.request.message}
-                  <sup>{result.request.public_exponent}</sup> mod {result.request.modulus} ={' '}
-                  {result.ciphertext}
-                </p>
-              </div>
-            )}
-
-            {apiError && (
-              <p className="api-error" role="alert">
-                {apiError}
+          {result && (
+            <div className="result" role="status">
+              <p>
+                Szyfrogram (c): <output>{result.ciphertext}</output>
               </p>
-            )}
-          </form>
-        </div>
+              <p className="formula">
+                c = m<sup>e</sup> mod n
+              </p>
+              <p className="formula">
+                c = {result.request.message}
+                <sup>{result.request.public_exponent}</sup> mod {result.request.modulus} ={' '}
+                {result.ciphertext}
+              </p>
+            </div>
+          )}
+
+          {apiError && (
+            <p className="api-error" role="alert">
+              {apiError}
+            </p>
+          )}
+        </form>
       </div>
     </>
   )
@@ -225,10 +221,12 @@ function KeyGenPanel({ onUsePublicKey }: { onUsePublicKey: (keys: RsaKeys) => vo
         Użyj klucza publicznego
       </button>
 
-      <p className="rsa-warning">
-        Klucze 32-bitowe służą wyłącznie do nauki – da się je złamać w ułamku sekundy. Nie używaj
-        ich do ochrony prawdziwych danych.
-      </p>
+      {keys && (
+        <p className="rsa-warning">
+          Klucze 32-bitowe służą wyłącznie do nauki – da się je złamać w ułamku sekundy. Nie używaj
+          ich do ochrony prawdziwych danych.
+        </p>
+      )}
 
       {apiError && (
         <p className="api-error" role="alert">
