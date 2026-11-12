@@ -399,6 +399,41 @@
   overflow-x: auto;
 }
 
+/* Zwijane sekcje (dziennik, porównanie): nagłówek jako przycisk rozwijania */
+.dh-collapsible-header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.dh-collapsible-header h2 {
+  display: inline;
+}
+
+.dh-collapsible-header::before {
+  content: '▸';
+}
+
+details[open] > .dh-collapsible-header::before {
+  content: '▾';
+}
+
+details[open] > .dh-collapsible-header {
+  margin-bottom: 8px;
+}
+
+/* Sekcja, której jeszcze nie da się rozwinąć */
+.dh-collapsible-header--disabled {
+  color: #888;
+  cursor: not-allowed;
+}
+
+.dh-log-count {
+  color: #888;
+  font-size: 0.875rem;
+}
+
 .dh-log table,
 .dh-compare table {
   width: 100%;
