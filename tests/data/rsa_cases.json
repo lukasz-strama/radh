@@ -31,5 +31,28 @@
     {"id": "textbook", "p": 61, "q": 53, "public_exponent": 17, "modulus": 3233, "private_exponent": 2753},
     {"id": "medium", "p": 251, "q": 241, "public_exponent": 17, "modulus": 60491, "private_exponent": 42353},
     {"id": "largest_32_bit", "p": 65521, "q": 65519, "public_exponent": 65537, "modulus": 4292870399, "private_exponent": 1475213633}
+  ],
+   "keygen_valid": [
+    {"id": "textbook", "p": 61, "q": 53, "e": 17, "n": 3233, "phi": 3120, "d": 2753, "message": 65, "ciphertext": 2790},
+    {"id": "smallest", "p": 2, "q": 5, "e": 3, "n": 10, "phi": 4, "d": 3, "message": 7, "ciphertext": 3},
+    {"id": "order_swapped", "p": 53, "q": 61, "e": 17, "n": 3233, "phi": 3120, "d": 2753, "message": 65, "ciphertext": 2790},
+    {"id": "largest_32_bit", "p": 65521, "q": 65519, "e": 65537, "n": 4292870399, "phi": 4292739360, "d": 1475213633, "message": 4292870398, "ciphertext": 4292870398}
+  ],
+  "keygen_invalid": [
+    {"id": "p_not_prime", "p": 60, "q": 53, "e": 17, "status": "RSA_KEYGEN_INVALID_P", "code": "INVALID_P"},
+    {"id": "p_is_zero", "p": 0, "q": 53, "e": 17, "status": "RSA_KEYGEN_INVALID_P", "code": "INVALID_P"},
+    {"id": "p_is_one", "p": 1, "q": 53, "e": 17, "status": "RSA_KEYGEN_INVALID_P", "code": "INVALID_P"},
+    {"id": "q_not_prime", "p": 61, "q": 52, "e": 17, "status": "RSA_KEYGEN_INVALID_Q", "code": "INVALID_Q"},
+    {"id": "both_not_prime_p_first", "p": 60, "q": 52, "e": 17, "status": "RSA_KEYGEN_INVALID_P", "code": "INVALID_P"},
+    {"id": "p_equals_q", "p": 61, "q": 61, "e": 17, "status": "RSA_KEYGEN_EQUAL_PRIMES", "code": "EQUAL_PRIMES"},
+    {"id": "modulus_overflow", "p": 65537, "q": 131071, "e": 17, "status": "RSA_KEYGEN_MODULUS_OVERFLOW", "code": "MODULUS_OVERFLOW"},
+    {"id": "modulus_overflow_just_above", "p": 65537, "q": 65539, "e": 17, "status": "RSA_KEYGEN_MODULUS_OVERFLOW", "code": "MODULUS_OVERFLOW"},
+    {"id": "e_is_zero", "p": 61, "q": 53, "e": 0, "status": "RSA_KEYGEN_INVALID_EXPONENT", "code": "INVALID_KEYGEN_EXPONENT"},
+    {"id": "e_is_one", "p": 61, "q": 53, "e": 1, "status": "RSA_KEYGEN_INVALID_EXPONENT", "code": "INVALID_KEYGEN_EXPONENT"},
+    {"id": "e_equals_phi", "p": 61, "q": 53, "e": 3120, "status": "RSA_KEYGEN_INVALID_EXPONENT", "code": "INVALID_KEYGEN_EXPONENT"},
+    {"id": "e_above_phi", "p": 61, "q": 53, "e": 4294967295, "status": "RSA_KEYGEN_INVALID_EXPONENT", "code": "INVALID_KEYGEN_EXPONENT"},
+    {"id": "e_not_coprime_even", "p": 61, "q": 53, "e": 2, "status": "RSA_KEYGEN_EXPONENT_NOT_COPRIME", "code": "EXPONENT_NOT_COPRIME"},
+    {"id": "e_not_coprime_odd", "p": 61, "q": 53, "e": 15, "status": "RSA_KEYGEN_EXPONENT_NOT_COPRIME", "code": "EXPONENT_NOT_COPRIME"},
+    {"id": "smallest_primes_no_valid_e", "p": 2, "q": 3, "e": 3, "status": "RSA_KEYGEN_INVALID_EXPONENT", "code": "INVALID_KEYGEN_EXPONENT"}
   ]
 }

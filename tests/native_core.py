@@ -37,6 +37,17 @@ class DhResult(ctypes.Structure):
     def as_tuple(self):
         return tuple(getattr(self, name) for name in DH_FIELDS)
 
+KEYGEN_FIELDS = ("n", "e", "d", "phi")
+KEYGEN_SYMBOL = "radh_rsa_keygen_u32"
+
+class KeygenResult(ctypes.Structure):
+    """Odpowiednik radh_rsa_keygen_result_t (kolejność pól jest częścią ABI)."""
+
+    _fields_ = [(name, ctypes.c_uint32) for name in KEYGEN_FIELDS]
+
+    def as_dict(self):
+        return {name: getattr(self, name) for name in KEYGEN_FIELDS}
+
 def _library_names():
     if sys.platform == "darwin":
         return ["libradh_crypto_core.dylib"]
@@ -89,6 +100,16 @@ class NativeCore:
         ]
         self._dh.restype = ctypes.c_int
 
+        self._keygen = getattr(self._lib, KEYGEN_SYMBOL, None)
+        if self._keygen is not None:
+            self._keygen.argtypes = [
+                ctypes.c_uint32,
+                ctypes.c_uint32,
+                ctypes.c_uint32,
+                ctypes.POINTER(KeygenResult),
+            ]
+            self._keygen.restype = ctypes.c_int
+
     def _call(self, function, a, b, c, initial):
         output = ctypes.c_uint32(initial)
         status = function(a, b, c, ctypes.byref(output))
@@ -125,3 +146,22 @@ class NativeCore:
     def dh_exchange_null_output(self, prime, generator, alice_secret, bob_secret):
         """Wywołanie ze wskaźnikiem wyniku NULL. Zwraca sam status."""
         return self._dh(prime, generator, alice_secret, bob_secret, None)
+
+    @property
+    def has_keygen(self):
+        """Czy biblioteka eksportuje radh_rsa_keygen_u32."""
+        return self._keygen is not None
+
+    def rsa_keygen(self, p, q, e, initial=SENTINEL):
+        """Zwraca (status, {"n", "e", "d", "phi"}).
+
+        Pola struktury są najpierw ustawiane na `initial`, więc po błędzie
+        powinny mieć dokładnie tę wartość (C nie zapisuje wyniku przy błędzie).
+        """
+        result = KeygenResult(initial, initial, initial, initial)
+        status = self._keygen(p, q, e, ctypes.byref(result))
+        return status, result.as_dict()
+
+    def rsa_keygen_null_output(self, p, q, e):
+        """Wywołanie ze wskaźnikiem wyniku NULL. Zwraca sam status."""
+        return self._keygen(p, q, e, None)
