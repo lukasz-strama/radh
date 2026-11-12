@@ -11,7 +11,7 @@ add_compile_options(
     "$<$<C_COMPILER_ID:MSVC>:/W4>"
 )
 
-add_library(radh_crypto_core SHARED src/modexp.c src/rsa.c src/dh.c)
+add_library(radh_crypto_core SHARED src/modexp.c src/rsa.c src/dh.c src/rsa_keygen.c src/number_theory.h)
 target_include_directories(radh_crypto_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
 # Eksport publicznych funkcji także przy budowaniu DLL.
@@ -22,4 +22,7 @@ if(BUILD_TESTING)
     add_executable(radh_crypto_core_tests tests/crypto_core_test.c)
     target_link_libraries(radh_crypto_core_tests PRIVATE radh_crypto_core)
     add_test(NAME radh_crypto_core_tests COMMAND radh_crypto_core_tests)
+    add_executable(radh_rsa_keygen_tests tests/rsa_keygen_test.c)
+    target_link_libraries(radh_rsa_keygen_tests PRIVATE radh_crypto_core)
+    add_test(NAME radh_rsa_keygen_tests COMMAND radh_rsa_keygen_tests)
 endif()

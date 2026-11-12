@@ -1,7 +1,7 @@
 # CryptoCore
 
 Biblioteka współdzielona dla RADH wykonuje potęgowanie modularne, edukacyjne
-szyfrowanie RSA i wymianę kluczy DH na liczbach `uint32_t`. Backend FastAPI może
+szyfrowanie i generowanie kluczy RSA oraz wymianę kluczy DH na liczbach `uint32_t`. Backend FastAPI może
 ładować ją przez Python `ctypes`. Biblioteka i testy C nie wymagają zależności
 zewnętrznych ani Pythona; implementacja nie alokuje pamięci dynamicznie.
 
@@ -21,9 +21,12 @@ crypto-core/
 ├── src/
 │   ├── dh.c
 │   ├── modexp.c
-│   └── rsa.c
+│   ├── rsa.c
+│   ├── rsa_keygen.c
+│   └── number_theory.h
 └── tests/
-    └── crypto_core_test.c
+    ├── crypto_core_test.c
+    └── rsa_keygen_test.c
 ```
 
 ## Budowanie i testy
@@ -340,6 +343,76 @@ Backend musi przed konwersją sprawdzać typy i zakres liczb Pythona
 ujemne i zbyt duże. Następnie musi sprawdzić status przed użyciem wyniku.
 Docelową ścieżkę biblioteki należy ustalić przy wdrożeniu backendu; przykład
 używa bezwzględnej ścieżki wyliczonej z katalogu roboczego.
+
+## Generowanie edukacyjnych kluczy RSA
+
+```c
+typedef struct {
+    uint32_t n;
+    uint32_t e;
+    uint32_t d;
+    uint32_t phi;
+} radh_rsa_keygen_result_t;
+
+radh_status_t radh_rsa_keygen_u32(
+    uint32_t p, uint32_t q, uint32_t e, radh_rsa_keygen_result_t *result
+);
+```
+
+Funkcja przyjmuje podane przez wywołującego różne liczby pierwsze (także 2),
+oblicza `n = p*q`, `phi = (p-1)*(q-1)` i odwrotność `d = e^(-1) mod phi`.
+Nie losuje liczb pierwszych ani wykładnika. Wymagane są `n <= UINT32_MAX`,
+`1 < e < phi` i `gcd(e,phi) == 1`. Dla p=2, q=3 nie istnieje poprawny e.
+
+Walidacja ma dokładnie kolejność z poniższej tabeli. Wszystkie błędy pozostawiają
+całą pamięć wyniku bez zmian; cztery pola są zapisywane dopiero po sukcesie.
+Niezerowy wskaźnik musi wskazywać poprawnie wyrównaną, zapisywalną strukturę.
+
+| Warunek odrzucenia | Status | Wartość |
+| --- | --- | ---: |
+| `result == NULL` | `RADH_STATUS_INVALID_POINTER` | 1 |
+| p nie jest pierwsza | `RADH_STATUS_RSA_KEYGEN_INVALID_P` | 8 |
+| q nie jest pierwsza | `RADH_STATUS_RSA_KEYGEN_INVALID_Q` | 9 |
+| `p == q` | `RADH_STATUS_RSA_KEYGEN_EQUAL_PRIMES` | 10 |
+| `p*q > UINT32_MAX` | `RADH_STATUS_RSA_KEYGEN_MODULUS_OVERFLOW` | 11 |
+| `e <= 1` lub `e >= phi` | `RADH_STATUS_RSA_KEYGEN_INVALID_EXPONENT` | 12 |
+| `gcd(e,phi) != 1` | `RADH_STATUS_RSA_KEYGEN_EXPONENT_NOT_COPRIME` | 13 |
+
+Dotychczasowe statusy 0–7 i sygnatury RSA/DH/modexp pozostają niezmienione.
+ABI dla ctypes: argumenty `c_uint32`, wynik przez wskaźnik do struktury z polami
+`n, e, d, phi` typu `c_uint32`, bez `_pack_`; `restype = c_int`.
+Struktura ma 16 bajtów, przesunięcia 0, 4, 8, 12 i naturalne wyrównanie.
+Testy kompilacyjne utrwalają układ i wartości nowych statusów. Po integracji
+backend powinien przebudować bibliotekę i ponownie ją załadować.
+
+Iloczyny p*q oraz (p-1)*(q-1) są obliczane w `uint64_t` po rozszerzeniu
+argumentu przed mnożeniem. Po kontroli n zachodzi phi < n, więc phi mieści się
+w uint32_t. Rozszerzony algorytm Euklidesa równocześnie oblicza NWD i współczynnik
+przy e. Reszty są uint32_t, współczynniki i iloczyn ilorazu przez współczynnik
+są int64_t. Moduły współczynników rosną do najwyżej phi/NWD (wliczając ostatni
+krok), więc operacje ze znakiem są bezpieczne dla całego zakresu.
+Ujemną odwrotność normalizujemy przez dodanie phi. Test pierwszości jest wspólnym
+wewnętrznym helperem w `src/number_theory.h`; algorytm walidacji DH nie zmienił się.
+
+Wektor referencyjny:
+
+```c
+radh_rsa_keygen_result_t key;
+radh_status_t status = radh_rsa_keygen_u32(61, 53, 17, &key);
+/* Po status == RADH_STATUS_OK: n=3233, e=17, d=2753, phi=3120. */
+```
+
+Natywny test `radh_rsa_keygen_tests` sprawdza ten wektor, szyfrowanie 65 do 2790
+oraz odwrotną operację przez istniejący modexp: 2790 do 65. Obejmuje błędy,
+NULL, kolejność walidacji, niezmienność bufora, zamianę p/q, małe liczby pierwsze,
+moduły bliskie UINT32_MAX i porównanie odwrotności z pełnym przeglądem małej
+dziedziny. Przypadki brzegowe sprawdzają również wiadomości podzielne przez p/q.
+Zwykłe CMake/CTest uruchamiają nowy test razem z regresją RSA, DH i modexp;
+warunki testów działają również w Release z NDEBUG.
+
+To deterministyczne, edukacyjne RSA bez paddingu i gwarancji stałego czasu.
+Nie nadaje się do ochrony rzeczywistych danych. Funkcja zwraca prywatny wykładnik
+d oraz phi wywołującemu; warstwa integracyjna odpowiada za sposób ich prezentacji.
 
 ## Wykorzystanie AI
 Dokumentacja generowana na podstawie kodu [GPT-6-Astra], ręcznie sprawdzona i poprawiona.
