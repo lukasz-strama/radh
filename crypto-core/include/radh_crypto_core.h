@@ -12,7 +12,13 @@ typedef enum {
     RADH_STATUS_INVALID_MESSAGE = 4,
     RADH_STATUS_INVALID_PRIME = 5,
     RADH_STATUS_INVALID_GENERATOR = 6,
-    RADH_STATUS_INVALID_SECRET = 7
+    RADH_STATUS_INVALID_SECRET = 7,
+    RADH_STATUS_RSA_KEYGEN_INVALID_P = 8,
+    RADH_STATUS_RSA_KEYGEN_INVALID_Q = 9,
+    RADH_STATUS_RSA_KEYGEN_EQUAL_PRIMES = 10,
+    RADH_STATUS_RSA_KEYGEN_MODULUS_OVERFLOW = 11,
+    RADH_STATUS_RSA_KEYGEN_INVALID_EXPONENT = 12,
+    RADH_STATUS_RSA_KEYGEN_EXPONENT_NOT_COPRIME = 13
 } radh_status_t;
 
 /* ABI dla ctypes.c_int; odrzuca m.in. kompilację z -fshort-enums. */
@@ -66,6 +72,28 @@ radh_status_t radh_dh_exchange_u32(
     uint32_t alice_secret,
     uint32_t bob_secret,
     radh_dh_exchange_result_t *result
+);
+
+typedef struct {
+    uint32_t n;
+    uint32_t e;
+    uint32_t d;
+    uint32_t phi;
+} radh_rsa_keygen_result_t;
+
+/* Generuje edukacyjny klucz RSA z podanych różnych liczb pierwszych.
+ * Kolejność walidacji: result != NULL, pierwszość p, pierwszość q, p != q,
+ * p*q <= UINT32_MAX, 1 < e < phi, gcd(e, phi) == 1.
+ * Liczba pierwsza 2 jest dopuszczalna. Phi = (p-1)*(q-1), d = e^(-1) mod phi.
+ * Sukces zapisuje wszystkie pola; każdy błąd pozostawia cały bufor bez zmian.
+ * Niezerowy wskaźnik musi wskazywać poprawnie wyrównaną, zapisywalną strukturę.
+ * Pamięć należy do wywołującego; funkcja nie przechowuje wskaźnika.
+ */
+radh_status_t radh_rsa_keygen_u32(
+    uint32_t p,
+    uint32_t q,
+    uint32_t e,
+    radh_rsa_keygen_result_t *result
 );
 
 #endif

@@ -1,25 +1,7 @@
 #include "radh_crypto_core.h"
 
-#include <stdbool.h>
+#include "number_theory.h"
 #include <stddef.h>
-
-static bool is_prime_u32(uint32_t value)
-{
-    if (value < 2) {
-        return false;
-    }
-    if (value % 2 == 0) {
-        return value == 2;
-    }
-
-    /* Dzielenie zamiast divisor * divisor zapobiega przepełnieniu. */
-    for (uint32_t divisor = 3; divisor <= value / divisor; divisor += 2) {
-        if (value % divisor == 0) {
-            return false;
-        }
-    }
-    return true;
-}
 
 radh_status_t radh_dh_exchange_u32(
     uint32_t prime,
