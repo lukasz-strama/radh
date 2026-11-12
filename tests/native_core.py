@@ -19,6 +19,12 @@ STATUS = {
     "INVALID_PRIME": 5, 
     "INVALID_GENERATOR": 6,
     "INVALID_SECRET": 7,
+    "RSA_KEYGEN_INVALID_P": 8,
+    "RSA_KEYGEN_INVALID_Q": 9,
+    "RSA_KEYGEN_EQUAL_PRIMES": 10,
+    "RSA_KEYGEN_MODULUS_OVERFLOW": 11,
+    "RSA_KEYGEN_INVALID_EXPONENT": 12,
+    "RSA_KEYGEN_EXPONENT_NOT_COPRIME": 13,
 }
 
 DH_FIELDS = ("alice_public", "bob_public", "alice_shared_key", "bob_shared_key")

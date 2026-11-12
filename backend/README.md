@@ -83,6 +83,54 @@ Niepoprawne dane zwracają kontrolowany błąd, na przykład:
 ```
 
 
+## Generowanie kluczy RSA (#56)
+
+`POST /api/v1/rsa/demo/keygen` przyjmuje dokładnie trzy wymagane pola
+`p`, `q` i `e`. Wszystkie muszą być liczbami całkowitymi JSON w zakresie
+`0..4294967295`. Błędy schematu zwracają HTTP 422 z kodem `INVALID_REQUEST`.
+
+```sh
+curl --fail-with-body http://127.0.0.1:8000/api/v1/rsa/demo/keygen \
+  -H 'Content-Type: application/json' \
+  -d '{"p":61,"q":53,"e":17}'
+```
+
+Odpowiedź HTTP 200:
+
+```json
+{"n":3233,"e":17,"d":2753,"phi":3120}
+```
+
+Wynik zawiera moduł `n = p*q`, wykładnik publiczny `e`, prywatny wykładnik
+`d` i wartość `phi = (p - 1)*(q - 1)`. Do istniejącego endpointu szyfrowania
+przekaż `n` jako `modulus` i `e` jako `public_exponent`. Dla wiadomości
+`65` szyfrogram wyniesie `2790`. Prywatny wykładnik jest ujawniany na potrzeby
+demonstracji edukacyjnej. Przykład i schematy są dostępne w Swagger UI (`/docs`).
+
+### ABI CryptoCore (#55)
+
+Adapter oczekuje funkcji
+`radh_status_t radh_rsa_keygen_u32(uint32_t p, uint32_t q, uint32_t e, radh_rsa_keygen_result_t *result)`.
+Typ `radh_rsa_keygen_result_t` ma pola `n`, `e`, `d`, `phi` w tej kolejności,
+każde typu `uint32_t`. Status ma rozmiar `int`. C zapisuje pełny wynik przy
+`OK = 0` i pozostawia bufor bez zmian przy błędzie. Po sprawdzeniu wskaźnika
+C sprawdza warunki w poniższej kolejności. Każdy z tych błędów zwraca HTTP 422
+w formacie `ErrorResponse`.
+
+| Status C | Wartość | `error.code` | Warunek |
+| --- | --- | --- | --- |
+| `RADH_STATUS_RSA_KEYGEN_INVALID_P` | 8 | `INVALID_P` | `p` nie jest pierwsza |
+| `RADH_STATUS_RSA_KEYGEN_INVALID_Q` | 9 | `INVALID_Q` | `q` nie jest pierwsza |
+| `RADH_STATUS_RSA_KEYGEN_EQUAL_PRIMES` | 10 | `EQUAL_PRIMES` | `p == q` |
+| `RADH_STATUS_RSA_KEYGEN_MODULUS_OVERFLOW` | 11 | `MODULUS_OVERFLOW` | `p*q > UINT32_MAX` |
+| `RADH_STATUS_RSA_KEYGEN_INVALID_EXPONENT` | 12 | `INVALID_KEYGEN_EXPONENT` | `e <= 1` lub `e >= phi` |
+| `RADH_STATUS_RSA_KEYGEN_EXPONENT_NOT_COPRIME` | 13 | `EXPONENT_NOT_COPRIME` | `NWD(e, phi) != 1` |
+
+Nieoczekiwany status C, w tym `INVALID_POINTER`, zwraca 500
+(`INTERNAL_ERROR`). Dopóki zainstalowana biblioteka C nie eksportuje funkcji
+z #55, wywołanie keygen zwraca 503 (`CRYPTO_CORE_UNAVAILABLE`).
+Po wdrożeniu #55 przebuduj bibliotekę i zrestartuj backend.
+
 ## Wymiana kluczy DH — kontrakt API (#13, #29)
 
 `POST /api/v1/dh/demo/exchange` przyjmuje dokładnie cztery wymagane pola:
