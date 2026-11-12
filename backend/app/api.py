@@ -9,6 +9,7 @@ from .crypto_core import CryptoCore
 from .models import (
     DhExchangeRequest, DhExchangeResponse,
     ErrorResponse, RsaEncryptRequest, RsaEncryptResponse,
+    RsaKeygenRequest, RsaKeygenResponse,
 )
 
 
@@ -52,6 +53,28 @@ def encrypt_rsa(
         request.modulus,
     )
     return RsaEncryptResponse(ciphertext=ciphertext)
+
+
+@router.post(
+    "/demo/keygen",
+    response_model=RsaKeygenResponse,
+    summary="Edukacyjne generowanie kluczy RSA",
+    description=(
+        "CryptoCore (C) wyznacza parę kluczy z różnych liczb pierwszych p i q "
+        "oraz wykładnika e spełniającego 1 < e < phi i NWD(e, phi) = 1. "
+        "Moduł musi mieścić się w uint32. Odpowiedź zawiera prywatny wykładnik d. "
+        "Klucze służą wyłącznie do demonstracji edukacyjnej."
+    ),
+    responses={
+        422: {"model": ErrorResponse, "description": "Niepoprawne dane wejściowe"},
+        500: {"model": ErrorResponse, "description": "Błąd kontraktu CryptoCore"},
+        503: {"model": ErrorResponse, "description": "CryptoCore lub operacja keygen są niedostępne"},
+    },
+)
+def generate_rsa_keys(request: RsaKeygenRequest) -> RsaKeygenResponse:
+    # Załaduj bibliotekę dopiero po walidacji żądania.
+    result = get_crypto_core().generate_rsa_keys(request.p, request.q, request.e)
+    return RsaKeygenResponse(n=result.n, e=result.e, d=result.d, phi=result.phi)
 
 
 @dh_router.post(

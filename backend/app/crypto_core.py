@@ -24,6 +24,12 @@ class CryptoCoreStatus(IntEnum):
     INVALID_PRIME = 5
     INVALID_GENERATOR = 6
     INVALID_SECRET = 7
+    RSA_KEYGEN_INVALID_P = 8
+    RSA_KEYGEN_INVALID_Q = 9
+    RSA_KEYGEN_EQUAL_PRIMES = 10
+    RSA_KEYGEN_MODULUS_OVERFLOW = 11
+    RSA_KEYGEN_INVALID_EXPONENT = 12
+    RSA_KEYGEN_EXPONENT_NOT_COPRIME = 13
 
 
 class DhExchangeResult(ctypes.Structure):
@@ -34,6 +40,17 @@ class DhExchangeResult(ctypes.Structure):
         ("bob_public", ctypes.c_uint32),
         ("alice_shared_key", ctypes.c_uint32),
         ("bob_shared_key", ctypes.c_uint32),
+    ]
+
+
+class RsaKeygenResult(ctypes.Structure):
+    """Układ pamięci radh_rsa_keygen_result_t."""
+
+    _fields_ = [
+        ("n", ctypes.c_uint32),
+        ("e", ctypes.c_uint32),
+        ("d", ctypes.c_uint32),
+        ("phi", ctypes.c_uint32),
     ]
 
 
@@ -80,6 +97,24 @@ _STATUS_ERRORS = {
     CryptoCoreStatus.INVALID_MESSAGE: (
         "MESSAGE_OUT_OF_RANGE",
         "Wiadomość musi być mniejsza od modułu.",
+    ),
+    CryptoCoreStatus.RSA_KEYGEN_INVALID_P: (
+        "INVALID_P", "Parametr p musi być liczbą pierwszą.",
+    ),
+    CryptoCoreStatus.RSA_KEYGEN_INVALID_Q: (
+        "INVALID_Q", "Parametr q musi być liczbą pierwszą.",
+    ),
+    CryptoCoreStatus.RSA_KEYGEN_EQUAL_PRIMES: (
+        "EQUAL_PRIMES", "Liczby p i q muszą być różne.",
+    ),
+    CryptoCoreStatus.RSA_KEYGEN_MODULUS_OVERFLOW: (
+        "MODULUS_OVERFLOW", "Iloczyn p i q musi mieścić się w zakresie uint32.",
+    ),
+    CryptoCoreStatus.RSA_KEYGEN_INVALID_EXPONENT: (
+        "INVALID_KEYGEN_EXPONENT", "Wykładnik e musi spełniać 1 < e < phi.",
+    ),
+    CryptoCoreStatus.RSA_KEYGEN_EXPONENT_NOT_COPRIME: (
+        "EXPONENT_NOT_COPRIME", "Liczby e i phi muszą być względnie pierwsze.",
     ),
 }
 
@@ -199,6 +234,16 @@ class CryptoCore:
         modexp.restype = ctypes.c_int
         self._modexp = modexp
 
+        # Starsze biblioteki obsługują dotychczasowe operacje bez symbolu keygen.
+        keygen = getattr(library, "radh_rsa_keygen_u32", None)
+        if keygen is not None:
+            keygen.argtypes = [
+                ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
+                ctypes.POINTER(RsaKeygenResult),
+            ]
+            keygen.restype = ctypes.c_int
+        self._keygen = keygen
+
     def modexp(self, base: int, exponent: int, modulus: int) -> int:
         """Wywołaj C: base^exponent mod modulus, także dla wykładnika 0."""
 
@@ -235,6 +280,31 @@ class CryptoCore:
             CryptoCoreStatus.INVALID_MESSAGE,
         })
         return ciphertext.value
+
+    def generate_rsa_keys(self, p: int, q: int, e: int) -> RsaKeygenResult:
+        """Wygeneruj edukacyjną parę kluczy przez CryptoCore."""
+
+        for name, value in (("p", p), ("q", q), ("e", e)):
+            _require_uint32(name, value)
+        if self._keygen is None:
+            raise CryptoCoreLoadError(
+                "Biblioteka CryptoCore nie eksportuje funkcji radh_rsa_keygen_u32. "
+                "Zbuduj ponownie bibliotekę C."
+            )
+        result = RsaKeygenResult()
+        status = self._keygen(
+            ctypes.c_uint32(p), ctypes.c_uint32(q), ctypes.c_uint32(e),
+            ctypes.byref(result),
+        )
+        self._check_status(status, {
+            CryptoCoreStatus.RSA_KEYGEN_INVALID_P,
+            CryptoCoreStatus.RSA_KEYGEN_INVALID_Q,
+            CryptoCoreStatus.RSA_KEYGEN_EQUAL_PRIMES,
+            CryptoCoreStatus.RSA_KEYGEN_MODULUS_OVERFLOW,
+            CryptoCoreStatus.RSA_KEYGEN_INVALID_EXPONENT,
+            CryptoCoreStatus.RSA_KEYGEN_EXPONENT_NOT_COPRIME,
+        })
+        return result
 
     def exchange(
         self, prime: int, generator: int, alice_secret: int, bob_secret: int

@@ -40,6 +40,32 @@ class RsaEncryptResponse(BaseModel):
     ciphertext: Uint32
 
 
+class RsaKeygenRequest(BaseModel):
+    """Parametry generowania edukacyjnych kluczy RSA."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [{"p": 61, "q": 53, "e": 17}]},
+    )
+
+    p: Uint32 = Field(description="Pierwsza liczba pierwsza.")
+    q: Uint32 = Field(description="Druga liczba pierwsza, różna od p.")
+    e: Uint32 = Field(description="Wykładnik publiczny, względnie pierwszy z phi.")
+
+
+class RsaKeygenResponse(BaseModel):
+    """Parametry edukacyjnej pary kluczy obliczone przez CryptoCore."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [
+        {"n": 3233, "e": 17, "d": 2753, "phi": 3120}
+    ]})
+
+    n: Uint32 = Field(description="Moduł RSA, iloczyn p i q.")
+    e: Uint32 = Field(description="Wykładnik publiczny.")
+    d: Uint32 = Field(description="Prywatny wykładnik, ujawniany w demonstracji.")
+    phi: Uint32 = Field(description="Wartość funkcji Eulera (p - 1) * (q - 1).")
+
+
 class ErrorDetail(BaseModel):
     """Stabilny kod błędu i komunikat dla użytkownika."""
 
