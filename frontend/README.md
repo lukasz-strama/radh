@@ -48,6 +48,25 @@ komunikat o braku połączenia z backendem.
 Szybkie sprawdzenie: dla `m = 65`, `e = 17`, `n = 3233` interfejs powinien
 pokazać szyfrogram `2790`.
 
+
+### Generowanie kluczy RSA
+
+Panel „Generowanie kluczy” wyznacza parę kluczy z podanych `p`, `q` i `e`.
+Wszystkie wartości (`n`, `φ(n)`, `d`) liczy CryptoCore przez endpoint
+`POST /api/v1/rsa/demo/keygen` – kontrakt i kody błędów w
+[`backend/README.md`](../backend/README.md).
+
+- Pierwszość `p` i `q`, zakres modułu oraz warunek `NWD(e, φ(n)) = 1` sprawdza
+  backend; frontend pokazuje jego komunikat.
+- Przycisk „Użyj klucza publicznego” wpisuje `e` i `n` do formularza szyfrowania.
+- Po zmianie biblioteki C trzeba ją przebudować i zrestartować backend.
+  Bez tego generowanie zwróci „Nie znaleziono zasobu” (stary backend) albo
+  błąd niedostępnego CryptoCore (stara biblioteka).
+
+Szybkie sprawdzenie: dla `p = 61`, `q = 53`, `e = 17` interfejs powinien pokazać
+`n = 3233`, `φ(n) = 3120`, `d = 2753`, a po użyciu klucza publicznego
+wiadomość `m = 65` zaszyfruje się do `2790`.
+
 ### Zakładka Diffie–Hellman
 
 Zakładka DH pokazuje sesję wymiany kluczy między dwoma osobnymi procesami
