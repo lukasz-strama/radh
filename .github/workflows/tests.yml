@@ -104,7 +104,7 @@ jobs:
       - name: Sprawdź kod linterem
         run: npm run lint
 
-        - name: Testy zachowania UI (Vitest)
+      - name: Testy zachowania UI (Vitest)
         run: npm test
 
       - name: Zbuduj aplikację (z kontrolą typów)
