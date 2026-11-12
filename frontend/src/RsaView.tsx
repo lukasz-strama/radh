@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { ApiError, encryptRsa } from './api'
+import { ApiError, encryptRsa, generateRsaKeys } from './api'
 import type { RsaEncryptRequest } from './api'
 import { validateRsaInput, validateRsaKeyParams } from './validation'
 import type { FieldErrors, RsaKeyField, RsaKeyFieldErrors } from './validation'
@@ -13,7 +13,7 @@ type EncryptResult = {
   ciphertext: number
 }
 
-// Para kluczy z backendu razem z parametrami, z których powstała.
+// Para kluczy z backendu razem z parametrami, które faktycznie zostały wysłane.
 type RsaKeys = {
   p: number
   q: number
@@ -157,9 +157,11 @@ function KeyGenPanel({ onUsePublicKey }: { onUsePublicKey: (keys: RsaKeys) => vo
   const [apiError, setApiError] = useState<string | null>(null)
   // Ostatnia wygenerowana para; null = brak (także po nowej próbie, zanim przyjdzie wynik).
   const [keys, setKeys] = useState<RsaKeys | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (isLoading) return
     setApiError(null)
     setKeys(null)
 
@@ -175,8 +177,19 @@ function KeyGenPanel({ onUsePublicKey }: { onUsePublicKey: (keys: RsaKeys) => vo
       return
     }
     setFieldErrors({})
-    // Tymczasowo: backend nie udostępnia jeszcze generowania kluczy.
-    setApiError('Generowanie kluczy nie jest jeszcze dostępne w backendzie.')
+
+    setIsLoading(true)
+    try {
+      // n, φ(n) i d pochodzą wyłącznie z odpowiedzi backendu (CryptoCore).
+      const response = await generateRsaKeys(validation.data)
+      setKeys({ ...validation.data, ...response })
+    } catch (error) {
+      setApiError(
+        error instanceof ApiError ? error.message : 'Wystąpił nieoczekiwany błąd.',
+      )
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -202,7 +215,9 @@ function KeyGenPanel({ onUsePublicKey }: { onUsePublicKey: (keys: RsaKeys) => vo
         defaultValue={KEY_DEFAULTS.e}
       />
 
-      <button type="submit">Generuj klucze</button>
+      <button type="submit" disabled={isLoading} aria-busy={isLoading}>
+        {isLoading ? 'Generowanie…' : 'Generuj klucze'}
+      </button>
 
       <KeyResult keys={keys} />
 

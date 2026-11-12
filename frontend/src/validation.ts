@@ -5,7 +5,7 @@
 //   message:         0 .. modulus - 1
 // Backend i tak sprawdza wszystko sam – tutaj chodzi o szybkie, czytelne komunikaty.
 
-import type { DhSessionParams, RsaEncryptRequest } from './api'
+import type { DhSessionParams, RsaEncryptRequest, RsaKeygenRequest } from './api'
 
 const UINT32_MAX = 4_294_967_295
 
@@ -104,22 +104,11 @@ export function validateDhParams(raw: Record<DhField, string>): DhValidationResu
   return { ok: true, data: { prime: prime as number, generator: generator as number } }
 }
 
-// Walidacja danych do generowania kluczy RSA (uint32, jak w rdzeniu w C):
-//   p, q: 2 .. 4 294 967 295, p ≠ q
-//   e:    2 .. 4 294 967 295
-// Pierwszość p i q, zakres n = p · q oraz warunek NWD(e, φ(n)) = 1 sprawdza backend:
-// to część algorytmu RSA, którego frontend nie implementuje.
-export type RsaKeyParams = {
-  p: number
-  q: number
-  e: number
-}
-
-export type RsaKeyField = keyof RsaKeyParams
+export type RsaKeyField = keyof RsaKeygenRequest
 export type RsaKeyFieldErrors = Partial<Record<RsaKeyField, string>>
 
 export type RsaKeyValidationResult =
-  | { ok: true; data: RsaKeyParams }
+  | { ok: true; data: RsaKeygenRequest }
   | { ok: false; errors: RsaKeyFieldErrors }
 
 export function validateRsaKeyParams(raw: Record<RsaKeyField, string>): RsaKeyValidationResult {
