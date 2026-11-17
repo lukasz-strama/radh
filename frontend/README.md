@@ -12,6 +12,17 @@ Aplikacja ma dwie zakładki: **RSA** (generowanie kluczy i szyfrowanie) oraz
 **Diffie–Hellman** (wymiana kluczy, także w scenariuszu ataku MITM).
 Zmiana zakładki nie usuwa wpisanych danych ani wyników.
 
+Interfejs działa na komputerach, tabletach i telefonach (sprawdzony przy
+szerokościach 360, 390, 768 i 1440 px):
+
+- na wąskim ekranie panele układają się jeden pod drugim, formularz DH stoi
+  nad przebiegiem sesji, a po starcie strona przewija się do wyniku;
+- dziennik zdarzeń pokazuje każde zdarzenie jako kartę, a porównanie
+  scenariuszy zostaje zwartą tabelą – bez przewijania w poziomie;
+- przyciski, pola, zakładki i nagłówki zwijanych sekcji mają co najmniej
+  44 px wysokości, wygodne do obsługi palcem;
+- wszystko da się obsłużyć klawiaturą (zakładki strzałkami ←/→).
+
 ![Zakładka RSA: wygenerowana para kluczy i szyfrogram](docs/screenshots/rsa.png)
 
 ![Zakładka Diffie–Hellman: zakończona zwykła wymiana](docs/screenshots/dh-normal.png)

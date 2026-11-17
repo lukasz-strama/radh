@@ -42,7 +42,7 @@
 
 .panel input:not([type='radio']) {
   box-sizing: border-box;
-  min-height: 44px;
+  min-height: var(--touch-target);
   padding: var(--space-2) var(--space-3);
   font: inherit;
   color: var(--color-text);
@@ -64,7 +64,7 @@
 /* Przyciski: główna akcja wypełniona akcentem, pomocnicza w ramce.
    Wysokość co najmniej 44 px – wygodny cel dotykowy. */
 .button {
-  min-height: 44px;
+  min-height: var(--touch-target);
   padding: var(--space-2) var(--space-4);
   font: inherit;
   font-weight: bold;
@@ -83,8 +83,11 @@
   background: transparent;
 }
 
-.button:hover:not(:disabled) {
-  filter: brightness(1.1);
+/* Tylko przy myszy: na ekranie dotykowym :hover zostaje na ostatnio dotkniętym przycisku */
+@media (hover: hover) {
+  .button:hover:not(:disabled) {
+    filter: brightness(1.1);
+  }
 }
 
 .button:disabled {
@@ -235,6 +238,7 @@
 }
 
 .tab {
+  min-height: var(--touch-target);
   margin-bottom: calc(-1 * var(--border-thick));
   padding: var(--space-2) var(--space-4);
   font: inherit;
@@ -258,6 +262,7 @@
 .app-footer {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: space-between;
   gap: var(--space-2) var(--space-6);
   margin-top: var(--space-6);
@@ -265,6 +270,13 @@
   font-size: var(--text-sm);
   color: var(--color-muted);
   border-top: var(--border-thin) solid var(--color-border);
+}
+
+/* Odnośnik w stopce: cały wiersz o wysokości celu dotykowego */
+.app-footer a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--touch-target);
 }
 
 /* Wymiana kluczy DH */
@@ -331,6 +343,24 @@
 
 /* Zależy od szerokości wizualizacji, nie całego okna */
 @container (max-width: 480px) {
+  /* Panele uczestników stoją jeden pod drugim, więc wynik byłby daleko w dole.
+     Na wąskim ekranie najpierw stan i werdykt, potem szczegóły. */
+  .dh-scene > .dh-parties {
+    order: 1;
+  }
+
+  .dh-scene > .dh-explain {
+    order: 2;
+  }
+
+  .dh-scene > .dh-compare {
+    order: 3;
+  }
+
+  .dh-scene > .dh-log {
+    order: 4;
+  }
+
   .dh-parties {
     grid-template-columns: 1fr;
   }
@@ -475,7 +505,8 @@
   font-size: var(--text-lg);
 }
 
-/* Dziennik wiadomości; na wąskim ekranie tabela przewija się w poziomie */
+/* Dziennik wiadomości i porównanie scenariuszy. Szeroko: tabele; wąsko (telefon):
+   każdy wiersz jako karta, bez przewijania w poziomie – reguły w @container niżej. */
 .dh-log,
 .dh-compare {
   display: flex;
@@ -490,8 +521,9 @@
 /* Zwijane sekcje (dziennik, porównanie): nagłówek jako przycisk rozwijania */
 .dh-collapsible-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-2);
+  min-height: var(--touch-target);
   cursor: pointer;
 }
 
@@ -579,7 +611,16 @@ details[open] > .dh-collapsible-header {
   flex-direction: row;
   align-items: center;
   gap: var(--space-2);
+  min-height: var(--touch-target);
   cursor: pointer;
+}
+
+/* Większe radio, w kolorze akcentu */
+.dh-mode input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--color-accent);
 }
 
 .dh-badges {
@@ -670,4 +711,89 @@ details[open] > .dh-collapsible-header {
   font-size: var(--text-xs);
   font-weight: normal;
   color: var(--color-muted);
+}
+
+/* Tabele na wąskiej wizualizacji. Dziennik (5 kolumn): wiersze jako karty, nagłówki
+   kolumn znikają z ekranu (zostają dla czytników ekranu). Porównanie (3 kolumny)
+   zostaje tabelą, tylko ciaśniejszą, z tekstem łamanym w komórkach. */
+@container (max-width: 560px) {
+  .dh-log .dh-log-scroll {
+    overflow-x: visible;
+  }
+
+  .dh-log table,
+  .dh-log tbody {
+    display: block;
+  }
+
+  .dh-log thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .dh-log th,
+  .dh-log td {
+    padding: 0;
+    white-space: normal;
+    border-bottom: none;
+  }
+
+  /* Dziennik: numer, zdarzenie i status w pierwszej linii, pod spodem kierunek i wartość */
+  .dh-log tr {
+    display: grid;
+    grid-template-columns: 2ch 1fr auto;
+    grid-template-areas:
+      'seq type status'
+      '. route route'
+      '. value value';
+    gap: var(--space-1) var(--space-2);
+    padding: var(--space-2) 0;
+    border-bottom: var(--border-thin) solid var(--color-border);
+  }
+
+  .dh-log-seq {
+    grid-area: seq;
+    color: var(--color-muted);
+  }
+
+  .dh-log-type {
+    grid-area: type;
+    font-weight: bold;
+  }
+
+  .dh-log-status {
+    grid-area: status;
+  }
+
+  .dh-log-route {
+    grid-area: route;
+  }
+
+  .dh-log-value {
+    grid-area: value;
+  }
+
+  .dh-log-value::before {
+    content: attr(data-label) ': ';
+    font-family: var(--font-sans);
+    color: var(--color-muted);
+  }
+
+  /* Zdarzenia sesji nie mają nadawcy, wartości ani statusu – bez pustych kresek */
+  .dh-log .dh-log-empty {
+    display: none;
+  }
+
+  .dh-compare th,
+  .dh-compare td {
+    padding: var(--space-2) var(--space-1);
+    white-space: normal;
+  }
+
+  .dh-compare .badge {
+    white-space: normal;
+  }
 }

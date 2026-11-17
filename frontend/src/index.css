@@ -29,6 +29,9 @@
   --radius-lg: 8px;
   --radius-pill: 999px;
 
+  /* Najmniejszy wygodny cel dotykowy (przyciski, pola, zakładki, odnośniki) */
+  --touch-target: 44px;
+
   /* Grubości ramek */
   --border-thin: 1px;
   --border-thick: 2px;
