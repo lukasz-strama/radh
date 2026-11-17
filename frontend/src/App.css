@@ -3,8 +3,15 @@
   margin: var(--space-6) auto;
 }
 
-.app h1 {
+/* Nagłówki widoków i sekcji – jednakowe w RSA i DH */
+.app main h1 {
+  margin: var(--space-5) 0 var(--space-4);
   font-size: var(--text-xl);
+}
+
+.app main h2 {
+  margin: 0;
+  font-size: var(--text-lg);
 }
 
 /* Ekran po lewej, panel po prawej; na wąskim ekranie jedno pod drugim */
@@ -15,14 +22,15 @@
   align-items: flex-start;
 }
 
-/* Panel sterowania */
+/* Panel z formularzem: lekko wyróżnione tło, cienka ramka */
 .panel {
   flex: 0 1 300px;
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
   padding: var(--space-5);
-  border: var(--border-thick) solid var(--color-border);
+  background: var(--color-surface);
+  border: var(--border-thin) solid var(--color-border);
   border-radius: var(--radius-lg);
 }
 
@@ -32,9 +40,15 @@
   gap: var(--space-1);
 }
 
-.panel input {
-  padding: var(--space-2);
-  font-size: var(--text-md);
+.panel input:not([type='radio']) {
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: var(--border-thin) solid var(--color-border);
+  border-radius: var(--radius-sm);
 }
 
 /* Komunikaty błędów */
@@ -139,18 +153,37 @@
   color: var(--color-muted);
 }
 
-/* Wynik szyfrowania */
+/* Wynik operacji (RSA i DH): ramka w kolorze tonu – neutralny, sukces, błąd */
 .result {
-  margin: 0;
-  padding: var(--space-3);
-  border: var(--border-thin) solid var(--color-border);
-  border-radius: var(--radius-sm);
-}
-
-.result {
+  --result-color: var(--color-border);
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  background: var(--color-bg);
+  border: var(--border-thin) solid var(--result-color);
+  border-radius: var(--radius-md);
+}
+
+.result--ok,
+.result--error {
+  border-width: var(--border-thick);
+}
+
+.result--ok {
+  --result-color: var(--color-ok);
+}
+
+.result--error {
+  --result-color: var(--color-error);
+}
+
+.result h2,
+.result h3 {
+  margin: 0;
+  font-size: var(--text-md);
+  color: var(--result-color);
 }
 
 .result p {
@@ -235,10 +268,6 @@
 }
 
 /* Wymiana kluczy DH */
-.dh h1 {
-  margin: 0.67em 0;
-}
-
 /* Sesja po lewej (jak ekran w RSA), panel parametrów po prawej */
 .dh-scene {
   flex: 1 1 500px;
@@ -249,13 +278,8 @@
   gap: var(--space-4);
 }
 
-.dh h2,
 .dh p {
   margin: 0;
-}
-
-.dh h2 {
-  font-size: var(--text-lg);
 }
 
 .dh-shared {
@@ -446,26 +470,9 @@
   flex-basis: 100%;
 }
 
-/* Wynik: porównanie sekretów obu stron */
-.dh-result {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  border: var(--border-thick) solid var(--result-color);
-  border-radius: var(--radius-md);
-}
-
+/* Wynik sesji DH w nagłówku sekcji ma rozmiar jak inne sekcje sceny */
 .dh-result h2 {
-  color: var(--result-color);
-}
-
-.dh-result--ok {
-  --result-color: var(--color-ok);
-}
-
-.dh-result--error {
-  --result-color: var(--color-error);
+  font-size: var(--text-lg);
 }
 
 /* Dziennik wiadomości; na wąskim ekranie tabela przewija się w poziomie */
@@ -632,11 +639,6 @@ details[open] > .dh-collapsible-header {
 .rsa-layout .panel {
   flex: 1 1 320px;
   min-width: 0;
-}
-
-.rsa-layout h2 {
-  margin: 0;
-  font-size: var(--text-lg);
 }
 
 /* Wynik generowania: nazwa i wartość w wierszu, wzór pod spodem */

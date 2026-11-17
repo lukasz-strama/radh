@@ -115,17 +115,15 @@ export function RsaView() {
           </Button>
 
           {result && (
-            <div className="result" role="status">
-              <p>
-                Szyfrogram (c): <output>{result.ciphertext}</output>
-              </p>
+            <div className="result result--ok" role="status">
+              <h3>Szyfrogram</h3>
               <p className="formula">
                 c = m<sup>e</sup> mod n
               </p>
               <p className="formula">
                 c = {result.request.message}
                 <sup>{result.request.public_exponent}</sup> mod {result.request.modulus} ={' '}
-                {result.ciphertext}
+                <output>{result.ciphertext}</output>
               </p>
             </div>
           )}

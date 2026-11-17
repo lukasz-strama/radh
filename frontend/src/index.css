@@ -39,6 +39,8 @@
   --color-text: CanvasText;
   --color-muted: #888;
   --color-border: #888;
+  /* Tło paneli: odrobinę inne niż strona, w obu motywach */
+  --color-surface: color-mix(in srgb, var(--color-text) 4%, var(--color-bg));
 
   /* Akcent: aktywna nawigacja, odnośniki, fokus */
   --color-accent: #0f766e;

@@ -784,7 +784,7 @@ function SessionResult({ session }: { session: DhSession }) {
   const match = kA === kB
   return (
     <section
-      className={`dh-result dh-result--${match ? 'ok' : 'error'}`}
+      className={`result dh-result result--${match ? 'ok' : 'error'}`}
       aria-labelledby="dh-result-title"
     >
       {/* Same K są już w panelach węzłów, tu tylko werdykt i wyjaśnienie. */}
