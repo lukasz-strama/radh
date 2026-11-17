@@ -1,0 +1,24 @@
+# Kontekst zawiera wyłącznie pliki potrzebne do budowania obrazów.
+**
+!backend/
+!backend/**
+!nodes/
+!nodes/**
+!crypto-core/
+!crypto-core/**
+!frontend/
+!frontend/**
+!deploy/
+!deploy/**
+**/__pycache__/**
+**/*.pyc
+backend/.venv/**
+crypto-core/build/**
+crypto-core/cmake-build-*/**
+frontend/node_modules/**
+frontend/dist/**
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/secrets/**

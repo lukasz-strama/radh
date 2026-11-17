@@ -1,0 +1,105 @@
+name: radh-local
+
+x-runtime: &runtime
+  image: radh-runtime:${RADH_IMAGE_TAG:-local}
+  build:
+    context: .
+    dockerfile: deploy/runtime.Dockerfile
+  user: "10001:10001"
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  networks: [services]
+  restart: unless-stopped
+  stop_grace_period: 10s
+  pids_limit: 64
+  mem_limit: 256m
+  cpus: 0.50
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-node: &node
+  <<: *runtime
+  command: [sh, /opt/radh/deploy/node-entrypoint.sh]
+  depends_on:
+    backend:
+      condition: service_healthy
+  healthcheck:
+    test: [CMD, python, -m, deploy.healthcheck, node]
+    interval: 10s
+    timeout: 4s
+    retries: 3
+    start_period: 15s
+
+services:
+  backend:
+    <<: *runtime
+    mem_limit: 512m
+    cpus: 1.0
+    healthcheck:
+      test: [CMD, python, -m, deploy.healthcheck, backend]
+      interval: 10s
+      timeout: 4s
+      retries: 3
+      start_period: 15s
+  alice:
+    <<: *node
+    environment:
+      RADH_NODE_ROLE: alice
+      RADH_COORDINATOR_URL: http://backend:8000
+      RADH_DIAGNOSTICS: ${RADH_DIAGNOSTICS:-0}
+  bob:
+    <<: *node
+    environment:
+      RADH_NODE_ROLE: bob
+      RADH_COORDINATOR_URL: http://backend:8000
+      RADH_DIAGNOSTICS: ${RADH_DIAGNOSTICS:-0}
+  mallory:
+    <<: *node
+    environment:
+      RADH_NODE_ROLE: mallory
+      RADH_COORDINATOR_URL: http://backend:8000
+      RADH_DIAGNOSTICS: ${RADH_DIAGNOSTICS:-0}
+  web:
+    image: radh-web:${RADH_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: deploy/web.Dockerfile
+    # Port jest celowo związany na stałe z loopback, bez opcji 0.0.0.0 w .env.
+    ports:
+      - "127.0.0.1:${RADH_HTTP_PORT:-8080}:8080"
+    networks: [edge, services]
+    user: "101:101"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    cpus: 0.50
+    pids_limit: 32
+    restart: unless-stopped
+    stop_grace_period: 10s
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  edge: {}
+  services:
+    internal: true
