@@ -39,6 +39,21 @@ flowchart LR
   M --> C
 ```
 
+### Zakres realizacji i kolejność odbioru
+
+| Etap | Wymagania i granica zakresu |
+| --- | --- |
+| **Obowiązkowe w Sprincie A (#68–71)** | Ograniczone rejestry sesji i agentów, izolacja danych/K/logów, Owner Bearer, uwierzytelnianie i uprawnienia ról, epoch/instance fencing, discovery, TTL/cleanup/tombstones, bounded retry i idempotencja, limity zasobów/żądań/C, obsługa restartów i zmian w UI. Testy funkcjonalne obejmują macierze auth, równoległość, zegar, limity i regresję. Podstawowe odwołanie tokenu roli przez zatrzymanie usług, zmianę plików i kontrolowany restart jest wymagane. |
+| **Przed publiczną publikacją, także w kolejnych sprintach** | Cały release gate G01–G25: TLS i firewall, provisioning sekretów, skany/digesty, monitoring i alarmy, runbook/rollback, poufne zgłoszenia oraz pomiary obciążenia/retencji na docelowym VPS. Rotacja tokenów ról bez przerywania usług z maks. 60 s nakładania tokenów to osobny follow-up operacyjny (G13), nie warunek ukończenia #68–71. Do jego odbioru publikacja pozostaje NO-GO. |
+| **Przyszłe rozszerzenia operacyjne** | Trwałe sesje, HA i skalowanie poziome, scentralizowane dashboardy/logi oraz transport między hostami z mTLS. Nie są wymagane dla pierwszej bety na jednym VPS; nie zastępują podstawowego monitoringu i logów wymaganych przez gate. |
+
+Realizacja #68–71 nie oznacza zgody na publikację. W #71 obowiązkowe są testy
+izolacji, auth, fencing, TTL, idempotencji i rzeczywistych limitów; końcowy odbiór
+obciążenia G21/G22 i infrastruktury wymaga gotowego stagingu oraz udziału operatora.
+Wymagania opisane dalej dotyczą docelowej bety; jedynym odroczonym mechanizmem
+w kontrakcie usług jest wskazana wyżej rotacja bez przestoju. Nie odraczamy auth,
+odwołania uprawnień, fencing, TTL ani ograniczeń zasobów.
+
 ## 2. Tożsamość, autoryzacja i izolacja
 
 ### Właściciel sesji bez konta
@@ -64,8 +79,25 @@ flowchart LR
 - Brak lub zły format Bearer: 401 `UNAUTHORIZED` z `WWW-Authenticate: Bearer`.
   Nieznane ID lub błędny token przy poprawnym formacie: ta sama odpowiedź
   404 `SESSION_NOT_FOUND`. Usunięty rekord z zachowanym tombstone i poprawnym tokenem: 410
-  `SESSION_EXPIRED`. Rekord w stanie expired do końca retencji daje 200 przy
-  GET stanu/historii, lecz bez K (kasowane przy wygaśnięciu); mutacje dają 409. Nie umożliwiać odróżnienia cudzej sesji od nieistniejącej.
+  `SESSION_EXPIRED`. Nie umożliwiać odróżnienia cudzej sesji od nieistniejącej,
+  również gdy istnieje tombstone. Najpierw sprawdzić uprawnienie; kod 410 nie jest
+  ujawniany osobie z błędnym tokenem o poprawnym formacie.
+
+Odczyt `GET /api/v2/dh/sessions/{id}` z prawidłowym tokenem:
+
+| Stan danych | HTTP / wynik |
+| --- | --- |
+| Istniejąca aktywna sesja (created/running) | 200 SessionView |
+| Istniejąca zakończona sesja (completed/cancelled/failed) | 200 SessionView |
+| Istniejąca expired podczas retencji | 200 SessionView, bez K; diagnostyka zwraca wyłącznie null |
+| Usunięty rekord, zachowany tombstone | 410 SESSION_EXPIRED |
+| Brak rekordu i tombstone | 404 SESSION_NOT_FOUND |
+
+Historia istniejącej expired pozostaje czytelna (200) do końca retencji. K jest
+kasowane przy wygaśnięciu, także w agentach. Start, cancel oraz wszystkie zapisy
+protokołu/diagnostyki do expired dają 409 `INVALID_SESSION_STATE`, bez zmiany
+stanu, także przy identycznym retry. **Wyjątek: właściciel może DELETE expired**
+(204), usuwając rekord i pozostawiając tombstone. Te reguły nie przedłużają TTL.
 
 ### Tworzenie i jego ponowienie
 
@@ -94,6 +126,21 @@ Osierocony obiekt usuwa TTL. Restart backendu unieważnia cache — analogicznie
 automatycznych ponowień tworzenia po wykryciu restartu. Nie obiecywać exactly-once
 po utracie pamięci. Błędny/sprzeczny klucz nie tworzy obiektu.
 
+Każde żądanie tworzenia, w tym retry z tym samym Idempotency-Key i trafienie
+w cache, przechodzi limiter **6 żądań/min/IP, burst 2 przed odczytem cache**
+i kosztowną walidacją. Klucz nie zmienia bucketa IP i nie omija limitów.
+429 `RATE_LIMITED` z Retry-After nie tworzy sesji ani nowego tokenu; zaakceptowane
+retry w oknie 60 s zwraca to samo ID/token. Oczekiwanie na limiter nie przedłuża
+cache; po 60 s nadal obowiązuje CREATE_RETRY_EXPIRED, bez automatycznego restartu próby.
+
+Test G05 wykonuje 100 ponowień w czasie <60 s na izolowanej konfiguracji testowej,
+np. create 6000/min/IP, burst 128 (także na testowym proxy), bez zmiany TTL cache.
+Sprawdza jedną sesję i identyczne ID/token wszystkich zaakceptowanych odpowiedzi.
+Osobny test integracyjny z **domyślnymi** limitami 6/min/IP, burst 2 sprawdza
+429 i Retry-After, również dla trafień w cache, oraz identyczność ID/token
+zaakceptowanych ponowień. Artefakt testu zapisuje efektywne limity; konfiguracja
+G05 nie trafia do bety i nie osłabia domyślnych zabezpieczeń.
+
 ### Tożsamość usług i uruchomień procesów
 
 - Osobny losowy token usługowy 256 bitów dla Alice, Boba i Mallory, ładowany
@@ -110,8 +157,12 @@ po utracie pamięci. Błędny/sprzeczny klucz nie tworzy obiektu.
   duplikat lub czeka na wygaśnięcie lease; nie przejmować aktywnej roli po cichu.
 - Wewnętrzne żądania poza heartbeat mają nagłówki `X-Backend-Epoch` i
   `X-Node-Instance`. Zły epoch: 409 `BACKEND_EPOCH_MISMATCH`; niezarejestrowana
-  instancja: 409 `NODE_INSTANCE_MISMATCH`. Rotacja tokenu nie zmienia instance_id;
-  dopuszczalne stare/nowe tokeny jednej roli przez maks. 60 s, potem odwołanie starego.
+  instancja: 409 `NODE_INSTANCE_MISMATCH`.
+- Sprint A: odwołanie tokenu i wymiana plików z kontrolowanym zatrzymaniem/restartem
+  usług; restart wymusza nowe instance_id/epoch i kończy dotknięte sesje zgodnie
+  z fencing. Follow-up przed publikacją (G13): rotacja bez przestoju nie zmienia
+  instance_id; stare/nowe tokeny jednej roli nakładają się maks. 60 s, potem stary
+  jest odwołany. Nie wymagać implementacji gorącego przeładowania tokenów w #68–71.
 - Proxy publiczne nigdy nie przekazuje `/internal/`. Prywatna sieć jest dodatkową
   granicą, nie zamiennikiem autoryzacji. Na jednym VPS HTTP wewnętrzne jest dopuszczone
   jako zaakceptowane ryzyko; na wielu hostach wymagane TLS/mTLS (poza pierwszą betą).
@@ -179,6 +230,7 @@ nie tworzyć nowego agenta z ukończonego deskryptora. Zmiana epoch usuwa całą
   obliczeniu. Wynik błędu C nie nadpisuje poprzedniego. Dane błędu nie zawierają argumentów.
 - Spóźniony zapis do cancelled/expired/failed nie zmienia stanu, daje 409
   `INVALID_SESSION_STATE`; po usunięciu obiektu 410/404 zgodnie z autoryzacją.
+  Wyjątkiem jest DELETE właściciela, dozwolone także dla expired podczas retencji.
 - Timeout HTTP: 3 s connect / 5 s całość, retry z backoff 0,5/1/2/4/8 s,
   jitter ±20%, maks. 30 s bez kontaktu. 404/410 kończy pracę dla ID, 401/403
   zatrzymuje klienta roli i wymaga interwencji, 422 nie jest bezmyślnie ponawiane.
@@ -188,8 +240,11 @@ nie tworzyć nowego agenta z ukończonego deskryptora. Zmiana epoch usuwa całą
 - Wygasły heartbeat roli w aktywnej przypisanej sesji → `failed` z
   `NODE_UNAVAILABLE`. Nowa instancja roli nie odtwarza utraconych sekretów:
   sesje starej instancji → `failed`, `NODE_RESTARTED`; użytkownik tworzy nowe ID.
-- Restart backendu gubi wszystkie sesje i tworzy epoch. UI na 404/410 albo odczytanym statusie expired czyści token
-  tej sesji, zatrzymuje polling i proponuje nową. Nie odtwarzać automatycznie
+- Restart backendu gubi wszystkie sesje i tworzy epoch. UI na 404/410 czyści token
+  tej sesji, zatrzymuje polling i proponuje nową. Przy 200 ze statusem expired
+  usuwa K z widoku, zatrzymuje polling i blokuje start/cancel, lecz zachowuje
+  ID/token na czas retencji, aby właściciel mógł DELETE. Token usuwa po skutecznym
+  DELETE, 404/410 lub świadomym porzuceniu widoku. Nie odtwarzać automatycznie
   operacji z poprzedniego epoch. Utrata tajnych wykładników jest nieodwracalna.
 - UI wiąże każdą odpowiedź z ID, epoch i lokalnym numerem żądania, używa
   AbortController/timeoutu. Zakończony stary request nie zmienia nowego widoku.
@@ -212,7 +267,8 @@ stateDiagram-v2
 
 Start tego samego ID w running/completed zwraca 200 z aktualnym stanem bez nowego
 startu; start w cancelled/expired/failed → 409. Anulowanie w cancelled jest
-idempotentne; w completed/expired/failed → 409. DELETE anuluje aktywną sesję,
+idempotentne; w completed/expired/failed → 409. DELETE jest dozwolone właścicielowi
+we wszystkich istniejących stanach, również expired; anuluje aktywną sesję,
 czyści wiadomości, log i K, zostawia ograniczony tombstone (hash tokenu i klucza tworzenia, ID,
 epoch, przypisania ról/instancji, termin usunięcia). Ponowne DELETE z prawidłowym tokenem → 204, dopóki
 istnieje tombstone, później 404. Przy usunięciu cache tworzenia danego obiektu
@@ -248,7 +304,7 @@ cleanup nie pozwala użyć wygasłej sesji.
 | `DIAGNOSTICS_RETRY_SECONDS` | 30 po completed | Potem usunięcie lokalnego agenta |
 | `MAX_CRYPTO_JOBS` / `MAX_CRYPTO_WAITERS` | 2 / 8 | W backendzie; pełna kolejka → 503 `CRYPTO_BUSY`, Retry-After 2 |
 | Limiter RSA i legacy DH | 20/min/IP, burst 5 | Koszt C i walidacji pierwszości |
-| Limiter create | 6/min/IP, burst 2 | Przed kosztowną walidacją p/g |
+| Limiter create | 6/min/IP, burst 2 | Każde żądanie, także retry; przed cache i kosztowną walidacją p/g |
 | Limiter publicznych odczytów | 120/min/token, 240/min/IP | Obsługuje polling stanu i diagnostyki co 2 s; osobne buckety |
 | Limiter internal | 3000/min/rola, burst 128 | Discovery + maks. 32 sesje co 2 s; backoff przy braku postępu |
 | `MAX_RATE_BUCKETS` / `RATE_BUCKET_TTL_SECONDS` | 4096 / 600 | Limitery również nie mogą tworzyć nieograniczonej mapy IP/tokenów |
@@ -279,7 +335,7 @@ W tabelach `id` = session_id, `mid` = message_id, `role` = alice/bob/mallory.
 | `Message` | Istniejący model `Message` z v1: `{message_id,sender,recipient,type:"public_value",public_value,status:"intercepted"\|"queued"\|"processed"}` |
 | `Interception` | Istniejący model v1: `{message_id,original_sender,recipient,original_value,delivered_value:uint32\|null,intercepted_by:"mallory",actual_sender:"mallory"\|null,status:"pending"\|"forwarded"\|"processed"}` |
 | `Events` | `{session_id,backend_epoch,events:[Event],next_after:int}`; Event opisany w §3; maks. limit wpisów; next_after = ostatnia sekwencja odpowiedzi lub wejściowe after |
-| `Diagnostics` | `{alice:uint32\|null,bob:uint32\|null}`; `MalloryDiagnostics={shared_with_alice:uint32\|null,shared_with_bob:uint32\|null}`; przy wyłączonej diagnostyce wyłącznie null |
+| `Diagnostics` | `{alice:uint32\|null,bob:uint32\|null}`; `MalloryDiagnostics={shared_with_alice:uint32\|null,shared_with_bob:uint32\|null}`; przy wyłączonej diagnostyce lub stanie expired wyłącznie null |
 | `Presence` | `{alice:{online:bool},bob:{online:bool},mallory:{online:bool}}`; bez instance_id, IP i last_seen |
 | `Descriptor` | `{session_id,backend_epoch,prime,generator,mode,diagnostics_enabled,status,revision,expires_at,remaining_ttl_seconds:int,participant_status:Participant\|null,diagnostics_received:bool}`; ostatnie dwa dotyczą tylko własnej roli (Mallory participant_status=null) |
 | `Discovery` | `{backend_epoch,sessions:Descriptor[<=128],retry_after_ms:1000}`; pełny snapshot, brak paginacji i nieograniczonego kursora; Mallory tylko MITM |
@@ -299,14 +355,18 @@ Wszystkie wiersze API mogą dodatkowo zwrócić: 400 BAD_REQUEST, 405 METHOD_NOT
 429 RATE_LIMITED, 500 INTERNAL_ERROR, 503 SERVICE_UNAVAILABLE.
 Wiersze Owner dodają 401 UNAUTHORIZED, 404 SESSION_NOT_FOUND, 410 SESSION_EXPIRED,
 403 ORIGIN_NOT_ALLOWED. Te wspólne odpowiedzi są częścią każdego wiersza tabeli.
+410 dotyczy wyłącznie usuniętego rekordu z tombstone i prawidłowego tokenu;
+GET istniejącej expired daje 200, GET jej diagnostyki 200 z samymi null.
+DELETE właściciela dla istniejącej expired lub jego tombstone daje 204, nie 410.
+Niepoprawny token o poprawnym formacie zawsze daje 404 zamiast ujawnienia stanu.
 
 | HTTP | Ścieżka | Cel / klient | Parametry i ciało | Sukces | Dodatkowe błędy |
 | --- | --- | --- | --- | --- | --- |
 | POST | `/api/v2/dh/sessions` | Utwórz / Anon | Idempotency-Key + X-Backend-Epoch; Create | 201 Created | 409 IDEMPOTENCY_CONFLICT/CREATE_RETRY_EXPIRED/BACKEND_EPOCH_MISMATCH; 410 CREATION_GONE; 422 INVALID_PRIME/INVALID_GENERATOR; 503 SESSION_CAPACITY |
-| GET | `/api/v2/dh/sessions/{id}` | Stan / Owner | id; — | 200 SessionView | wspólne Owner |
+| GET | `/api/v2/dh/sessions/{id}` | Stan / Owner | id; — | 200 SessionView (także terminalna/expired w retencji, bez K) | wspólne Owner |
 | POST | `/api/v2/dh/sessions/{id}/start` | Start / Owner | id; — | 200 SessionView | 409 INVALID_SESSION_STATE/NODE_UNAVAILABLE; 503 RUNNING_CAPACITY |
 | POST | `/api/v2/dh/sessions/{id}/cancel` | Anuluj / Owner | id; — | 200 SessionView | 409 INVALID_SESSION_STATE |
-| DELETE | `/api/v2/dh/sessions/{id}` | Usuń / Owner | id; — | 204 bez ciała | zasady tombstone z §4 |
+| DELETE | `/api/v2/dh/sessions/{id}` | Usuń / Owner | id; — | 204 bez ciała, także expired i własny tombstone | zasady tombstone z §4 |
 | GET | `/api/v2/dh/sessions/{id}/events` | Historia / Owner | after:int>=0=0; limit:int 1..32=32; — | 200 Events | 422 INVALID_REQUEST |
 | GET | `/api/v2/dh/sessions/{id}/diagnostics` | Jawne K ofiar / Owner | id; — | 200 Diagnostics | wspólne Owner |
 | GET | `/api/v2/dh/sessions/{id}/diagnostics/mallory` | Jawne K Mallory / Owner | id; — | 200 MalloryDiagnostics | wspólne Owner; normal → same null |
@@ -328,6 +388,9 @@ NODE_INSTANCE_MISMATCH, 410 SESSION_EXPIRED, 413 REQUEST_TOO_LARGE,
 415 UNSUPPORTED_MEDIA_TYPE, 422 INVALID_REQUEST, 429 RATE_LIMITED,
 500 INTERNAL_ERROR, 503 SERVICE_UNAVAILABLE. Poza heartbeat obowiązują oba
 nagłówki instancji z §2 i przypisanie roli do ID sesji (403 ROLE_NOT_ASSIGNED).
+Dla istniejącej expired kolejki, przechwycenia i wszystkie mutacje zwracają
+409 INVALID_SESSION_STATE; 410 dotyczy dopiero tombstone. Discovery nadal
+przekazuje stan terminalny do cleanupu agentów; nie udostępnia K.
 
 | HTTP | Ścieżka | Cel / klient | Parametry i ciało | Sukces | Dodatkowe błędy |
 | --- | --- | --- | --- | --- | --- |
@@ -360,6 +423,12 @@ Węzły nie mogą tworzyć/startować/anulować sesji ani odczytywać diagnostyk
 | v1 messages POST/GET/ACK, forward, diagnostics POST | Usunąć z publicznego routera; zastąpić wewnętrznymi operacjami powyżej |
 | v1 heartbeat POST i nodes GET | Zastąpić uwierzytelnionym heartbeat internal i publicznym Presence v2 |
 | `/docs`, `/redoc`, `/openapi.json` | Zostawić w lokalnym development; na publicznym proxy wyłączyć; schemat implementacyjny generowany jako artefakt, bez sekretów |
+
+Do czasu atomowej migracji #68–70 lokalny Compose v1 **dopuszcza GET /current**
+przez ten sam limiter i proxy co pozostałe odczyty. Obecny frontend używa go
+w cancelActiveDhSession() do odzyskania ID i anulowania po odświeżeniu strony.
+Pozostałe metody /current oraz wewnętrzne operacje węzłów pozostają zablokowane.
+To zachowanie lokalnej wersji v1, która nadal nie może być publikowana publicznie.
 
 To świadoma zmiana kontraktu sesji, wdrażana atomowo z klientami #68 i UI #70.
 Nie dodawać nieautoryzowanego fallbacku v1 przy błędzie v2. Brak `/current` w
@@ -449,7 +518,7 @@ kontraktu, nie lokalne alternatywne endpointy. W #73 nie dodano tych mechanizmó
 | --- | --- | --- |
 | #68 | Węzły — Łukasz | Mapy per epoch/ID, maks. 128 agentów, ograniczona pula, retry per sesja, auth roli, discovery, cleanup, restart/fencing; bez zmian C i pojedynczego agenta |
 | #69 | Backend — Daniel | Rejestr z limitami/TTL, Owner auth, role auth, wszystkie routery v2/internal, epoch/lease, atomowość, cleanup, admission control i limity C; usunięcie publicznych mutacji węzłów |
-| #70 | Frontend — Szymon | Create key + Bearer, token per karta, świadome opt-in K, odczyt własnej sesji, failed/expired/429/503, usuwanie tokenów, AbortController i brak fallbacku do v1 |
+| #70 | Frontend — Szymon | Create key + Bearer, token per karta, świadome opt-in K, odczyt własnej sesji, failed/expired/429/503, usuwanie tokenów zgodnie z retencją/DELETE (expired 200 zachowuje możliwość usunięcia), AbortController i brak fallbacku do v1 |
 | #71 | QA — Wiktoria | Automatyczne równoległe normal/MITM wielu użytkowników i rzeczywistych procesów; macierz obcych tokenów/ról, retry/start/delete/cleanup/restart, limity i kontrolowane obciążenie; pełna regresja RSA/DH/keygen |
 
 Szczegółowe zagrożenia i warunki publikacji: [threat-model](../security/threat-model.md)

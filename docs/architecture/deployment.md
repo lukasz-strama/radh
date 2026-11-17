@@ -104,8 +104,11 @@ Nie oznacza to izolacji sesji użytkowników w v1; inny lokalny użytkownik host
 nadal może korzystać z globalnej sesji przez ten port.
 
 Proxy dopuszcza istniejące operacje UI: RSA/keygen/DH demo, tworzenie/start/cancel
-sesji i odczyty. Nie wystawia `/current`, heartbeatów, publikowania/ACK/forward
-ani zapisu diagnostyki. Węzły korzystają bezpośrednio z `http://backend:8000`.
+sesji i odczyty, w tym **GET `/api/v1/dh/sessions/current`** z istniejącym
+limiterem i konfiguracją proxy. Ten odczyt umożliwia UI odzyskanie ID i anulowanie
+sesji po odświeżeniu strony; pozostałe metody `/current` są blokowane (403).
+Endpoint zniknie dopiero przy migracji do v2 w #68–70. Proxy nie wystawia
+heartbeatów, publikowania/ACK/forward ani zapisu diagnostyki. Węzły korzystają bezpośrednio z `http://backend:8000`.
 Istniejące API aplikacji nadal nie ma autoryzacji, proxy nie dopisuje fikcyjnych
 poświadczeń. Lokalny limiter proxy (20 r/s/IP, burst) i limit body 4 KiB nie są
 implementacją pełnego admission control z kontraktu wielosesyjnego.
@@ -183,6 +186,9 @@ Tokeny ról generuje operator (`secrets.token_urlsafe(32)`), trzy niezależne pl
 z dostępem tylko dla odpowiedniego UID; backend dostaje ich skróty lub prywatne
 pliki konfiguracyjne. Bez ARG/ENV podczas builda, obrazu, frontendu i Git.
 Docelowe ścieżki `_FILE` opisuje kontrakt; aktualny kod ich jeszcze nie obsługuje.
+W Sprincie A dopuszczamy wymianę tokenów ról z zatrzymaniem/restartem usług
+oraz fencing; rotacja bez przestoju z maks. 60 s nakładania tokenów to follow-up
+operacyjny obowiązkowy przed publikacją (G13), poza implementacją #68–71.
 Owner tokeny powstają na serwerze w #69 i są ograniczone do życia sesji.
 Hasło do TLS/ACME, token roli i prywatny wykładnik edukacyjny to różne aktywa.
 

@@ -3,6 +3,7 @@
 import argparse
 import json
 import time
+from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 from uuid import uuid4
@@ -24,6 +25,28 @@ def main() -> None:
         with urlopen(req, timeout=5) as response:
             return json.load(response)
 
+    def rejected(method: str, path: str, status: int, code: str) -> None:
+        try:
+            request(method, path, {} if method == "POST" else None)
+        except HTTPError as error:
+            assert error.code == status
+            if method != "HEAD":
+                assert json.load(error)["error"]["code"] == code
+        else:
+            raise AssertionError("Proxy dopuścił niedozwoloną operację.")
+
+    for method in ("HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE"):
+        rejected(method, "/api/v1/dh/sessions/current", 403, "FORBIDDEN")
+    rejected("GET", "/internal/health/ready", 403, "FORBIDDEN")
+    rejected("POST", "/api/v1/dh/nodes/alice/heartbeat", 404, "NOT_FOUND")
+    probe = "/api/v1/dh/sessions/proxy-probe"
+    for suffix in ("/messages", "/messages/alice-public/ack",
+                   "/interceptions/alice-public/forward"):
+        rejected("POST", probe + suffix, 404, "NOT_FOUND")
+    for suffix in ("/diagnostics", "/diagnostics/mallory"):
+        rejected("POST", probe + suffix, 403, "FORBIDDEN")
+    print("Proxy: blokady operacji wewnętrznych i metod /current OK")
+
     key = request("POST", "/api/v1/rsa/demo/keygen", {"p": 61, "q": 53, "e": 17})
     assert key == {"n": 3233, "e": 17, "d": 2753, "phi": 3120}
     cipher = request("POST", "/api/v1/rsa/demo/encrypt", {
@@ -38,6 +61,20 @@ def main() -> None:
             break
         assert time.monotonic() < deadline, "Węzły nie są dostępne."
         time.sleep(1)
+
+    # Odtworzenie resetu po utracie ID z pamięci UI. Anulujemy tylko własny obiekt.
+    reset_id = "smoke-reset-" + uuid4().hex
+    request("POST", "/api/v1/dh/sessions", {
+        "session_id": reset_id, "prime": 23, "generator": 5, "mode": "normal",
+    })
+    current = request("GET", "/api/v1/dh/sessions/current")
+    assert current["session_id"] == reset_id
+    assert current["status"] == "created"
+    recovered_path = "/api/v1/dh/sessions/" + current["session_id"]
+    cancelled = request("POST", recovered_path + "/cancel")
+    assert cancelled["status"] == "cancelled"
+    assert request("GET", recovered_path)["status"] == "cancelled"
+    print("GET /current i anulowanie po utracie stanu UI: OK")
 
     for mode in ("normal", "mitm"):
         session_id = "smoke-" + uuid4().hex

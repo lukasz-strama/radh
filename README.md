@@ -65,11 +65,15 @@ python3 deploy/smoke.py
 python3 deploy/smoke.py --diagnostics
 ```
 
-Smoke tworzy własne sesje normal/MITM i zastępuje ukończoną sesję w v1;
+Smoke sprawdza blokady proxy, odczytuje własną bieżącą sesję przez GET `/current`
+i anuluje ją jak UI po utracie lokalnego ID, następnie wykonuje normal/MITM.
+Tworzy własne sesje i zastępuje ukończoną sesję w v1;
 uruchamiaj go na wolnym lokalnym środowisku. Nie wysyła żądań poza loopback.
 
 Po zgłoszeniu heartbeatów role mają `online: true`. Brak sesji `/current` (404)
-wewnątrz backendu przed startem wymiany jest normalny. UI pozwala utworzyć sesję
+przez proxy przed utworzeniem pierwszej sesji jest normalny. GET `/current`
+pozostaje dostępny lokalnie dla resetu UI po odświeżeniu; inne metody są blokowane.
+Endpoint zostanie usunięty dopiero w API v2 (#68–70). UI pozwala utworzyć sesję
 normal lub MITM. Przy domyślnym losowaniu sekretów wyniki K nie są stałym wektorem.
 Aby pokazywać K edukacyjnie w UI, ustaw w `.env` `RADH_DIAGNOSTICS=1` i wykonaj
 `docker compose up -d`; domyślnie K pozostają w procesach.
