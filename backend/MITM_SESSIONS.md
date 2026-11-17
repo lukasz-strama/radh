@@ -164,3 +164,10 @@ Test procesowy uruchamia prawdziwe Alice/Bob/Mallory i CryptoCore: normal → MI
 → normal po wyłączeniu Mallory, z diagnostyką oraz bez niej. Ten test jest
 jawnie pomijany, jeśli nie ma jeszcze modułu #40. Po scaleniu #49 zwykły pytest
 w istniejącym CI uruchamia go automatycznie. Nie zastępuje pełnego zakresu #43.
+
+## Wielosesyjny Mallory — #68
+
+Oddzielny klient internal v2 trzyma MalloryNode dla każdej pary epoch/session_id,
+z niezależnymi x/y i stanem forward/diagnostyki. Szczegóły konfiguracji i zależności
+od #69: [nodes/MULTI_SESSION.md](../nodes/MULTI_SESSION.md).
+Dotychczasowe polecenia v1 i routing opisany wyżej pozostają bez zmian.
