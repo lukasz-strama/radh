@@ -340,7 +340,7 @@ export function DhExchange() {
 
   return (
     <div className="dh">
-      <h1>RADH – wymiana kluczy Diffiego–Hellmana</h1>
+      <h1>Wymiana kluczy Diffiego–Hellmana</h1>
 
       <div className="layout">
         <section className="dh-scene" aria-label="Przebieg sesji">

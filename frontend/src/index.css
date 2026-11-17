@@ -40,6 +40,10 @@
   --color-muted: #888;
   --color-border: #888;
 
+  /* Akcent: aktywna nawigacja, odnośniki, fokus */
+  --color-accent: #0f766e;
+  --focus-ring: var(--border-thick) solid var(--color-accent);
+
   /* Stany */
   --color-ok: #1f9d55;
   --color-error: #d33;
@@ -59,9 +63,25 @@
   font-family: var(--font-sans);
 }
 
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-accent: #2bb3a3;
+  }
+}
+
 body {
   margin: 0;
   padding: 0 var(--space-4);
   color: var(--color-text);
   background: var(--color-bg);
+}
+
+a {
+  color: var(--color-accent);
+}
+
+/* Widoczny fokus przy obsłudze klawiaturą (nie po kliknięciu myszą) */
+:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
 }

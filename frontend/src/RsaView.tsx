@@ -79,7 +79,7 @@ export function RsaView() {
 
   return (
     <>
-      <h1>RADH – szyfrowanie RSA</h1>
+      <h1>Szyfrowanie RSA</h1>
 
       {/* Dwa panele obok siebie; na wąskim ekranie jeden pod drugim. */}
       <div className="layout rsa-layout">
