@@ -83,8 +83,11 @@
   background: transparent;
 }
 
-.button:hover:not(:disabled) {
-  filter: brightness(1.1);
+/* Tylko przy myszy: na ekranie dotykowym :hover zostaje na ostatnio dotkniętym przycisku */
+@media (hover: hover) {
+  .button:hover:not(:disabled) {
+    filter: brightness(1.1);
+  }
 }
 
 .button:disabled {
