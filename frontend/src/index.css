@@ -1,9 +1,67 @@
+/* System stylistyczny RADH: wszystkie kolory, czcionki, rozmiary i odstępy
+   aplikacji. Komponenty używają tylko tych zmiennych, nie wartości wpisanych na sztywno. */
+
 :root {
-  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
   color-scheme: light dark;
+
+  /* Czcionki */
+  --font-sans: system-ui, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, Consolas, monospace;
+
+  /* Rozmiary tekstu */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.1rem;
+  --text-xl: 1.5rem;
+
+  /* Odstępy (siatka co 4 px) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* Zaokrąglenia */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+
+  /* Grubości ramek */
+  --border-thin: 1px;
+  --border-thick: 2px;
+  --border-accent: 4px;
+
+  /* Kolory podstawowe */
+  --color-bg: Canvas;
+  --color-text: CanvasText;
+  --color-muted: #888;
+  --color-border: #888;
+
+  /* Stany */
+  --color-ok: #1f9d55;
+  --color-error: #d33;
+  --color-warning: #d9a400;
+
+  /* Rodzaje danych: tajne (tylko lokalnie) i jawne (przesyłane) */
+  --color-private: #c2700c;
+  --color-public: var(--color-muted);
+
+  /* Uczestnicy protokołów */
+  --color-alice: #2f7bd8;
+  --color-bob: #1f9d55;
+  --color-mallory: #b0359e;
+}
+
+:root {
+  font-family: var(--font-sans);
 }
 
 body {
   margin: 0;
-  padding: 0 16px;
+  padding: 0 var(--space-4);
+  color: var(--color-text);
+  background: var(--color-bg);
 }
