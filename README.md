@@ -30,6 +30,75 @@ Formularz wysyła dane do backendu, który wykonuje obliczenia w bibliotece C.
 Poniższe polecenia są przeznaczone dla Linux/macOS (Bash lub Zsh).
 Zacznij w katalogu głównym sklonowanego repozytorium `radh`.
 
+## Cały aktualny system przez Docker Compose (lokalnie)
+
+Wymagany Docker Engine z Compose v2.20+ (lub nowszym zgodnym pluginem) i dostępem
+użytkownika do demona. Z katalogu głównego repozytorium:
+
+```sh
+test -f .env || cp .env.example .env
+docker compose config --quiet
+docker compose build
+docker compose up -d --wait
+```
+
+Otwórz <http://127.0.0.1:8080>. Jeden reverse proxy serwuje produkcyjny build
+React i przekazuje API do jednego FastAPI. Alice, Bob i Mallory są trzema
+osobnymi procesami/kontenerami. Nie trzeba uruchamiać ich dodatkowo w terminalach.
+Biblioteka C jest kompilowana i testowana w builderze; CMake/Python/Node nie
+muszą być instalowane na hoście. Pierwszy build wymaga pobrania obrazów i pakietów.
+
+```sh
+# Stan, logi i szybka kontrola API
+docker compose ps
+docker compose logs --tail=100 -f web backend alice bob mallory
+curl --fail http://127.0.0.1:8080/api/v1/dh/nodes
+curl --fail http://127.0.0.1:8080/api/v1/rsa/demo/keygen \
+   -H 'Content-Type: application/json' -d '{"p":61,"q":53,"e":17}'
+```
+
+Ręczny smoke (zwykły Python 3.11+ na hoście, bez dodatkowych pakietów):
+
+```sh
+python3 deploy/smoke.py
+# Jeśli RADH_DIAGNOSTICS=1:
+python3 deploy/smoke.py --diagnostics
+```
+
+Smoke tworzy własne sesje normal/MITM i zastępuje ukończoną sesję w v1;
+uruchamiaj go na wolnym lokalnym środowisku. Nie wysyła żądań poza loopback.
+
+Po zgłoszeniu heartbeatów role mają `online: true`. Brak sesji `/current` (404)
+wewnątrz backendu przed startem wymiany jest normalny. UI pozwala utworzyć sesję
+normal lub MITM. Przy domyślnym losowaniu sekretów wyniki K nie są stałym wektorem.
+Aby pokazywać K edukacyjnie w UI, ustaw w `.env` `RADH_DIAGNOSTICS=1` i wykonaj
+`docker compose up -d`; domyślnie K pozostają w procesach.
+Nie przekazuj prawdziwych kluczy ani danych poufnych.
+
+```sh
+# Zatrzymanie i ponowny start (bez przebudowy)
+docker compose stop
+docker compose start
+# Usunięcie kontenerów i sieci; ulotne sesje giną
+docker compose down
+# Przebudowa po zmianach kodu/biblioteki/dependencji
+docker compose build --pull
+docker compose up -d --wait
+```
+
+Zmiana `RADH_HTTP_PORT` w `.env` zmienia tylko port loopback. Nie publikuj tego
+Compose w Internecie: obecny system ma jedną globalną sesję i nie ma auth/TLS
+publicznej bety. Compose nie implementuje wielosesyjności z #68–71.
+Healthcheck `unhealthy` wymaga diagnozy (`docker compose logs`); sama polityka
+restart nie restartuje działającego, lecz zawieszonego procesu. Restart backendu
+lub węzła wymaga rozpoczęcia nowej sesji. Starych sekretów nie da się odzyskać.
+
+Architektura i konfiguracja: [deployment](docs/architecture/deployment.md).
+Kontrakt dla zespołu: [multi-session](docs/architecture/multi-session.md).
+Bezpieczeństwo: [model STRIDE](docs/security/threat-model.md) i
+[warunki publikacji](docs/security/release-gate.md). Wyniki rzeczywiście wykonanej
+weryfikacji: [verification](docs/architecture/verification.md).
+
 ## Przygotowanie i kompilacja
 
 ### 1. Biblioteka C
@@ -70,7 +139,7 @@ zbudowany frontend w `frontend/dist/`, a `lint` sprawdza kod.
 
 ## Uruchomienie całego projektu lokalnie
 
-Uruchom dwa terminale w katalogu głównym repozytorium. Biblioteka C jest
+Uruchom backend i frontend w osobnych terminalach w katalogu głównym repozytorium. Biblioteka C jest
 ładowana przez backend i nie wymaga osobnego procesu.
 
 ### Terminal 1 — backend
@@ -90,9 +159,23 @@ npm --prefix frontend run dev -- --host 127.0.0.1 --port 5173 --strictPort
 
 Otwórz <http://127.0.0.1:5173/>. Vite przekierowuje żądania `/api/...` do
 backendu na porcie `8000`, a backend wywołuje bibliotekę C przez `ctypes`.
-Oba terminale muszą pozostać uruchomione; `Ctrl+C` zatrzymuje dany serwer.
-Przy kolejnych uruchomieniach wystarczą te dwa polecenia, jeśli kod C
-i zależności się nie zmieniły.
+Do wymiany DH uruchom też po jednym procesie HTTP Alice, Boba i Mallory
+(polecenia poniżej). Wszystkie terminale muszą pozostać uruchomione; `Ctrl+C` zatrzymuje dany serwer.
+Przy kolejnych uruchomieniach powtórz polecenia backendu, frontendu i potrzebnych
+węzłów, jeśli kod C i zależności się nie zmieniły.
+
+### Dodatkowe terminale — procesy DH
+
+Każde polecenie uruchom w osobnym terminalu (do RSA wystarczą backend i frontend):
+
+```sh
+backend/.venv/bin/python -m backend.dh_transport --role alice
+backend/.venv/bin/python -m backend.dh_transport --role bob
+backend/.venv/bin/python -m backend.dh_transport --role mallory
+```
+
+Dodaj `--allow-diagnostics` do odpowiednich poleceń, aby jawnie pokazać K w UI.
+Samo `python -m nodes` uruchamia lokalne JSON Lines, bez heartbeatów HTTP.
 
 Ten sposób uruchomienia korzysta z serwera deweloperskiego Vite.
 Wdrożenie plików z `frontend/dist/` wymaga serwera obsługującego pliki statyczne
