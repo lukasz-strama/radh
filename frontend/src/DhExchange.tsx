@@ -945,7 +945,7 @@ function ScenarioComparison({ sessions }: { sessions: Partial<Record<DhMode, DhS
                 {COMPARED_MODES.map((mode) => {
                   const s = sessions[mode]
                   return (
-                    <td className="formula" key={mode}>
+                    <td className="formula" key={mode} data-label={MODE_LABEL[mode]}>
                       {s ? `${s.p}, ${s.g}` : '–'}
                     </td>
                   )
@@ -969,6 +969,7 @@ function ScenarioComparison({ sessions }: { sessions: Partial<Record<DhMode, DhS
                       <td
                         className={`formula${differs ? ' dh-compare-diff' : ''}`}
                         key={COMPARED_MODES[column]}
+                        data-label={MODE_LABEL[COMPARED_MODES[column]]}
                       >
                         {value ?? '–'}
                       </td>
@@ -980,10 +981,15 @@ function ScenarioComparison({ sessions }: { sessions: Partial<Record<DhMode, DhS
                 <th scope="row">Sekrety Alice i Boba</th>
                 {COMPARED_MODES.map((mode) => {
                   const s = sessions[mode]
-                  if (!s) return <td key={mode}>–</td>
+                  if (!s)
+                    return (
+                      <td key={mode} data-label={MODE_LABEL[mode]}>
+                        –
+                      </td>
+                    )
                   const verdict = secretsVerdict(s)
                   return (
-                    <td key={mode}>
+                    <td key={mode} data-label={MODE_LABEL[mode]}>
                       <Badge tone={verdict.tone}>{verdict.label}</Badge>
                     </td>
                   )
@@ -1057,9 +1063,9 @@ function EventRow({ event, interception }: { event: DhEvent; interception?: DhIn
     (event.type === 'message_forwarded' || event.type === 'message_processed')
   return (
     <tr>
-      <td>{event.seq}</td>
-      <td>{EVENT_TYPE[event.type]}</td>
-      <td>
+      <td className="dh-log-seq">{event.seq}</td>
+      <td className="dh-log-type">{EVENT_TYPE[event.type]}</td>
+      <td className={`dh-log-route${event.from && event.to ? '' : ' dh-log-empty'}`}>
         {event.from && event.to ? (
           <>
             {substituted ? (
@@ -1075,13 +1081,18 @@ function EventRow({ event, interception }: { event: DhEvent; interception?: DhIn
           '–'
         )}
       </td>
-      <td className="formula">
+      <td
+        className={`formula dh-log-value${event.value === null ? ' dh-log-empty' : ''}`}
+        data-label="Wartość"
+      >
         {event.value ?? '–'}
         {substituted && event.value !== interception.originalValue && (
           <span className="dh-replaced"> zamiast {interception.originalValue}</span>
         )}
       </td>
-      <td>{event.from ? <Badge tone={status.tone}>{status.label}</Badge> : '–'}</td>
+      <td className={`dh-log-status${event.from ? '' : ' dh-log-empty'}`}>
+        {event.from ? <Badge tone={status.tone}>{status.label}</Badge> : '–'}
+      </td>
     </tr>
   )
 }

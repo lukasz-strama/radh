@@ -484,7 +484,8 @@
   font-size: var(--text-lg);
 }
 
-/* Dziennik wiadomości; na wąskim ekranie tabela przewija się w poziomie */
+/* Dziennik wiadomości i porównanie scenariuszy. Szeroko: tabele; wąsko (telefon):
+   każdy wiersz jako karta, bez przewijania w poziomie – reguły w @container niżej. */
 .dh-log,
 .dh-compare {
   display: flex;
@@ -689,4 +690,110 @@ details[open] > .dh-collapsible-header {
   font-size: var(--text-xs);
   font-weight: normal;
   color: var(--color-muted);
+}
+
+/* Tabele na wąskiej wizualizacji: wiersze jako karty. Nagłówki kolumn znikają z ekranu
+   (zostają dla czytników ekranu), a ich rolę przejmują etykiety z data-label. */
+@container (max-width: 560px) {
+  .dh-log-scroll {
+    overflow-x: visible;
+  }
+
+  .dh-log table,
+  .dh-compare table,
+  .dh-log tbody,
+  .dh-compare tbody {
+    display: block;
+  }
+
+  .dh-log thead,
+  .dh-compare thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .dh-log th,
+  .dh-log td,
+  .dh-compare th,
+  .dh-compare td {
+    padding: 0;
+    white-space: normal;
+    border-bottom: none;
+  }
+
+  /* Dziennik: numer, zdarzenie i status w pierwszej linii, pod spodem kierunek i wartość */
+  .dh-log tr {
+    display: grid;
+    grid-template-columns: 2ch 1fr auto;
+    grid-template-areas:
+      'seq type status'
+      '. route route'
+      '. value value';
+    gap: var(--space-1) var(--space-2);
+    padding: var(--space-2) 0;
+    border-bottom: var(--border-thin) solid var(--color-border);
+  }
+
+  .dh-log-seq {
+    grid-area: seq;
+    color: var(--color-muted);
+  }
+
+  .dh-log-type {
+    grid-area: type;
+    font-weight: bold;
+  }
+
+  .dh-log-status {
+    grid-area: status;
+  }
+
+  .dh-log-route {
+    grid-area: route;
+  }
+
+  .dh-log-value {
+    grid-area: value;
+  }
+
+  .dh-log-value::before {
+    content: attr(data-label) ': ';
+    font-family: var(--font-sans);
+    color: var(--color-muted);
+  }
+
+  /* Zdarzenia sesji nie mają nadawcy, wartości ani statusu – bez pustych kresek */
+  .dh-log .dh-log-empty {
+    display: none;
+  }
+
+  /* Porównanie: nazwa wartości u góry, pod nią oba scenariusze obok siebie */
+  .dh-compare tr {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-1) var(--space-2);
+    padding: var(--space-2) 0;
+    border-bottom: var(--border-thin) solid var(--color-border);
+  }
+
+  .dh-compare tbody th {
+    grid-column: 1 / -1;
+  }
+
+  .dh-compare td {
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+  }
+
+  .dh-compare td::before {
+    content: attr(data-label);
+    display: block;
+    font-family: var(--font-sans);
+    font-size: var(--text-xs);
+    font-weight: normal;
+    color: var(--color-muted);
+  }
 }
