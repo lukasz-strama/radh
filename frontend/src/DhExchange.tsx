@@ -4,6 +4,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
+import { Badge, Button, DataBadge, Notice } from './ui'
+import type { DataKind, Tone } from './ui'
 import {
   ApiError,
   cancelActiveDhSession,
@@ -70,8 +72,6 @@ const NODE_NAME: Record<NodeRole, { name: string; nameOf: string }> = {
   bob: ROLES.bob,
   mallory: { name: 'Mallory', nameOf: 'Mallory' },
 }
-
-type Tone = 'neutral' | 'ok' | 'error'
 
 const PARTICIPANT_STATUS: Record<ParticipantStatus, { label: string; tone: Tone }> = {
   waiting: { label: 'oczekuje', tone: 'neutral' },
@@ -340,7 +340,7 @@ export function DhExchange() {
 
   return (
     <div className="dh">
-      <h1>RADH – wymiana kluczy Diffiego–Hellmana</h1>
+      <h1>Wymiana kluczy Diffiego–Hellmana</h1>
 
       <div className="layout">
         <section className="dh-scene" aria-label="Przebieg sesji">
@@ -425,35 +425,32 @@ export function DhExchange() {
               error={fieldErrors.generator}
               defaultValue={DEFAULTS.generator}
             />
-            <p className="dh-note">
+            <p className="hint">
               Klucze prywatne losują procesy{' '}
               {mode === 'mitm' ? 'Alice, Boba i Mallory' : 'Alice i Boba'}. Przeglądarka ich
               nie zna.
             </p>
 
             <div className="dh-buttons">
-              <button
+              <Button
                 type="submit"
-                disabled={isLoading || nodesOffline}
-                aria-busy={isLoading}
+                busy={isLoading}
+                busyLabel="Uruchamianie…"
+                disabled={nodesOffline}
                 aria-describedby={
                   nodesOffline || nodes.status === 'error' ? 'dh-nodes-hint' : undefined
                 }
               >
-                {isLoading ? 'Uruchamianie…' : 'Rozpocznij sesję'}
-              </button>
-              <button type="button" onClick={handleReset}>
+                Rozpocznij sesję
+              </Button>
+              <Button variant="secondary" onClick={handleReset}>
                 Reset
-              </button>
+              </Button>
             </div>
 
             <NodesHint nodes={nodes} mode={mode} />
 
-            {view.status === 'error' && (
-              <p className="api-error" role="alert">
-                {view.message}
-              </p>
-            )}
+            {view.status === 'error' && <Notice tone="error">{view.message}</Notice>}
           </form>
         </aside>
       </div>
@@ -499,7 +496,7 @@ function WaitingHint({ session, nodes }: { session: DhSession; nodes: NodesState
     (role) => waiting.includes(role) || (role === 'mallory' && malloryPending),
   )
   return (
-    <p className="dh-note" role="status">
+    <p className="hint" role="status">
       {waiting.length > 0 && `Czekamy na wartość publiczną od ${joinNames(waiting)}.`}
       {waiting.length > 0 && malloryPending && ' '}
       {malloryPending && 'Czekamy, aż Mallory odeśle podmienioną wartość.'}
@@ -522,7 +519,7 @@ function NodesHint({ nodes, mode }: { nodes: NodesState; mode: DhMode }) {
   if (offline.length > 0) text = `Uruchom proces ${joinNames(offline)}, żeby rozpocząć sesję.`
   if (!text) return null
   return (
-    <p className="dh-note" id="dh-nodes-hint">
+    <p className="hint" id="dh-nodes-hint">
       {text}
     </p>
   )
@@ -746,7 +743,7 @@ function MitmExplanation() {
 }
 
 type DhValueProps = {
-  kind: 'private' | 'public'
+  kind: DataKind
   label: string
   // undefined: wartości jeszcze nie ma (pokazujemy „?”).
   value?: number
@@ -762,7 +759,7 @@ function DhValue({ kind, label, value, withValue = true, children }: DhValueProp
     <div className={`dh-value dh-value--${kind}${pending ? ' dh-value--pending' : ''}`}>
       <div className="dh-value-header">
         <span>{label}</span>
-        <span className="dh-value-badge">{kind === 'private' ? 'tajne' : 'jawne'}</span>
+        <DataBadge kind={kind} />
       </div>
       <p className={withValue ? 'formula' : undefined}>
         {children}
@@ -787,7 +784,7 @@ function SessionResult({ session }: { session: DhSession }) {
   const match = kA === kB
   return (
     <section
-      className={`dh-result dh-result--${match ? 'ok' : 'error'}`}
+      className={`result dh-result result--${match ? 'ok' : 'error'}`}
       aria-labelledby="dh-result-title"
     >
       {/* Same K są już w panelach węzłów, tu tylko werdykt i wyjaśnienie. */}
@@ -807,7 +804,7 @@ function SessionResult({ session }: { session: DhSession }) {
           </p>
         </>
       )}
-      <p className="dh-note">
+      <p className="hint">
         K nie jest przesyłane – pokazujemy je tylko na potrzeby demonstracji.
       </p>
     </section>
@@ -823,7 +820,7 @@ function MitmResult({ session }: { session: DhSession }) {
   const kMB = session.mallory?.withBob
   if (kA === undefined || kB === undefined || kMA === undefined || kMB === undefined) {
     return (
-      <p className="dh-note">Brak sekretów Mallory w diagnostyce – nie da się ich porównać.</p>
+      <p className="hint">Brak sekretów Mallory w diagnostyce – nie da się ich porównać.</p>
     )
   }
   const sign = (x: number, y: number) => (x === y ? '=' : '≠')
@@ -916,7 +913,7 @@ function ScenarioComparison({ sessions }: { sessions: Partial<Record<DhMode, DhS
         <div className="dh-collapsible-header dh-collapsible-header--disabled">
           <h2 id="dh-compare-title">Porównanie scenariuszy</h2>
         </div>
-        <p className="dh-note">
+        <p className="hint">
           Uruchom scenariusz „{MODE_LABEL[missing]}”, żeby porównać go z ostatnią sesją.
         </p>
       </section>
@@ -929,7 +926,7 @@ function ScenarioComparison({ sessions }: { sessions: Partial<Record<DhMode, DhS
         <summary className="dh-collapsible-header">
           <h2 id="dh-compare-title">Porównanie scenariuszy</h2>
         </summary>
-        <p className="dh-note">Ostatnia zakończona sesja każdego scenariusza.</p>
+        <p className="hint">Ostatnia zakończona sesja każdego scenariusza.</p>
         <div className="dh-log-scroll">
           <table>
             <thead>
@@ -995,7 +992,7 @@ function ScenarioComparison({ sessions }: { sessions: Partial<Record<DhMode, DhS
             </tbody>
           </table>
         </div>
-        <p className="dh-note">Wyróżnione wartości różnią się między scenariuszami.</p>
+        <p className="hint">Wyróżnione wartości różnią się między scenariuszami.</p>
       </details>
     </section>
   )
@@ -1018,7 +1015,7 @@ function EventLog({
           <span className="dh-log-count">({events.length})</span>
         </summary>
         {events.length === 0 ? (
-          <p className="dh-note">Brak zdarzeń w tej sesji.</p>
+          <p className="hint">Brak zdarzeń w tej sesji.</p>
         ) : (
           <div className="dh-log-scroll">
             <table>
@@ -1091,8 +1088,4 @@ function EventRow({ event, interception }: { event: DhEvent; interception?: DhIn
 
 function RoleName({ role }: { role: NodeRole }) {
   return <span className={`dh-role dh-role--${role}`}>{NODE_NAME[role].name}</span>
-}
-
-function Badge({ tone, children }: { tone: Tone; children: ReactNode }) {
-  return <span className={`dh-badge dh-badge--${tone}`}>{children}</span>
 }
