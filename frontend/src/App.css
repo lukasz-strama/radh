@@ -42,7 +42,7 @@
 
 .panel input:not([type='radio']) {
   box-sizing: border-box;
-  min-height: 44px;
+  min-height: var(--touch-target);
   padding: var(--space-2) var(--space-3);
   font: inherit;
   color: var(--color-text);
@@ -64,7 +64,7 @@
 /* Przyciski: główna akcja wypełniona akcentem, pomocnicza w ramce.
    Wysokość co najmniej 44 px – wygodny cel dotykowy. */
 .button {
-  min-height: 44px;
+  min-height: var(--touch-target);
   padding: var(--space-2) var(--space-4);
   font: inherit;
   font-weight: bold;
@@ -235,6 +235,7 @@
 }
 
 .tab {
+  min-height: var(--touch-target);
   margin-bottom: calc(-1 * var(--border-thick));
   padding: var(--space-2) var(--space-4);
   font: inherit;
@@ -258,6 +259,7 @@
 .app-footer {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: space-between;
   gap: var(--space-2) var(--space-6);
   margin-top: var(--space-6);
@@ -265,6 +267,13 @@
   font-size: var(--text-sm);
   color: var(--color-muted);
   border-top: var(--border-thin) solid var(--color-border);
+}
+
+/* Odnośnik w stopce: cały wiersz o wysokości celu dotykowego */
+.app-footer a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--touch-target);
 }
 
 /* Wymiana kluczy DH */
@@ -490,8 +499,9 @@
 /* Zwijane sekcje (dziennik, porównanie): nagłówek jako przycisk rozwijania */
 .dh-collapsible-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-2);
+  min-height: var(--touch-target);
   cursor: pointer;
 }
 
@@ -579,7 +589,16 @@ details[open] > .dh-collapsible-header {
   flex-direction: row;
   align-items: center;
   gap: var(--space-2);
+  min-height: var(--touch-target);
   cursor: pointer;
+}
+
+/* Większe radio, w kolorze akcentu */
+.dh-mode input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--color-accent);
 }
 
 .dh-badges {
