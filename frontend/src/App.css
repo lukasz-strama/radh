@@ -37,18 +37,6 @@
   font-size: var(--text-md);
 }
 
-.panel button {
-  padding: var(--space-3);
-  font-size: var(--text-md);
-  cursor: pointer;
-}
-
-/* Przycisk w trakcie obliczenia */
-.panel button:disabled {
-  cursor: wait;
-  opacity: 0.6;
-}
-
 /* Komunikaty błędów */
 .panel input[aria-invalid='true'] {
   border: var(--border-thick) solid var(--color-error);
@@ -57,6 +45,98 @@
 .field-error {
   color: var(--color-error);
   font-size: var(--text-sm);
+}
+
+/* Przyciski: główna akcja wypełniona akcentem, pomocnicza w ramce.
+   Wysokość co najmniej 44 px – wygodny cel dotykowy. */
+.button {
+  min-height: 44px;
+  padding: var(--space-2) var(--space-4);
+  font: inherit;
+  font-weight: bold;
+  cursor: pointer;
+  border: var(--border-thick) solid var(--color-accent);
+  border-radius: var(--radius-md);
+}
+
+.button--primary {
+  color: var(--color-on-accent);
+  background: var(--color-accent);
+}
+
+.button--secondary {
+  color: var(--color-accent);
+  background: transparent;
+}
+
+.button:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* W trakcie operacji to nie „nie da się”, tylko „czekaj” */
+.button[aria-busy='true'] {
+  cursor: wait;
+}
+
+/* Plakietki: stan (neutralny, sukces, błąd) i rodzaj danych (tajne, jawne) */
+.badge {
+  --badge-color: var(--color-muted);
+  flex-shrink: 0;
+  padding: 1px var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: bold;
+  white-space: nowrap;
+  color: var(--badge-color);
+  border: var(--border-thin) solid var(--badge-color);
+  border-radius: var(--radius-pill);
+}
+
+.badge--ok {
+  --badge-color: var(--color-ok);
+}
+
+.badge--error {
+  --badge-color: var(--color-error);
+}
+
+.badge--private {
+  --badge-color: var(--color-private);
+  background: color-mix(in srgb, var(--color-private) 10%, transparent);
+}
+
+.badge--public {
+  --badge-color: var(--color-public);
+  border-style: dashed;
+}
+
+/* Komunikaty w ramce: błąd i ostrzeżenie */
+.notice {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  border-left: var(--border-accent) solid var(--notice-color);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--notice-color) 10%, transparent);
+}
+
+.notice--error {
+  --notice-color: var(--color-error);
+}
+
+.notice--warning {
+  --notice-color: var(--color-warning);
+}
+
+/* Podpowiedź drobnym, wyciszonym tekstem */
+.hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-muted);
 }
 
 /* Wynik szyfrowania */
@@ -86,14 +166,6 @@
 .formula {
   font-family: var(--font-mono);
   overflow-wrap: anywhere;
-}
-
-.api-error {
-  margin: 0;
-  padding: var(--space-3);
-  color: var(--color-error);
-  border: var(--border-thin) solid var(--color-error);
-  border-radius: var(--radius-sm);
 }
 
 /* Nagłówek: nazwa aplikacji i zakładki widoków. Zakładki leżą na dolnej
@@ -312,16 +384,8 @@
   font-size: var(--text-sm);
 }
 
-.dh-value-badge {
-  flex-shrink: 0;
+.dh-value-header .badge {
   align-self: flex-start;
-  white-space: nowrap;
-  padding: 0 var(--space-2);
-  font-size: var(--text-xs);
-  font-weight: bold;
-  color: var(--value-color);
-  border: var(--border-thin) solid var(--value-color);
-  border-radius: var(--radius-pill);
 }
 
 .dh-value output {
@@ -363,13 +427,9 @@
   gap: var(--space-2);
 }
 
-.dh-buttons button {
+/* Główna akcja zajmuje resztę miejsca, Reset tylko tyle, ile potrzebuje */
+.dh-buttons .button--primary {
   flex: 1;
-}
-
-.dh-note {
-  font-size: var(--text-sm);
-  color: var(--color-muted);
 }
 
 /* Nagłówki z plakietką statusu (sesja, węzły) */
@@ -384,25 +444,6 @@
 
 .dh-shared-header {
   flex-basis: 100%;
-}
-
-.dh-badge {
-  --badge-color: var(--color-muted);
-  padding: 1px var(--space-2);
-  font-size: var(--text-xs);
-  font-weight: bold;
-  white-space: nowrap;
-  color: var(--badge-color);
-  border: var(--border-thin) solid var(--badge-color);
-  border-radius: var(--radius-pill);
-}
-
-.dh-badge--ok {
-  --badge-color: var(--color-ok);
-}
-
-.dh-badge--error {
-  --badge-color: var(--color-error);
 }
 
 /* Wynik: porównanie sekretów obu stron */
@@ -502,11 +543,6 @@ details[open] > .dh-collapsible-header {
 
 .dh-role--bob {
   --party-color: var(--color-bob);
-}
-
-/* Przycisk wyłączony z powodu węzłów to nie „czekaj”, tylko „nie da się” */
-.dh-buttons button:disabled:not([aria-busy='true']) {
-  cursor: not-allowed;
 }
 
 /* Wzór w wyniku w jednej linii; na wąskim ekranie przewija się zamiast łamać */
@@ -616,6 +652,10 @@ details[open] > .dh-collapsible-header {
   font-size: var(--text-sm);
 }
 
+.rsa-keys dt .badge {
+  margin-left: var(--space-2);
+}
+
 .rsa-keys dd {
   margin: 0;
   font-family: var(--font-mono);
@@ -628,30 +668,4 @@ details[open] > .dh-collapsible-header {
   font-size: var(--text-xs);
   font-weight: normal;
   color: var(--color-muted);
-}
-
-.rsa-key-badge {
-  margin-left: var(--space-2);
-  padding: 0 var(--space-2);
-  font-size: var(--text-xs);
-  border: var(--border-thin) solid var(--color-border);
-  border-radius: var(--radius-pill);
-}
-
-.rsa-key-badge--private {
-  color: var(--color-private);
-  border-color: var(--color-private);
-}
-
-.rsa-warning {
-  margin: 0;
-  padding: var(--space-2) var(--space-3);
-  font-size: var(--text-sm);
-  border-left: var(--border-accent) solid var(--color-warning);
-  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
-}
-
-/* „Użyj klucza publicznego” bez klucza to nie „czekaj”, tylko „nie da się” */
-.rsa-layout button:disabled:not([aria-busy='true']) {
-  cursor: not-allowed;
 }

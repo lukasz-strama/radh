@@ -5,6 +5,7 @@ import type { RsaEncryptRequest } from './api'
 import { validateRsaInput, validateRsaKeyParams } from './validation'
 import type { FieldErrors, RsaKeyField, RsaKeyFieldErrors } from './validation'
 import { Field } from './Field'
+import { Button, DataBadge, Notice } from './ui'
 
 // Wynik szyfrowania razem z parametrami, które faktycznie zostały wysłane.
 // (Pola formularza mogą się zmienić po kliknięciu, więc nie bierzemy ich z pól.)
@@ -109,9 +110,9 @@ export function RsaView() {
             onChange={setModulus}
           />
 
-          <button type="submit" disabled={isLoading} aria-busy={isLoading}>
-            {isLoading ? 'Szyfrowanie…' : 'Szyfruj'}
-          </button>
+          <Button type="submit" busy={isLoading} busyLabel="Szyfrowanie…">
+            Szyfruj
+          </Button>
 
           {result && (
             <div className="result" role="status">
@@ -129,11 +130,7 @@ export function RsaView() {
             </div>
           )}
 
-          {apiError && (
-            <p className="api-error" role="alert">
-              {apiError}
-            </p>
-          )}
+          {apiError && <Notice tone="error">{apiError}</Notice>}
         </form>
       </div>
     </>
@@ -211,28 +208,24 @@ function KeyGenPanel({ onUsePublicKey }: { onUsePublicKey: (keys: RsaKeys) => vo
         defaultValue={KEY_DEFAULTS.e}
       />
 
-      <button type="submit" disabled={isLoading} aria-busy={isLoading}>
-        {isLoading ? 'Generowanie…' : 'Generuj klucze'}
-      </button>
+      <Button type="submit" busy={isLoading} busyLabel="Generowanie…">
+        Generuj klucze
+      </Button>
 
       <KeyResult keys={keys} />
 
-      <button type="button" disabled={!keys} onClick={() => keys && onUsePublicKey(keys)}>
+      <Button variant="secondary" disabled={!keys} onClick={() => keys && onUsePublicKey(keys)}>
         Użyj klucza publicznego
-      </button>
+      </Button>
 
       {keys && (
-        <p className="rsa-warning">
+        <Notice tone="warning">
           Klucze 32-bitowe służą wyłącznie do nauki – da się je złamać w ułamku sekundy. Nie używaj
           ich do ochrony prawdziwych danych.
-        </p>
+        </Notice>
       )}
 
-      {apiError && (
-        <p className="api-error" role="alert">
-          {apiError}
-        </p>
-      )}
+      {apiError && <Notice tone="error">{apiError}</Notice>}
     </form>
   )
 }
@@ -257,7 +250,7 @@ function KeyResult({ keys }: { keys: RsaKeys | null }) {
       <KeyRow
         label={
           <>
-            Klucz publiczny <span className="rsa-key-badge">jawny</span>
+            Klucz publiczny <DataBadge kind="public" />
           </>
         }
         value={`(${show(keys?.n)}, ${show(keys?.e)})`}
@@ -266,7 +259,7 @@ function KeyResult({ keys }: { keys: RsaKeys | null }) {
       <KeyRow
         label={
           <>
-            Klucz prywatny <span className="rsa-key-badge rsa-key-badge--private">tajny</span>
+            Klucz prywatny <DataBadge kind="private" />
           </>
         }
         value={`(${show(keys?.n)}, ${show(keys?.d)})`}

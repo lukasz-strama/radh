@@ -42,6 +42,7 @@
 
   /* Akcent: aktywna nawigacja, odnośniki, fokus */
   --color-accent: #0f766e;
+  --color-on-accent: #fff;
   --focus-ring: var(--border-thick) solid var(--color-accent);
 
   /* Stany */
@@ -66,6 +67,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --color-accent: #2bb3a3;
+    --color-on-accent: #04201d;
   }
 }
 
