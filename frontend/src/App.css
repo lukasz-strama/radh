@@ -710,22 +710,20 @@ details[open] > .dh-collapsible-header {
   color: var(--color-muted);
 }
 
-/* Tabele na wąskiej wizualizacji: wiersze jako karty. Nagłówki kolumn znikają z ekranu
-   (zostają dla czytników ekranu), a ich rolę przejmują etykiety z data-label. */
+/* Tabele na wąskiej wizualizacji. Dziennik (5 kolumn): wiersze jako karty, nagłówki
+   kolumn znikają z ekranu (zostają dla czytników ekranu). Porównanie (3 kolumny)
+   zostaje tabelą, tylko ciaśniejszą, z tekstem łamanym w komórkach. */
 @container (max-width: 560px) {
-  .dh-log-scroll {
+  .dh-log .dh-log-scroll {
     overflow-x: visible;
   }
 
   .dh-log table,
-  .dh-compare table,
-  .dh-log tbody,
-  .dh-compare tbody {
+  .dh-log tbody {
     display: block;
   }
 
-  .dh-log thead,
-  .dh-compare thead {
+  .dh-log thead {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -734,9 +732,7 @@ details[open] > .dh-collapsible-header {
   }
 
   .dh-log th,
-  .dh-log td,
-  .dh-compare th,
-  .dh-compare td {
+  .dh-log td {
     padding: 0;
     white-space: normal;
     border-bottom: none;
@@ -788,30 +784,13 @@ details[open] > .dh-collapsible-header {
     display: none;
   }
 
-  /* Porównanie: nazwa wartości u góry, pod nią oba scenariusze obok siebie */
-  .dh-compare tr {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: var(--space-1) var(--space-2);
-    padding: var(--space-2) 0;
-    border-bottom: var(--border-thin) solid var(--color-border);
-  }
-
-  .dh-compare tbody th {
-    grid-column: 1 / -1;
-  }
-
+  .dh-compare th,
   .dh-compare td {
-    padding: var(--space-1) var(--space-2);
-    border-radius: var(--radius-sm);
+    padding: var(--space-2) var(--space-1);
+    white-space: normal;
   }
 
-  .dh-compare td::before {
-    content: attr(data-label);
-    display: block;
-    font-family: var(--font-sans);
-    font-size: var(--text-xs);
-    font-weight: normal;
-    color: var(--color-muted);
+  .dh-compare .badge {
+    white-space: normal;
   }
 }
