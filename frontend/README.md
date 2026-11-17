@@ -6,6 +6,27 @@ React + TypeScript + Vite.
 Frontend nie wykonuje obliczeń kryptograficznych – wysyła dane do backendu
 FastAPI i wyświetla jego odpowiedź.
 
+## Interfejs
+
+Aplikacja ma dwie zakładki: **RSA** (generowanie kluczy i szyfrowanie) oraz
+**Diffie–Hellman** (wymiana kluczy, także w scenariuszu ataku MITM).
+Zmiana zakładki nie usuwa wpisanych danych ani wyników.
+
+![Zakładka RSA: wygenerowana para kluczy i szyfrogram](docs/screenshots/rsa.png)
+
+![Zakładka Diffie–Hellman: zakończona zwykła wymiana](docs/screenshots/dh-normal.png)
+
+![Zakładka Diffie–Hellman: atak MITM i porównanie scenariuszy](docs/screenshots/dh-mitm.png)
+
+Wspólny wygląd obu widoków:
+
+- `src/index.css` – zmienne stylu: kolory (w tym uczestników i rodzajów danych),
+  czcionki, rozmiary tekstu, odstępy, zaokrąglenia; jasny i ciemny motyw
+  według ustawień systemu.
+- `src/ui.tsx` – wspólne przyciski, plakietki („tajne”, „jawne”, stany)
+  i komunikaty błędów oraz ostrzeżeń.
+- Wersja w stopce pochodzi z pola `version` w `package.json`.
+
 ## Wymagania
 
 - Node.js w wersji 20.19+ lub 22.12+ (razem z nim instaluje się `npm`).
