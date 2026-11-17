@@ -29,7 +29,51 @@ Odczyt konfiguracji potwierdza dokładną lokalizację GET `/current`, współdz
 limiter/include proxy oraz zachowanie blokad internal i mutacji węzłów. Jest to
 przegląd statyczny, nie test działania Nginx. Pozostałe metody `/current`, również
 HEAD, są odrzucane przez jawny warunek metody (samo limit_except GET dopuszczałoby
-HEAD). Pełny smoke wymaga hosta z Docker Engine i możliwością otwierania socketów.
+HEAD). TRACE jest odrzucane wcześniej przez Nginx kodem 405. Pełny smoke wymaga hosta z Docker Engine i możliwością otwierania socketów.
+
+### Korekta katalogów tymczasowych Nginx po próbie na hoście użytkownika
+
+Użytkownik uruchomił `sudo docker compose run --rm --no-deps web -t`:
+Nginx potwierdził składnię, ale test zakończył się błędem tworzenia
+`/var/cache/nginx/fastcgi_temp` na systemie plików tylko do odczytu. Była to
+niepełna konfiguracja ścieżek tymczasowych: przekierowano jedynie client body
+i proxy. Dodano `fastcgi_temp_path`, `uwsgi_temp_path` i `scgi_temp_path` do
+istniejącego zapisywalnego tmpfs `/tmp`, bez wyłączania read_only ani non-root.
+Nginx inicjalizuje te katalogi również bez używania odpowiednich upstreamów.
+
+Po poprawce wymagany jest **ponowny build obrazu web**, ponieważ konfiguracja
+jest kopiowana podczas budowania (sam restart nie wystarczy):
+
+```sh
+sudo docker compose build web
+sudo docker compose run --rm --no-deps web -t
+sudo docker compose up -d --wait
+python3 deploy/smoke.py
+```
+
+W środowisku autora ponowna próba `web -t` nadal jest blokowana dostępem do
+docker.sock; nie potwierdzono tu działania poprawionego obrazu. Wynik zgłoszony
+przez użytkownika dotyczy obrazu sprzed tej korekty.
+
+### Próba po przebudowie web i korekta smoke
+
+Użytkownik potwierdził po przebudowie obrazu: `web -t` zakończył się sukcesem,
+a `docker compose up -d --wait` zgłosiło wszystkie pięć usług jako Healthy.
+To wyniki z hosta użytkownika, nie z ograniczonego środowiska autora.
+Smoke zakończył się błędem przed pierwszym komunikatem sukcesu (w kontrolach proxy).
+
+W skrypcie znaleziono błędne oczekiwanie: dla TRACE wymagano 403 i JSON,
+chociaż Nginx odrzuca tę metodę wcześniej kodem 405, z odpowiedzią spoza
+ErrorResponse aplikacji. Poprawiono oczekiwanie na dokładne 405; nadal sprawdzana
+jest odmowa dostępu. Pozostałe testowane metody /current wymagają 403.
+Dodano komunikaty rozbieżności metody/ścieżki/statusu oraz błędów HTTP bez
+wypisywania odpowiedzi, sekretów i querystringów. To usuwa zidentyfikowany błąd
+smoke; pełna przyczyna konkretnego uruchomienia wymaga potwierdzenia ponowną próbą.
+
+Po korekcie zaliczono kontrolę składni Pythona i `git diff --check`.
+Ponownie uruchomić `python3 deploy/smoke.py` na hoście użytkownika; sama zmiana
+skryptu hostowego nie wymaga przebudowy obrazów. Sukces RSA/DH/MITM i diagnostyki
+nadal nie został potwierdzony.
 
 ## Wcześniejsze wyniki bazowego #73 — nie uruchomiono ponownie po review
 
@@ -93,7 +137,8 @@ curl -i http://127.0.0.1:8080/api/v1/dh/sessions/current
 # GET: 200 z bieżącą sesją, albo 404 SESSION_NOT_FOUND przed pierwszą sesją.
 # 403 dla GET oznacza regresję proxy.
 curl -i -X POST http://127.0.0.1:8080/api/v1/dh/sessions/current
-# POST /current: 403 FORBIDDEN (także HEAD/PUT/PATCH/DELETE/OPTIONS/TRACE).
+# POST /current: 403 FORBIDDEN (także HEAD/PUT/PATCH/DELETE/OPTIONS).
+# TRACE /current: 405 z Nginx, bez wymogu JSON ErrorResponse.
 curl -i http://127.0.0.1:8080/internal/health/ready
 # /internal: 403 FORBIDDEN, bez przekazania do backendu.
 curl -i -X POST http://127.0.0.1:8080/api/v1/dh/nodes/alice/heartbeat

@@ -25,18 +25,24 @@ def main() -> None:
         with urlopen(req, timeout=5) as response:
             return json.load(response)
 
-    def rejected(method: str, path: str, status: int, code: str) -> None:
+    def rejected(method: str, path: str, status: int, code: str | None) -> None:
         try:
             request(method, path, {} if method == "POST" else None)
         except HTTPError as error:
-            assert error.code == status
-            if method != "HEAD":
-                assert json.load(error)["error"]["code"] == code
+            assert error.code == status, (
+                f"{method} {path}: HTTP {error.code}, oczekiwano {status}."
+            )
+            if method != "HEAD" and code is not None:
+                assert json.load(error)["error"]["code"] == code, (
+                    f"{method} {path}: niezgodny kod błędu proxy."
+                )
         else:
             raise AssertionError("Proxy dopuścił niedozwoloną operację.")
 
-    for method in ("HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE"):
+    for method in ("HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"):
         rejected(method, "/api/v1/dh/sessions/current", 403, "FORBIDDEN")
+    # TRACE odrzuca sam Nginx przed obsługą location; odpowiedź nie jest JSON-em.
+    rejected("TRACE", "/api/v1/dh/sessions/current", 405, None)
     rejected("GET", "/internal/health/ready", 403, "FORBIDDEN")
     rejected("POST", "/api/v1/dh/nodes/alice/heartbeat", 404, "NOT_FOUND")
     probe = "/api/v1/dh/sessions/proxy-probe"
@@ -124,5 +130,12 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
+    except HTTPError as error:
+        # Bez treści odpowiedzi, querystringów ani danych diagnostycznych.
+        raise SystemExit(
+            f"Smoke: HTTP {error.code} dla {urlsplit(error.url).path}."
+        ) from None
+    except AssertionError as error:
+        raise SystemExit(f"Smoke: {error or 'Niezgodny wynik weryfikacji.'}") from None
     except Exception:
         raise SystemExit("Smoke nie powiódł się; sprawdź stan i logi lokalnych usług.")

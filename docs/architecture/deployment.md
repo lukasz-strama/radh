@@ -106,7 +106,8 @@ nadal może korzystać z globalnej sesji przez ten port.
 Proxy dopuszcza istniejące operacje UI: RSA/keygen/DH demo, tworzenie/start/cancel
 sesji i odczyty, w tym **GET `/api/v1/dh/sessions/current`** z istniejącym
 limiterem i konfiguracją proxy. Ten odczyt umożliwia UI odzyskanie ID i anulowanie
-sesji po odświeżeniu strony; pozostałe metody `/current` są blokowane (403).
+sesji po odświeżeniu strony; pozostałe metody `/current` są blokowane
+(403; TRACE jest odrzucane wcześniej przez Nginx kodem 405).
 Endpoint zniknie dopiero przy migracji do v2 w #68–70. Proxy nie wystawia
 heartbeatów, publikowania/ACK/forward ani zapisu diagnostyki. Węzły korzystają bezpośrednio z `http://backend:8000`.
 Istniejące API aplikacji nadal nie ma autoryzacji, proxy nie dopisuje fikcyjnych
