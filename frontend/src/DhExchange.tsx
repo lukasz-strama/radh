@@ -176,6 +176,14 @@ const DEFAULTS: Record<DhField, string> = {
   generator: '5',
 }
 
+// Na wąskim ekranie formularz stoi nad sesją, więc po starcie przebieg byłby poza
+// ekranem. Przewijamy do niego tylko wtedy, gdy zaczyna się poniżej widocznej części.
+function scrollToSceneIfBelow(scene: HTMLElement | null) {
+  if (!scene || scene.getBoundingClientRect().top < window.innerHeight * 0.5) return
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  scene.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' })
+}
+
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof ApiError ? error.message : fallback
 }
@@ -190,6 +198,8 @@ export function DhExchange() {
   // Numer bieżącego żądania. Reset albo nowy start go zwiększa, więc spóźniona
   // odpowiedź starego żądania jest ignorowana i nie nadpisze nowszego stanu.
   const requestId = useRef(0)
+  // Przebieg sesji – na wąskim ekranie przewijamy do niego po starcie.
+  const sceneRef = useRef<HTMLElement>(null)
   const [nodes, setNodes] = useState<NodesState>({ status: 'loading' })
   const isLoading = view.status === 'loading'
   // Start blokujemy tylko, gdy wiadomo, że któryś potrzebny węzeł nie działa. Gdy
@@ -309,6 +319,7 @@ export function DhExchange() {
       const session = await startDhSession(validation.data, mode)
       if (id !== requestId.current) return
       setView({ status: 'session', session })
+      scrollToSceneIfBelow(sceneRef.current)
     } catch (error) {
       if (id !== requestId.current) return
       setView({ status: 'error', message: errorMessage(error, 'Wystąpił nieoczekiwany błąd.') })
@@ -343,7 +354,7 @@ export function DhExchange() {
       <h1>Wymiana kluczy Diffiego–Hellmana</h1>
 
       <div className="layout">
-        <section className="dh-scene" aria-label="Przebieg sesji">
+        <section className="dh-scene" aria-label="Przebieg sesji" ref={sceneRef}>
           {session ? (
             <SessionHeader session={session} />
           ) : (

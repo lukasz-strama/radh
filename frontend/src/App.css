@@ -340,6 +340,24 @@
 
 /* Zależy od szerokości wizualizacji, nie całego okna */
 @container (max-width: 480px) {
+  /* Panele uczestników stoją jeden pod drugim, więc wynik byłby daleko w dole.
+     Na wąskim ekranie najpierw stan i werdykt, potem szczegóły. */
+  .dh-scene > .dh-parties {
+    order: 1;
+  }
+
+  .dh-scene > .dh-explain {
+    order: 2;
+  }
+
+  .dh-scene > .dh-compare {
+    order: 3;
+  }
+
+  .dh-scene > .dh-log {
+    order: 4;
+  }
+
   .dh-parties {
     grid-template-columns: 1fr;
   }
