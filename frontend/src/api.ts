@@ -1,4 +1,18 @@
-// Komunikacja z backendem FastAPI (backend/app/api.py).
+// Komunikacja z FastAPI. Sesje v2 używają poświadczeń własnej karty.
+import {
+  currentCredential, forgetCredential, forgetPendingCreation, isSessionId,
+  newCreationKey, pendingCreation, saveCredential, savePendingCreation,
+} from './dhCredentials'
+import type { SessionCredential } from './dhCredentials'
+
+export { currentCredential } from './dhCredentials'
+
+type RequestOptions = {
+  signal?: AbortSignal
+  headers?: Record<string, string>
+  epoch?: string
+  onResponse?: (response: Response) => void
+}
 
 export type RsaEncryptRequest = {
   message: number
@@ -14,10 +28,14 @@ export type RsaEncryptResponse = {
 // `code` to stały identyfikator z backendu (np. MESSAGE_OUT_OF_RANGE), jeśli przyszedł.
 export class ApiError extends Error {
   readonly code?: string
+  readonly status: number
+  readonly retryAfter: number
 
-  constructor(message: string, code?: string) {
+  constructor(message: string, code?: string, status = 0, retryAfter = 0) {
     super(message)
     this.code = code
+    this.status = status
+    this.retryAfter = retryAfter
   }
 }
 
@@ -65,7 +83,7 @@ export async function generateRsaKeys(data: RsaKeygenRequest): Promise<RsaKeygen
 // Sesja DH (#38, #42) z koordynatora (#37, #41: backend/DH_SESSIONS.md, MITM_SESSIONS.md).
 // Odpowiedź backendu sprawdzamy i mapujemy na model widoku w toDhSession().
 
-const DH_SESSIONS_URL = '/api/v1/dh/sessions'
+const DH_SESSIONS_URL = '/api/v2/dh/sessions'
 
 // Scenariusz sesji: zwykła wymiana albo atak Man-in-the-Middle (#42).
 // Tryb wybiera się przed startem; od niego zależy routing wiadomości w koordynatorze.
@@ -85,7 +103,7 @@ export type NodeRole = Role | 'mallory'
 // received: węzeł potwierdził przetworzenie otrzymanej wartości.
 export type ParticipantStatus = 'waiting' | 'published' | 'received'
 
-export type SessionStatus = 'created' | 'running' | 'completed' | 'cancelled'
+export type SessionStatus = 'created' | 'running' | 'completed' | 'cancelled' | 'expired' | 'failed'
 
 export type EventType =
   | 'session_created'
@@ -96,6 +114,8 @@ export type EventType =
   | 'message_processed'
   | 'session_completed'
   | 'session_cancelled'
+  | 'session_failed'
+  | 'session_expired'
 
 // intercepted: oryginał zatrzymany u Mallory, nigdy nie trafia do kolejki ofiary.
 export type MessageStatus = 'intercepted' | 'queued' | 'processed'
@@ -149,6 +169,12 @@ export type DhEvent = {
 
 export type DhSession = {
   id: string
+  epoch: string
+  revision: number
+  expiresAt: string
+  terminalAt: string | null
+  diagnosticsEnabled: boolean
+  failureCode: string | null
   mode: DhMode
   p: number
   g: number
@@ -159,114 +185,150 @@ export type DhSession = {
   events: DhEvent[]
 }
 
-// Tworzy sesję i od razu ją uruchamia; zwraca stan po starcie.
-// Gdy start się nie uda (np. 409 MALLORY_UNAVAILABLE), anulujemy utworzoną sesję,
-// żeby nie blokowała następnej.
+// Tworzenie ponawiamy wyłącznie po świadomym kliknięciu, z zapisanym kluczem.
 export async function startDhSession(
   params: DhSessionParams,
   mode: DhMode,
+  diagnosticsEnabled = false,
+  signal?: AbortSignal,
 ): Promise<DhSession> {
-  const created = toDhSession(await requestJson('POST', DH_SESSIONS_URL, { ...params, mode }))
+  if (currentCredential()) {
+    throw new ApiError('Najpierw usuń własną poprzednią sesję przyciskiem Reset.', 'SESSION_ACTIVE')
+  }
+  const nodes = await fetchDhNodes(signal)
+  const body = { ...params, mode, diagnostics_enabled: diagnosticsEnabled }
+  let pending = pendingCreation()
+  if (pending && (pending.epoch !== nodes.backendEpoch || Date.now() - pending.createdAt >= 60_000 ||
+      Date.now() < pending.createdAt || JSON.stringify(pending.params) !== JSON.stringify(body))) {
+    throw new ApiError(
+      'Poprzednia próba utworzenia wymaga porzucenia. Kliknij Reset, a następnie rozpocznij nową sesję.',
+      'CREATE_RETRY_EXPIRED',
+    )
+  }
+  if (!pending) {
+    pending = { key: newCreationKey(), epoch: nodes.backendEpoch, createdAt: Date.now(), params: body }
+    savePendingCreation(pending)
+  }
+  const result = await requestJson('POST', DH_SESSIONS_URL, body, {
+    signal, epoch: pending.epoch,
+    headers: { 'Idempotency-Key': pending.key, 'X-Backend-Epoch': pending.epoch },
+  }) as { session?: unknown; session_token?: unknown } | null
+  const session = toDhSession({ ...(result?.session as object), events: [] })
+  if (typeof result?.session_token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(result.session_token) ||
+      session.epoch !== pending.epoch) throw unexpectedFormat()
+  signal?.throwIfAborted()
+  saveCredential({ id: session.id, token: result.session_token, epoch: session.epoch })
+  forgetPendingCreation(pending.key)
+  // Przy błędzie startu zachowujemy ID/token do wznowienia albo usunięcia.
+  return resumeDhSession(session.id, signal)
+}
+
+function credentialFor(id: string): SessionCredential {
+  const own = currentCredential()
+  if (!own || own.id !== id) throw new ApiError('Brak poświadczenia własnej sesji.', 'UNAUTHORIZED', 401)
+  return own
+}
+
+async function ownRequest(method: 'GET' | 'POST' | 'DELETE', id: string, suffix = '', signal?: AbortSignal) {
+  const own = credentialFor(id)
   try {
-    return toDhSession(await requestJson('POST', `${DH_SESSIONS_URL}/${created.id}/start`))
+    return await requestJson(method, DH_SESSIONS_URL + '/' + id + suffix, undefined, {
+      signal, epoch: own.epoch, headers: { Authorization: 'Bearer ' + own.token },
+    })
   } catch (error) {
-    await cancelDhSession(created.id).catch(() => undefined)
+    if (error instanceof ApiError &&
+        (error.status === 404 || error.status === 410 || error.code === 'BACKEND_EPOCH_MISMATCH')) {
+      forgetCredential(own)
+    }
     throw error
   }
 }
 
-// Zwraca bieżący stan sesji: postęp uczestników, wiadomości, przechwycenia i dziennik.
-export async function fetchDhSession(id: string): Promise<DhSession> {
-  return toDhSession(await requestJson('GET', `${DH_SESSIONS_URL}/${id}`))
+export async function resumeDhSession(id: string, signal?: AbortSignal): Promise<DhSession> {
+  const raw = await ownRequest('POST', id, '/start', signal)
+  const session = toDhSession({ ...(raw as object), events: [] })
+  if (session.id !== id || session.epoch !== credentialFor(id).epoch) throw unexpectedFormat()
+  return session
 }
 
-export async function cancelDhSession(id: string): Promise<DhSession> {
-  return toDhSession(await requestJson('POST', `${DH_SESSIONS_URL}/${id}/cancel`))
+export async function fetchDhSession(id: string, signal?: AbortSignal): Promise<DhSession> {
+  const raw = await ownRequest('GET', id, '', signal) as Record<string, unknown>
+  const history = await ownRequest('GET', id, '/events?after=0&limit=32', signal) as Record<string, unknown>
+  if (history.session_id !== id || history.backend_epoch !== raw.backend_epoch) throw unexpectedFormat()
+  const session = toDhSession({ ...raw, events: history.events })
+  if (session.id !== id || session.epoch !== credentialFor(id).epoch) throw unexpectedFormat()
+  return session
 }
 
-// Anuluje bieżącą sesję koordynatora, jeśli jeszcze trwa (np. pozostałą po odświeżeniu
-// strony). Koordynator trzyma jedną sesję naraz, więc inaczej nowej nie da się zacząć.
-export async function cancelActiveDhSession(): Promise<void> {
-  let current: DhSession
-  try {
-    current = toDhSession(await requestJson('GET', `${DH_SESSIONS_URL}/current`))
-  } catch (error) {
-    if (error instanceof ApiError && error.code === 'SESSION_NOT_FOUND') return
-    throw error
+export async function cancelDhSession(id: string, signal?: AbortSignal): Promise<DhSession> {
+  const raw = await ownRequest('POST', id, '/cancel', signal)
+  const session = toDhSession({ ...(raw as object), events: [] })
+  if (session.id !== id || session.epoch !== credentialFor(id).epoch) throw unexpectedFormat()
+  return session
+}
+
+export async function deleteDhSession(id: string, signal?: AbortSignal): Promise<void> {
+  const own = credentialFor(id)
+  await ownRequest('DELETE', id, '', signal)
+  forgetCredential(own)
+}
+
+// Reset dotyczy wyłącznie sesji i próby tworzenia zapisanych w tej karcie.
+export async function resetOwnDhSession(signal?: AbortSignal): Promise<void> {
+  const own = currentCredential()
+  if (own) {
+    try {
+      await deleteDhSession(own.id, signal)
+    } catch (error) {
+      if (!(error instanceof ApiError && (error.status === 404 || error.status === 410))) throw error
+    }
   }
-  if (current.status === 'created' || current.status === 'running') {
-    await cancelDhSession(current.id)
-  }
+  forgetPendingCreation()
 }
 
-// Dostępność procesu węzła: ostatni heartbeat (co 1 s) nie starszy niż 5 s.
-// lastSeen === null: węzeł jeszcze się nie zgłosił. To informacja o ostatnim kontakcie,
-// nie gwarancja, że proces za chwilę nie przestanie działać.
-export type NodeAvailability = {
-  online: boolean
-  lastSeen: string | null
-}
+export type NodeAvailability = { online: boolean }
+export type NodesAvailability = Record<NodeRole, NodeAvailability> & { backendEpoch: string }
 
-export type NodesAvailability = Record<Role, NodeAvailability> & {
-  // Starszy backend bez MITM nie zgłasza Mallory.
-  mallory?: NodeAvailability
-}
-
-export async function fetchDhNodes(): Promise<NodesAvailability> {
-  const body = (await requestJson('GET', '/api/v1/dh/nodes')) as Record<string, unknown> | null
+export async function fetchDhNodes(signal?: AbortSignal): Promise<NodesAvailability> {
+  let epoch: string | null = null
+  const body = await requestJson('GET', '/api/v2/dh/nodes', undefined, {
+    signal, onResponse: (response) => { epoch = response.headers.get('X-Backend-Epoch') },
+  }) as Record<string, unknown> | null
+  if (!isSessionId(epoch)) throw unexpectedFormat()
   function node(role: NodeRole): NodeAvailability {
     const raw = body?.[role] as Record<string, unknown> | undefined
-    if (
-      !raw ||
-      typeof raw.online !== 'boolean' ||
-      (raw.last_seen !== null && typeof raw.last_seen !== 'string')
-    ) {
-      throw unexpectedFormat()
-    }
-    return { online: raw.online, lastSeen: raw.last_seen }
+    if (!raw || typeof raw.online !== 'boolean') throw unexpectedFormat()
+    return { online: raw.online }
   }
-  return {
-    alice: node('alice'),
-    bob: node('bob'),
-    ...(body?.mallory === undefined ? {} : { mallory: node('mallory') }),
-  }
+  return { alice: node('alice'), bob: node('bob'), mallory: node('mallory'), backendEpoch: epoch }
 }
 
-// K zgłoszone przez węzły uruchomione z --allow-diagnostics; null = brak zgłoszenia.
-// Przechowywane osobno od wiadomości i zdarzeń protokołu.
-export async function fetchDhDiagnostics(id: string): Promise<Record<Role, number | null>> {
-  const body = (await requestJson('GET', `${DH_SESSIONS_URL}/${id}/diagnostics`)) as Record<
-    string,
-    unknown
-  > | null
+export async function fetchDhDiagnostics(id: string, signal?: AbortSignal): Promise<Record<Role, number | null>> {
+  const body = await ownRequest('GET', id, '/diagnostics', signal) as Record<string, unknown> | null
   if (!body) throw unexpectedFormat()
   return { alice: numberOrNull(body.alice), bob: numberOrNull(body.bob) }
 }
 
-// Dwa K Mallory: uzgodnione z Alice i z Bobem; null = brak raportu.
-export async function fetchDhMalloryDiagnostics(
-  id: string,
-): Promise<{ withAlice: number | null; withBob: number | null }> {
-  const body = (await requestJson(
-    'GET',
-    `${DH_SESSIONS_URL}/${id}/diagnostics/mallory`,
-  )) as Record<string, unknown> | null
+export async function fetchDhMalloryDiagnostics(id: string, signal?: AbortSignal):
+Promise<{ withAlice: number | null; withBob: number | null }> {
+  const body = await ownRequest('GET', id, '/diagnostics/mallory', signal) as Record<string, unknown> | null
   if (!body) throw unexpectedFormat()
-  return {
-    withAlice: numberOrNull(body.shared_with_alice),
-    withBob: numberOrNull(body.shared_with_bob),
-  }
+  return { withAlice: numberOrNull(body.shared_with_alice), withBob: numberOrNull(body.shared_with_bob) }
+}
+
+function uint32(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 4294967295
 }
 
 function numberOrNull(value: unknown): number | null {
-  if (value !== null && typeof value !== 'number') throw unexpectedFormat()
+  if (value !== null && !uint32(value)) throw unexpectedFormat()
   return value
 }
 
 const ROLES: readonly Role[] = ['alice', 'bob']
 const NODE_ROLES: readonly NodeRole[] = ['alice', 'bob', 'mallory']
 const MODES: readonly DhMode[] = ['normal', 'mitm']
-const SESSION_STATUSES: readonly SessionStatus[] = ['created', 'running', 'completed', 'cancelled']
+const SESSION_STATUSES: readonly SessionStatus[] = ['created', 'running', 'completed', 'cancelled', 'expired', 'failed']
 const PARTICIPANT_STATUSES: readonly ParticipantStatus[] = ['waiting', 'published', 'received']
 const MESSAGE_STATUSES: readonly MessageStatus[] = ['intercepted', 'queued', 'processed']
 const INTERCEPTION_STATUSES: readonly InterceptionStatus[] = ['pending', 'forwarded', 'processed']
@@ -279,6 +341,8 @@ const EVENT_TYPES: readonly EventType[] = [
   'message_processed',
   'session_completed',
   'session_cancelled',
+  'session_failed',
+  'session_expired',
 ]
 
 type RawMessage = {
@@ -305,16 +369,22 @@ function toDhSession(body: unknown): DhSession {
   const rawInterceptions = raw?.interceptions ?? []
   if (
     !raw ||
-    typeof raw.session_id !== 'string' ||
+    !isSessionId(raw.session_id) ||
+    !isSessionId(raw.backend_epoch) ||
+    !Number.isInteger(raw.revision) || (raw.revision as number) < 0 ||
+    typeof raw.expires_at !== 'string' || !Number.isFinite(Date.parse(raw.expires_at)) ||
+    (raw.terminal_at !== null && (typeof raw.terminal_at !== 'string' || !Number.isFinite(Date.parse(raw.terminal_at)))) ||
+    typeof raw.diagnostics_enabled !== 'boolean' ||
+    (raw.failure_code !== null && typeof raw.failure_code !== 'string') ||
     !isOneOf(MODES, raw.mode) ||
-    typeof raw.prime !== 'number' ||
-    typeof raw.generator !== 'number' ||
+    !uint32(raw.prime) ||
+    !uint32(raw.generator) ||
     !isOneOf(SESSION_STATUSES, raw.status) ||
     !participants ||
     !ROLES.every((role) => isOneOf(PARTICIPANT_STATUSES, participants[role])) ||
-    !Array.isArray(raw.messages) ||
-    !Array.isArray(raw.events) ||
-    !Array.isArray(rawInterceptions)
+    !Array.isArray(raw.messages) || raw.messages.length > 2 ||
+    !Array.isArray(raw.events) || raw.events.length > 32 ||
+    !Array.isArray(rawInterceptions) || rawInterceptions.length > 2
   ) {
     throw unexpectedFormat()
   }
@@ -325,7 +395,7 @@ function toDhSession(body: unknown): DhSession {
       !message ||
       !isOneOf(ROLES, message.sender) ||
       !isOneOf(ROLES, message.recipient) ||
-      typeof message.public_value !== 'number' ||
+      !uint32(message.public_value) ||
       !isOneOf(MESSAGE_STATUSES, message.status)
     ) {
       throw unexpectedFormat()
@@ -346,8 +416,8 @@ function toDhSession(body: unknown): DhSession {
       typeof record.message_id !== 'string' ||
       !isOneOf(ROLES, record.original_sender) ||
       !isOneOf(ROLES, record.recipient) ||
-      typeof record.original_value !== 'number' ||
-      (delivered !== null && typeof delivered !== 'number') ||
+      !uint32(record.original_value) ||
+      (delivered !== null && !uint32(delivered)) ||
       !isOneOf(INTERCEPTION_STATUSES, record.status)
     ) {
       throw unexpectedFormat()
@@ -368,18 +438,18 @@ function toDhSession(body: unknown): DhSession {
     const messageId = event?.message_id
     if (
       !event ||
-      typeof event.sequence !== 'number' ||
+      !Number.isInteger(event.sequence) || (event.sequence as number) < 1 ||
       !isOneOf(EVENT_TYPES, event.type) ||
       !isOneOfOrNull(NODE_ROLES, event.sender) ||
       !isOneOfOrNull(ROLES, event.recipient) ||
-      (value !== null && typeof value !== 'number') ||
+      (value !== null && !uint32(value)) ||
       (messageId !== null && messageId !== undefined && typeof messageId !== 'string') ||
       !isOneOf(MESSAGE_STATUSES, event.status)
     ) {
       throw unexpectedFormat()
     }
     return {
-      seq: event.sequence,
+      seq: event.sequence as number,
       type: event.type,
       from: event.sender,
       to: event.recipient,
@@ -430,6 +500,12 @@ function toDhSession(body: unknown): DhSession {
 
   return {
     id: raw.session_id,
+    epoch: raw.backend_epoch,
+    revision: raw.revision as number,
+    expiresAt: raw.expires_at,
+    terminalAt: raw.terminal_at as string | null,
+    diagnosticsEnabled: raw.diagnostics_enabled,
+    failureCode: raw.failure_code as string | null,
     mode: raw.mode,
     p: raw.prime,
     g: raw.generator,
@@ -443,28 +519,48 @@ function toDhSession(body: unknown): DhSession {
 // Wysyła żądanie (z JSON-em, jeśli jest treść) i zwraca treść odpowiedzi;
 // błędy zamienia na ApiError.
 async function requestJson(
-  method: 'GET' | 'POST',
+  method: 'GET' | 'POST' | 'DELETE',
   url: string,
   data?: unknown,
+  options: RequestOptions = {},
 ): Promise<unknown> {
-  let response: Response
+  const controller = new AbortController()
+  const abort = () => controller.abort(options.signal?.reason)
+  options.signal?.addEventListener('abort', abort, { once: true })
+  if (options.signal?.aborted) abort()
+  const timeout = window.setTimeout(() => controller.abort(), 5000)
   try {
-    response = await fetch(url, {
-      method,
-      headers: data === undefined ? undefined : { 'Content-Type': 'application/json' },
+    const response = await fetch(url, {
+      method, signal: controller.signal, cache: 'no-store',
+      headers: { ...(data === undefined ? {} : { 'Content-Type': 'application/json' }), ...options.headers },
       body: data === undefined ? undefined : JSON.stringify(data),
     })
-  } catch {
-    // fetch rzuca wyjątek, gdy w ogóle nie da się wysłać żądania.
-    throw new ApiError('Brak połączenia z serwerem. Sprawdź połączenie i spróbuj ponownie.')
+    if (options.epoch && response.headers.get('X-Backend-Epoch') !== options.epoch) {
+      throw new ApiError('Serwer uruchomił się ponownie. Rozpocznij nową sesję.', 'BACKEND_EPOCH_MISMATCH')
+    }
+    options.onResponse?.(response)
+    const body: unknown = response.status === 204 ? null : await response.json().catch(() => null)
+    options.signal?.throwIfAborted()
+    controller.signal.throwIfAborted()
+    if (!response.ok) {
+      const retry = response.headers.get('Retry-After')
+      const seconds = retry && /^\d+$/.test(retry) ? Math.min(Number(retry), 30) : 0
+      const error = toApiError(response.status, body)
+      throw new ApiError(error.message, error.code, response.status, seconds)
+    }
+    return body
+  } catch (error) {
+    options.signal?.throwIfAborted()
+    if (error instanceof ApiError) throw error
+    throw new ApiError(
+      controller.signal.aborted ? 'Serwer nie odpowiedział w wymaganym czasie.' :
+        'Brak połączenia z serwerem. Spróbuj ponownie.',
+      controller.signal.aborted ? 'REQUEST_TIMEOUT' : 'NETWORK_ERROR',
+    )
+  } finally {
+    window.clearTimeout(timeout)
+    options.signal?.removeEventListener('abort', abort)
   }
-
-  const body: unknown = await response.json().catch(() => null)
-
-  if (!response.ok) {
-    throw toApiError(response.status, body)
-  }
-  return body
 }
 
 function unexpectedFormat(): ApiError {

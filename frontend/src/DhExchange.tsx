@@ -8,8 +8,9 @@ import { Badge, Button, DataBadge, Notice } from './ui'
 import type { DataKind, Tone } from './ui'
 import {
   ApiError,
-  cancelActiveDhSession,
-  cancelDhSession,
+  currentCredential,
+  resetOwnDhSession,
+  resumeDhSession,
   fetchDhDiagnostics,
   fetchDhMalloryDiagnostics,
   fetchDhNodes,
@@ -89,6 +90,8 @@ const SESSION_STATUS: Record<SessionStatus, { label: string; tone: Tone }> = {
   running: { label: 'w toku', tone: 'neutral' },
   completed: { label: 'zakończona', tone: 'ok' },
   cancelled: { label: 'anulowana', tone: 'error' },
+  failed: { label: 'przerwana', tone: 'error' },
+  expired: { label: 'wygasła', tone: 'error' },
 }
 
 const EVENT_TYPE: Record<EventType, string> = {
@@ -100,6 +103,8 @@ const EVENT_TYPE: Record<EventType, string> = {
   message_processed: 'przetworzenie wiadomości',
   session_completed: 'koniec sesji',
   session_cancelled: 'anulowanie sesji',
+  session_failed: 'przerwanie sesji',
+  session_expired: 'wygaśnięcie sesji',
 }
 
 const MESSAGE_STATUS: Record<MessageStatus, { label: string; tone: Tone }> = {
@@ -109,16 +114,16 @@ const MESSAGE_STATUS: Record<MessageStatus, { label: string; tone: Tone }> = {
 }
 
 // Co ile odpytujemy stan sesji i dostępność węzłów.
-const SESSION_POLL_MS = 1000
+const SESSION_POLL_MS = 2000
 const NODES_POLL_MS = 3000
 // Ostatni ACK może zakończyć sesję, zanim węzły zgłoszą K, więc diagnostykę
 // czytamy jeszcze przez tyle po zakończeniu (albo krócej, gdy przyjdą wszystkie wartości).
-const DIAGNOSTICS_GRACE_MS = 10_000
+const DIAGNOSTICS_GRACE_MS = 30_000
 
 // Pyta koordynatora o dostępność węzłów; błąd zamienia na stan do wyświetlenia.
-async function checkNodes(): Promise<NodesState> {
+async function checkNodes(signal?: AbortSignal): Promise<NodesState> {
   try {
-    return { status: 'ready', nodes: await fetchDhNodes() }
+    return { status: 'ready', nodes: await fetchDhNodes(signal) }
   } catch (error) {
     return { status: 'error', message: errorMessage(error, 'nieoczekiwany błąd.') }
   }
@@ -161,7 +166,7 @@ function offlineNodes(nodes: NodesState, mode: DhMode): NodeRole[] {
 
 // Polecenie uruchomienia węzła (bez trybu testowego i diagnostyki).
 function runCommand(role: NodeRole): string {
-  return `python -m backend.dh_transport --role ${role}`
+  return `python -m nodes.multi_session_cli --role ${role}`
 }
 
 function joinNames(roles: NodeRole[]): string {
@@ -190,10 +195,15 @@ function errorMessage(error: unknown, fallback: string): string {
 
 export function DhExchange() {
   const [fieldErrors, setFieldErrors] = useState<DhFieldErrors>({})
-  const [view, setView] = useState<ViewState>({ status: 'empty' })
+  const [view, setView] = useState<ViewState>(() =>
+    currentCredential() ? { status: 'loading' } : { status: 'empty' },
+  )
+  const [diagnosticsEnabled, setDiagnosticsEnabled] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
+  const actionController = useRef<AbortController | null>(null)
   const [mode, setMode] = useState<DhMode>('normal')
   // Ostatnia zakończona sesja każdego scenariusza – do porównania obok siebie.
-  // Sesje idą po kolei (koordynator obsługuje jedną naraz), a porównanie zostaje po resecie.
+  // Porównanie obejmuje wyłącznie wyniki sesji utworzonych w tej karcie.
   const [lastByMode, setLastByMode] = useState<Partial<Record<DhMode, DhSession>>>({})
   // Numer bieżącego żądania. Reset albo nowy start go zwiększa, więc spóźniona
   // odpowiedź starego żądania jest ignorowana i nie nadpisze nowszego stanu.
@@ -213,12 +223,35 @@ export function DhExchange() {
       ? view.session.id
       : null
 
+  useEffect(() => {
+    const own = currentCredential()
+    if (!own) return
+    const controller = new AbortController()
+    const id = requestId.current
+    void fetchDhSession(own.id, controller.signal).then(
+      (session) => {
+        if (!controller.signal.aborted && id === requestId.current) {
+          setView({ status: 'session', session })
+        }
+      },
+      (error) => {
+        if (!controller.signal.aborted && id === requestId.current) {
+          setView({ status: 'error', message: errorMessage(error, 'Nie udało się odzyskać własnej sesji.') })
+        }
+      },
+    )
+    return () => controller.abort()
+  }, [])
+
+  useEffect(() => () => actionController.current?.abort(), [])
+
   // Dostępność węzłów sprawdzamy od razu i potem co NODES_POLL_MS.
   useEffect(() => {
     let active = true
     let timer: number | undefined
+    const controller = new AbortController()
     async function tick() {
-      const state = await checkNodes()
+      const state = await checkNodes(controller.signal)
       if (!active) return
       setNodes(state)
       timer = window.setTimeout(tick, NODES_POLL_MS)
@@ -226,6 +259,7 @@ export function DhExchange() {
     void tick()
     return () => {
       active = false
+      controller.abort()
       window.clearTimeout(timer)
     }
   }, [])
@@ -239,15 +273,23 @@ export function DhExchange() {
     let active = true
     let timer: number | undefined
     let diagnostics: Diagnostics = NO_DIAGNOSTICS
-    let completedAt: number | null = null
+    let connectionLostAt: number | null = null
+    const controller = new AbortController()
 
     async function tick() {
       let session: DhSession
       try {
-        session = await fetchDhSession(sessionId as string)
+        session = await fetchDhSession(sessionId as string, controller.signal)
       } catch (error) {
         if (!active || id !== requestId.current) return
-        // Bez aktualnego stanu nie pokazujemy starego: zamiast sesji tylko błąd.
+        if (error instanceof ApiError && (error.status === 429 || error.status === 503 || error.code === 'NETWORK_ERROR' || error.code === 'REQUEST_TIMEOUT')) {
+          connectionLostAt ??= Date.now()
+          if (Date.now() - connectionLostAt < 30_000) {
+            setNotice(error.message)
+            timer = window.setTimeout(tick, Math.max(SESSION_POLL_MS, error.retryAfter * 1000))
+            return
+          }
+        }
         setView({
           status: 'error',
           message: `Utracono stan sesji: ${errorMessage(error, 'nieoczekiwany błąd.')}`,
@@ -256,18 +298,38 @@ export function DhExchange() {
       }
       if (!active || id !== requestId.current) return
 
-      // Błąd diagnostyki nie psuje sesji: K jest dodatkiem, zostają poprzednie wartości.
-      if (session.status === 'running' || session.status === 'completed') {
+      connectionLostAt = null
+      setNotice(null)
+      if (session.status === 'expired' || session.status === 'failed' || session.status === 'cancelled') {
+        diagnostics = NO_DIAGNOSTICS
+        setLastByMode((previous) => {
+          const saved = previous[session.mode]
+          return saved?.id === session.id
+            ? { ...previous, [session.mode]: withDiagnostics(saved, NO_DIAGNOSTICS) }
+            : previous
+        })
+      }
+      if (session.diagnosticsEnabled && (session.status === 'running' || session.status === 'completed')) {
         try {
-          diagnostics = { ...diagnostics, ...(await fetchDhDiagnostics(session.id)) }
-        } catch {
-          // ignorujemy, spróbujemy przy następnym odczycie
+          diagnostics = { ...diagnostics, ...(await fetchDhDiagnostics(session.id, controller.signal)) }
+        } catch (error) {
+          if (error instanceof ApiError && (error.status === 401 || error.status === 403 ||
+              error.status === 404 || error.status === 410 || error.code === 'BACKEND_EPOCH_MISMATCH')) {
+            if (active && id === requestId.current) {
+              setView({ status: 'error', message: error.message })
+            }
+            return
+          }
         }
         if (session.mode === 'mitm') {
           try {
-            diagnostics = { ...diagnostics, ...(await fetchDhMalloryDiagnostics(session.id)) }
-          } catch {
-            // jak wyżej
+            diagnostics = { ...diagnostics, ...(await fetchDhMalloryDiagnostics(session.id, controller.signal)) }
+          } catch (error) {
+            if (error instanceof ApiError && (error.status === 401 || error.status === 403 ||
+                error.status === 404 || error.status === 410 || error.code === 'BACKEND_EPOCH_MISMATCH')) {
+              if (active && id === requestId.current) setView({ status: 'error', message: error.message })
+              return
+            }
           }
         }
         if (!active || id !== requestId.current) return
@@ -279,27 +341,32 @@ export function DhExchange() {
         setLastByMode((previous) => ({ ...previous, [shown.mode]: shown }))
       }
 
-      if (session.status === 'completed' && completedAt === null) completedAt = Date.now()
       const keepPolling =
         session.status === 'created' ||
         session.status === 'running' ||
         (session.status === 'completed' &&
-          !allKeysKnown(session.mode, diagnostics) &&
-          Date.now() - (completedAt ?? 0) < DIAGNOSTICS_GRACE_MS)
+          session.diagnosticsEnabled && !allKeysKnown(session.mode, diagnostics) &&
+          session.terminalAt !== null &&
+          Date.now() - Date.parse(session.terminalAt) < DIAGNOSTICS_GRACE_MS)
       if (keepPolling) timer = window.setTimeout(tick, SESSION_POLL_MS)
     }
 
     timer = window.setTimeout(tick, SESSION_POLL_MS)
     return () => {
       active = false
+      controller.abort()
       window.clearTimeout(timer)
     }
   }, [sessionId])
 
   async function handleStart(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (isLoading || nodesOffline) return
+    if (isLoading || nodesOffline || activeId) return
     const id = ++requestId.current
+    actionController.current?.abort()
+    const controller = new AbortController()
+    actionController.current = controller
+    setNotice(null)
     setView({ status: 'empty' })
 
     const form = new FormData(event.currentTarget)
@@ -316,7 +383,7 @@ export function DhExchange() {
 
     setView({ status: 'loading' })
     try {
-      const session = await startDhSession(validation.data, mode)
+      const session = await startDhSession(validation.data, mode, diagnosticsEnabled, controller.signal)
       if (id !== requestId.current) return
       setView({ status: 'session', session })
       scrollToSceneIfBelow(sceneRef.current)
@@ -326,22 +393,36 @@ export function DhExchange() {
     }
   }
 
-  // Reset anuluje trwającą sesję u koordynatora (także pozostałą po odświeżeniu strony)
-  // i porzuca czekające żądania. Nowa sesja zawsze dostaje nowe ID.
+  async function handleResume() {
+    const own = currentCredential()
+    if (!own) return
+    const id = ++requestId.current
+    actionController.current?.abort()
+    const controller = new AbortController()
+    actionController.current = controller
+    setView({ status: 'loading' })
+    try {
+      const session = await resumeDhSession(own.id, controller.signal)
+      if (id === requestId.current) setView({ status: 'session', session })
+    } catch (error) {
+      if (id === requestId.current) setView({ status: 'error', message: errorMessage(error, 'Nie udało się wznowić sesji.') })
+    }
+  }
+
   async function handleReset() {
     const id = ++requestId.current
-    const ownId = activeId
+    actionController.current?.abort()
+    const controller = new AbortController()
+    actionController.current = controller
     setFieldErrors({})
-    setView({ status: 'empty' })
+    setNotice(null)
+    setView({ status: 'loading' })
     try {
-      if (ownId) await cancelDhSession(ownId)
-      else await cancelActiveDhSession()
+      await resetOwnDhSession(controller.signal)
+      if (id === requestId.current) setView({ status: 'empty' })
     } catch (error) {
       if (id !== requestId.current) return
-      setView({
-        status: 'error',
-        message: `Nie udało się anulować sesji: ${errorMessage(error, 'nieoczekiwany błąd.')}`,
-      })
+      setView({ status: 'error', message: errorMessage(error, 'Nie udało się usunąć własnej sesji.') })
     }
   }
 
@@ -442,12 +523,19 @@ export function DhExchange() {
               nie zna.
             </p>
 
+            <label className="hint">
+              <input type="checkbox" checked={diagnosticsEnabled}
+                disabled={isLoading || activeId !== null}
+                onChange={(event) => setDiagnosticsEnabled(event.target.checked)} />
+              {' '}Pokaż edukacyjnie wspólne sekrety sesji
+            </label>
+
             <div className="dh-buttons">
               <Button
                 type="submit"
                 busy={isLoading}
                 busyLabel="Uruchamianie…"
-                disabled={nodesOffline}
+                disabled={nodesOffline || activeId !== null}
                 aria-describedby={
                   nodesOffline || nodes.status === 'error' ? 'dh-nodes-hint' : undefined
                 }
@@ -459,7 +547,20 @@ export function DhExchange() {
               </Button>
             </div>
 
+            {session?.status === 'created' && (
+              <Button variant="secondary" onClick={handleResume}>Uruchom własną sesję</Button>
+            )}
+            {view.status === 'error' && currentCredential() && (
+              <Button variant="secondary" onClick={handleResume}>Ponów start własnej sesji</Button>
+            )}
             <NodesHint nodes={nodes} mode={mode} />
+            {notice && <Notice tone="warning">{notice}</Notice>}
+            {session?.status === 'expired' && (
+              <Notice tone="warning">Sesja wygasła. Reset usunie jej historię i pozwoli rozpocząć nową.</Notice>
+            )}
+            {session?.status === 'failed' && (
+              <Notice tone="error">Wymiana została przerwana. Usuń sesję przyciskiem Reset i rozpocznij nową.</Notice>
+            )}
 
             {view.status === 'error' && <Notice tone="error">{view.message}</Notice>}
           </form>
@@ -544,9 +645,7 @@ function availabilityBadge(
   if (nodes.status === 'loading') return { label: 'sprawdzanie…', tone: 'neutral' }
   if (!availability) return null
   if (availability.online) return { label: 'dostępny', tone: 'ok' }
-  return availability.lastSeen === null
-    ? { label: 'nie zgłosił się', tone: 'error' }
-    : { label: 'niedostępny', tone: 'error' }
+  return { label: 'niedostępny', tone: 'error' }
 }
 
 // Plakietka węzła: w sesji jego postęp, poza sesją dostępność procesu.

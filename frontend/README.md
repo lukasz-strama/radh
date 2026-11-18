@@ -146,3 +146,41 @@ Podgląd zbudowanej wersji: `npm run preview`.
 ## Pozostałe polecenia
 
 - `npm run lint` – sprawdzenie kodu linterem (oxlint).
+## Wielosesyjny klient DH (#70)
+
+Zakładka DH korzysta z koordynatora API v2 z #69 / PR #85 oraz procesów
+wielosesyjnych z #68 / PR #82. Uruchomienie wszystkich komponentów wymaga
+wspólnej migracji. Transport i tokeny ról opisuje `backend/MULTI_SESSION.md`.
+
+Klient pobiera epoch z `GET /api/v2/dh/nodes`, tworzy sesję z
+`Idempotency-Key` i `X-Backend-Epoch`, a następnie zachowuje
+`session_id`, token właściciela oraz epoch w `sessionStorage` danej karty.
+Każdy odczyt i zapis własnej sesji używa Bearer. Odświeżenie strony odzyskuje
+wyłącznie tę sesję. Reset usuwa własny rekord przez DELETE i pozwala świadomie
+porzucić niepotwierdzoną próbę tworzenia.
+
+Próba create zapisuje klucz i parametry przed wysłaniem. Kolejne świadome
+kliknięcie może powtórzyć ją przez maksymalnie 60 sekund z tym samym kluczem.
+Zmiana parametrów, epoch lub przekroczenie czasu wymaga Reset.
+Błąd startu zachowuje poświadczenie, umożliwiając ponowienie albo usunięcie.
+
+Żądania mają timeout i AbortController. Reset/nowa operacja zwiększa numer
+żądania i przerywa poprzednią operację. Polling stanu i historii jest sekwencyjny,
+co 2 sekundy. Przejściowe błędy respektują Retry-After, z ograniczonym
+30-sekundowym oknem ponowień od utraty kontaktu. Obcy ID nie może dostać
+poświadczenia zapisanej sesji. Spóźniony błąd starego ID nie usuwa nowszego tokenu.
+
+Diagnostyka K wymaga jawnego zaznaczenia pola przed utworzeniem sesji oraz
+zgody węzła. Expired czyści K z widoku i zatrzymuje polling, zachowując możliwość
+DELETE w czasie retencji. Odpowiedź 404/410 lub zmiana epoch usuwa stare
+poświadczenie. Własne ukończone scenariusze nadal można porównywać w pamięci karty.
+
+Testy jednostkowe klienta API i poświadczeń uruchamia polecenie:
+
+```sh
+npm test -- tests/dhApi.unit.test.tsx
+```
+
+Testy używają atrap fetch i storage. Weryfikacja dwóch rzeczywistych przeglądarek
+i procesów z backendem należy do QA #71. Build i lint uruchamia się standardowymi
+poleceniami `npm run build` i `npm run lint`.
