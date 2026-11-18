@@ -48,7 +48,7 @@ def encrypt_rsa(
     request: RsaEncryptRequest, http_request: Request,
     crypto_core: Annotated[CryptoCore, Depends(get_crypto_core)],
 ) -> RsaEncryptResponse:
-    with runtime(http_request).crypto.slot():
+    with runtime(http_request).demo_slot():
         ciphertext = crypto_core.encrypt(
             request.message, request.public_exponent, request.modulus,
         )
@@ -73,7 +73,7 @@ def encrypt_rsa(
 )
 def generate_rsa_keys(request: RsaKeygenRequest, http_request: Request) -> RsaKeygenResponse:
     # Załaduj bibliotekę dopiero po walidacji żądania.
-    with runtime(http_request).crypto.slot():
+    with runtime(http_request).demo_slot():
         result = get_crypto_core().generate_rsa_keys(request.p, request.q, request.e)
     return RsaKeygenResponse(n=result.n, e=result.e, d=result.d, phi=result.phi)
 
@@ -98,7 +98,7 @@ def exchange_dh(
     request: DhExchangeRequest, http_request: Request,
     crypto_core: Annotated[CryptoCore, Depends(get_crypto_core)],
 ) -> DhExchangeResponse:
-    with runtime(http_request).crypto.slot():
+    with runtime(http_request).demo_slot():
         result = crypto_core.exchange(
             request.prime, request.generator, request.alice_secret, request.bob_secret,
         )

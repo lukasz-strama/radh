@@ -8,8 +8,9 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 
 from .api import dh_router, router
-from .sessions import SessionError
-from .coordinator_http import CoordinatorMiddleware, lifespan
+from .sessions import SessionError, SessionStore, router as sessions_router
+from .node_presence import PresenceStore, router as presence_router
+from .coordinator_http import CoordinatorMiddleware, legacy_api_enabled, lifespan
 from .multi_api import public, internal, health
 from .crypto_core import (
     CryptoCoreCallError,
@@ -35,7 +36,13 @@ app.include_router(dh_router)
 app.include_router(public)
 app.include_router(internal)
 app.include_router(health)
-app.add_middleware(CoordinatorMiddleware, app_state=app.state)
+if legacy_api_enabled():
+    app.state.dh_sessions = SessionStore()
+    app.state.dh_presence = PresenceStore()
+    app.include_router(sessions_router)
+    app.include_router(presence_router)
+# Odczyt bieżącego State zachowuje izolację aplikacji w istniejących fixture.
+app.add_middleware(CoordinatorMiddleware, app_state=lambda: app.state)
 
 
 def _error_response(

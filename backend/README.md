@@ -12,7 +12,9 @@ Python nie zawiera zastępczej implementacji RSA ani DH.
 API v2 i transport internal oraz instrukcja migracji dla węzłów, frontendu i QA
 znajdują się w [MULTI_SESSION.md](MULTI_SESSION.md). Koordynator wymaga jednego
 workera backendu, tokenów ról i wspólnej migracji klientów #68/#70.
-Nowy router zastępuje niezabezpieczone sesje v1.
+Routery v1 pozostają domyślnie dostępne dla dotychczasowych klientów.
+Po wspólnej migracji ustaw `RADH_LEGACY_API_ENABLED=false`, aby wyłączyć
+routery sesji i heartbeat v1 oraz objąć demo v1 limitami nowej warstwy HTTP.
 
 ## Wymagania
 

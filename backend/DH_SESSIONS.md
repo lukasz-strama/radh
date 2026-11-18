@@ -2,7 +2,7 @@
 
 > Ten dokument opisuje wcześniejsze API v1. Koordynator #69 używa API v2
 > i uwierzytelnionego transportu internal opisanego w [MULTI_SESSION.md](MULTI_SESSION.md).
-> Aplikacja wycofała router sesji v1.
+> Routery v1 pozostają domyślnie włączone do czasu wspólnej migracji klientów.
 
 Rozszerzenie #41: [routing MITM i kontrakt Mallory](MITM_SESSIONS.md).
 

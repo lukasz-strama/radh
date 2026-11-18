@@ -6,7 +6,7 @@ import ipaddress
 import logging
 import os
 import re
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager, nullcontext, suppress
 from pathlib import Path
 
 from fastapi import Request
@@ -26,6 +26,13 @@ def bearer(value):
         raise CoordinatorError(401, "UNAUTHORIZED", "Wymagany token Bearer.",
                                {"WWW-Authenticate": "Bearer"})
     return match[1]
+
+
+def legacy_api_enabled():
+    value = os.environ.get("RADH_LEGACY_API_ENABLED", "true").lower()
+    if value not in {"true", "false"}:
+        raise ValueError("RADH_LEGACY_API_ENABLED wymaga true lub false.")
+    return value == "true"
 
 
 def role_credentials():
@@ -50,6 +57,7 @@ def role_credentials():
 class Runtime:
     def __init__(self, settings=None, *, clock=None, role_hashes=None):
         self.settings = settings or Settings.from_env()
+        self.legacy_api_enabled = legacy_api_enabled()
         clock_args = {} if clock is None else {"clock": clock}
         self.coordinator = Coordinator(self.settings, **clock_args)
         self.limiter = RateLimiter(self.settings, **clock_args)
@@ -59,6 +67,10 @@ class Runtime:
             "RADH_ALLOWED_ORIGINS",
             "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000,http://127.0.0.1:8000",
         ).split(","))
+
+    def demo_slot(self):
+        # Tryb migracji zachowuje dotychczasowe zachowanie demo v1.
+        return nullcontext() if self.legacy_api_enabled else self.crypto.slot()
 
     def authenticate_role(self, token):
         candidate = digest(token)
@@ -135,7 +147,10 @@ class CoordinatorMiddleware:
         path = scope.get("path", "")
         if scope["type"] != "http" or not path.startswith(("/api/", "/internal/")):
             return await self.app(scope, receive, send)
-        rt = self.app_state.runtime
+        state = self.app_state() if callable(self.app_state) else self.app_state
+        rt = state.runtime
+        if rt.legacy_api_enabled and path.startswith("/api/v1/"):
+            return await self.app(scope, receive, send)
         headers = {k.decode("latin1").lower(): v.decode("latin1") for k, v in scope["headers"]}
         response_headers = {"Cache-Control": "no-store"}
         if path.startswith(("/api/v2/", "/internal/")):

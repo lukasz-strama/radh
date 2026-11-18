@@ -80,11 +80,19 @@ idempotentne retry nie przedłużają deadline sesji ani terminu postępu protok
 7. Po DELETE ten sam klucz create daje CREATION_GONE. Nie odtwarzaj takiej próby.
    Odpowiedzi 429/503 mają Retry-After. Polling nie wydłuża TTL.
 
-Nowe routery zastępują niezabezpieczone endpointy v1 sesji i heartbeat.
-Stare moduły pozostają dostępne jako kod referencyjny i dla dotychczasowych
-testów jednostkowych, lecz aplikacja ich nie rejestruje.
-Aktualny frontend/Compose v1 wymaga wspólnego przełączenia z #68/#70.
-Zmiana #69 nie oznacza gotowości istniejącego klienta v1 do pracy z API v2.
+Routery v1 sesji i heartbeat pozostają domyślnie dostępne, z własnym
+dotychczasowym magazynem i zachowaniem HTTP. API v2 używa osobnego rejestru
+oraz wymaga tokenów. Klienci obu wersji korzystają z odpowiednich przestrzeni API.
+
+`RADH_LEGACY_API_ENABLED=true` jest domyślnym trybem migracji. Zachowuje
+routery, walidację i dotychczasowe zachowanie demo v1, także przy seriach
+żądań. Limity, auth i body cap nowej warstwy dotyczą wtedy v2/internal.
+Po wspólnej migracji #68/#70 ustaw `RADH_LEGACY_API_ENABLED=false`.
+Ta opcja wyłącza routery sesji i heartbeat v1 oraz włącza limity HTTP/C
+dla zachowanych endpointów matematycznego demo v1.
+Tryb zgodności zachowuje dotychczasowe ograniczenia bezpieczeństwa v1
+i jest przeznaczony do lokalnej migracji. Publiczne wdrożenie wymaga v2,
+wyłączonego legacy oraz bramek bezpieczeństwa opisanych w #73.
 
 ## Informacje dla węzłów — #68 / PR #82
 
@@ -116,7 +124,7 @@ oraz atrap ASGI i CryptoCore. Sprawdzają wyłącznie jednostki backendu, bez
 TestClient, serwera HTTP, procesów uczestników, przeglądarki i biblioteki C.
 
 ```sh
-python -m pytest backend/tests/unit tests/test_dh_nodes/test_backend_unit.py -q
+python -m pytest backend/tests/unit tests/test_dh_nodes/test_backend_unit.py tests/test_dh_nodes/test_session_fixture.py -q
 ```
 
 Dotychczasowe testy jednostkowe adaptera pozostają częścią tej komendy.
@@ -124,7 +132,8 @@ Standardowe `pytest.ini` zbiera katalog `tests`, więc nowy katalog backendowych
 testów jednostkowych wymaga jawnego wskazania jak wyżej.
 
 QA #71 obejmuje współpracę realnych procesów z API, UI i pełną regresję.
-Istniejące testy integracyjne sesji v1 odwołują się do wycofanych endpointów.
-Przy migracji QA musi dostosować je do create/token/heartbeat/discovery v2.
+Istniejące testy integracyjne sesji v1 zachowują swój dotychczasowy kontrakt
+w domyślnym trybie zgodności. QA #71 może dodać scenariusze v2
+z create/token/heartbeat/discovery bez przepisywania testów v1 w tej zmianie.
 Samo przejście testów jednostkowych nie potwierdza pełnego CI ani integracji
 #68–70 i nie zastępuje bramek bezpieczeństwa publicznej bety.

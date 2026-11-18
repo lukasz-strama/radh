@@ -170,13 +170,14 @@ def test_assigned_dependency_releases_lock_before_endpoint_thread():
     assert result.public_value == 8
 
 
-def test_openapi_matches_v2_and_legacy_session_routes_are_absent():
+def test_openapi_matches_v2_and_preserves_legacy_routes_by_default():
     from app.main import app
     paths = app.openapi()["paths"]
     assert "/api/v2/dh/sessions/{session_id}/diagnostics/mallory" in paths
     assert "/internal/v1/dh/sessions/{session_id}/interceptions/{message_id}/forward" in paths
-    assert not any(path.startswith("/api/v1/dh/sessions") for path in paths)
-    assert "/api/v1/dh/nodes" not in paths
+    assert "/api/v1/dh/sessions/current" in paths
+    assert "/api/v1/dh/sessions/{session_id}/messages" in paths
+    assert "/api/v1/dh/nodes" in paths
     for path in ("/api/v1/rsa/demo/encrypt", "/api/v1/rsa/demo/keygen", "/api/v1/dh/demo/exchange"):
         assert path in paths
     assert paths["/api/v2/dh/sessions"]["post"]["responses"]["201"]
@@ -281,3 +282,60 @@ def test_crypto_routes_use_admission_and_pass_original_arguments(monkeypatch):
     assert api.generate_rsa_keys(RsaKeygenRequest(p=61, q=53, e=17), request).d == 2753
     assert api.exchange_dh(DhExchangeRequest(prime=23, generator=5, alice_secret=6, bob_secret=15), request, FakeCore()).alice_shared_key == 2
     assert calls == [("encrypt", (65, 17, 3233)), ("keygen", (61, 53, 17)), ("dh", (23, 5, 6, 15))]
+
+
+def test_legacy_middleware_preserves_previous_body_and_rate_behavior(monkeypatch):
+    monkeypatch.setenv("RADH_LEGACY_API_ENABLED", "true")
+    rt = Runtime(role_hashes={})
+    for _ in range(7):
+        sent, calls = asyncio.run(call_middleware(
+            rt, scope("/api/v1/rsa/demo/encrypt", "POST"),
+            [{"type": "http.request", "body": b"x" * 5000}],
+        ))
+        assert sent[0]["status"] == 200
+        assert len(calls[0]["body"]) == 5000
+    assert not rt.limiter.buckets
+
+
+def test_disabled_legacy_mode_enforces_demo_limits(monkeypatch):
+    monkeypatch.setenv("RADH_LEGACY_API_ENABLED", "false")
+    rt = Runtime(role_hashes={})
+    sent, calls = asyncio.run(call_middleware(
+        rt, scope("/api/v1/rsa/demo/encrypt", "POST"),
+        [{"type": "http.request", "body": b"x" * 5000}],
+    ))
+    assert sent[0]["status"] == 413 and not calls
+
+
+def test_legacy_setting_rejects_typo(monkeypatch):
+    from app.coordinator_http import legacy_api_enabled
+    monkeypatch.setenv("RADH_LEGACY_API_ENABLED", "maybe")
+    with pytest.raises(ValueError):
+        legacy_api_enabled()
+
+
+def test_middleware_resolves_current_app_state():
+    first = Runtime(role_hashes={})
+    second = Runtime(role_hashes={})
+    selected = SimpleNamespace(runtime=first)
+
+    async def scenario():
+        sent = []
+
+        async def stub(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"{}"})
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        async def send(message):
+            sent.append(message)
+
+        middleware = CoordinatorMiddleware(stub, lambda: selected)
+        selected.runtime = second
+        await middleware(scope("/api/v2/dh/nodes"), receive, send)
+        return sent
+
+    sent = asyncio.run(scenario())
+    assert (b"x-backend-epoch", second.coordinator.epoch.encode()) in sent[0]["headers"]

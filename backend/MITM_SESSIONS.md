@@ -2,7 +2,7 @@
 
 > Ten dokument opisuje wcześniejsze API v1. Koordynator #69 używa API v2
 > i uwierzytelnionego transportu internal opisanego w [MULTI_SESSION.md](MULTI_SESSION.md).
-> Aplikacja wycofała router sesji v1.
+> Routery v1 pozostają domyślnie włączone do czasu wspólnej migracji klientów.
 
 Rozszerzenie [kontraktu sesji](DH_SESSIONS.md). Obliczenia Mallory dostarcza
 #40 / PR #49 (`94c638e91527435d9578dcd02f4d55290d0cb910`). Backend nie generuje
