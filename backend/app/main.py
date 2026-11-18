@@ -8,8 +8,9 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 
 from .api import dh_router, router
-from .node_presence import PresenceStore, router as presence_router
-from .sessions import SessionError, SessionStore, router as sessions_router
+from .sessions import SessionError
+from .coordinator_http import CoordinatorMiddleware, lifespan
+from .multi_api import public, internal, health
 from .crypto_core import (
     CryptoCoreCallError,
     CryptoCoreInputError,
@@ -20,6 +21,7 @@ from .crypto_core import (
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
+    lifespan=lifespan,
     title="RADH API",
     version="0.1.0",
     description=(
@@ -30,10 +32,10 @@ app = FastAPI(
 )
 app.include_router(router)
 app.include_router(dh_router)
-app.state.dh_sessions = SessionStore()
-app.include_router(sessions_router)
-app.state.dh_presence = PresenceStore()
-app.include_router(presence_router)
+app.include_router(public)
+app.include_router(internal)
+app.include_router(health)
+app.add_middleware(CoordinatorMiddleware, app_state=app.state)
 
 
 def _error_response(
@@ -106,6 +108,7 @@ async def crypto_core_load_error(
         503,
         "CRYPTO_CORE_UNAVAILABLE",
         "Biblioteka CryptoCore jest niedostępna.",
+        headers={"Retry-After": "5"},
     )
 
 
@@ -131,4 +134,7 @@ async def http_error(_request: Request, exception: HTTPException) -> JSONRespons
 
 @app.exception_handler(SessionError)
 async def session_error(_request: Request, exception: SessionError) -> JSONResponse:
-    return _error_response(exception.status, exception.code, exception.message)
+    return _error_response(
+        exception.status, exception.code, exception.message,
+        headers=getattr(exception, "headers", None),
+    )

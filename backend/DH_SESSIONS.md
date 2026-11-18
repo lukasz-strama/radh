@@ -1,5 +1,9 @@
 # Sesje i transport DH — #37
 
+> Ten dokument opisuje wcześniejsze API v1. Koordynator #69 używa API v2
+> i uwierzytelnionego transportu internal opisanego w [MULTI_SESSION.md](MULTI_SESSION.md).
+> Aplikacja wycofała router sesji v1.
+
 Rozszerzenie #41: [routing MITM i kontrakt Mallory](MITM_SESSIONS.md).
 
 Koordynator przechowuje jedną bieżącą sesję w pamięci procesu. Przekazuje
