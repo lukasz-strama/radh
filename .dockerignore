@@ -22,3 +22,5 @@ frontend/dist/**
 **/*.pem
 **/*.key
 **/secrets/**
+
+.local/secrets/**

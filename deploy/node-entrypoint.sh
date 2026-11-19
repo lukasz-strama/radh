@@ -5,7 +5,7 @@ case "${RADH_NODE_ROLE:-}" in
     alice|bob|mallory) ;;
     *) echo 'Niepoprawna rola procesu.' >&2; exit 1 ;;
 esac
-set -- python -m backend.dh_transport --role "$RADH_NODE_ROLE" --url "$RADH_COORDINATOR_URL"
+set -- python -m nodes.multi_session_cli --role "$RADH_NODE_ROLE" --url "$RADH_COORDINATOR_URL"
 case "${RADH_DIAGNOSTICS:-0}" in
     0) ;;
     1) set -- "$@" --allow-diagnostics ;;

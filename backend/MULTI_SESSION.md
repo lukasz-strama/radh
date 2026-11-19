@@ -112,8 +112,10 @@ Doprecyzowania dwóch punktów wskazanych w raporcie Łukasza:
   po forward. Backend porównuje request z zachowanym oryginałem przechwycenia.
 - Dla completed `remaining_ttl_seconds` deskryptora jest minimum czasu do
   końca sesji i pozostałego okna diagnostyki liczonego od terminalizacji.
-  Dzięki temu klient PR #82 usuwa agenta w terminie serwera mimo późniejszego
-  discovery, bez dodawania pola do ścisłego modelu Descriptor.
+  Uwaga audytu #87: klient PR #82 wykorzystuje remaining_ttl_seconds dla running,
+  lecz dla completed nadal ustawia lokalne okno 30 s od pierwszej obserwacji.
+  Samo wysłanie skróconego TTL nie skraca więc retencji agenta. Dostosowanie
+  klienta pozostaje do uzgodnienia z właścicielem #68, bez dodawania pola API.
   Po 30 s backend odrzuca raport diagnostyczny z INVALID_SESSION_STATE.
   Publiczna historia i już zapisane K pozostają dostępne do końca retencji.
 
@@ -137,3 +139,18 @@ w domyślnym trybie zgodności. QA #71 może dodać scenariusze v2
 z create/token/heartbeat/discovery bez przepisywania testów v1 w tej zmianie.
 Samo przejście testów jednostkowych nie potwierdza pełnego CI ani integracji
 #68–70 i nie zastępuje bramek bezpieczeństwa publicznej bety.
+
+
+## Zintegrowany lokalny Compose — #87
+
+Compose ustawia RADH_LEGACY_API_ENABLED=false, trzy ścieżki TOKEN_FILE oraz
+RADH_ALLOWED_ORIGINS dla localhost/127.0.0.1 z RADH_HTTP_PORT. Osobne procesy
+nodes.multi_session_cli mają wyłącznie własny read-only plik roli. Sonda backendu
+używa /internal/health/ready i sprawdza mounty poświadczeń, nie OpenAPI.
+Uvicorn ma jeden worker i ufa proxy headers wyłącznie z RADH_PROXY_IP;
+Nginx zawsze nadpisuje X-Forwarded-For. Pozostałe adresy sieci, w tym węzły,
+nie są zaufanymi proxy. Limity backendu pozostają domyślne.
+
+Polecenia Fedora, sekrety, restart i smoke: [README](../README.md),
+[wdrożenie](../docs/architecture/deployment.md). Opisy zachowania domyślnego
+legacy=true powyżej dotyczą uruchomienia poza Compose, nie konfiguracji #87.

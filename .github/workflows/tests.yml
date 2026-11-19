@@ -47,6 +47,12 @@ jobs:
           PYTHONPATH: .
         run: python -m pytest --junitxml=pytest-results.xml
 
+      - name: Uruchom testy jednostkowe koordynatora v2
+        if: success() || failure()
+        env:
+          PYTHONPATH: .
+        run: python -m pytest backend/tests/unit --junitxml=backend-unit-results.xml
+
       - name: Podsumowanie wyników
         if: always()
         run: |
@@ -76,7 +82,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wyniki-testow
-          path: pytest-results.xml
+          path: |
+            pytest-results.xml
+            backend-unit-results.xml
           if-no-files-found: ignore
   
   frontend:
