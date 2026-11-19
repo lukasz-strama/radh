@@ -231,3 +231,40 @@ describe('API v2', () => {
     expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(['/api/v1/rsa/demo/encrypt', '/api/v1/rsa/demo/keygen'])
   })
 })
+
+
+describe('błędy reverse proxy bez epoch', () => {
+  it.each([429, 502, 503, 504])('zachowuje token po HTTP %s i przekazuje Retry-After', async (status) => {
+    saveCredential(own)
+    fetchMock.mockResolvedValueOnce(new Response('<html>proxy error</html>', {
+      status, headers: { 'Retry-After': '9' },
+    }))
+    await expect(fetchDhDiagnostics(id)).rejects.toMatchObject({ status, retryAfter: 9 })
+    expect(currentCredential()).toEqual(own)
+  })
+
+  it.each([null, 'invalid'])('odrzuca poprawną odpowiedź bez wymaganego epoch (%s), zachowując token', async (header) => {
+    saveCredential(own)
+    const headers = new Headers()
+    if (header !== null) headers.set('X-Backend-Epoch', header)
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(session()), { status: 200, headers }))
+    await expect(fetchDhSession(id)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
+    expect(currentCredential()).toEqual(own)
+  })
+
+  it.each([404, 410])('nie usuwa tokenu po niepotwierdzonym HTTP %s proxy', async (status) => {
+    saveCredential(own)
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status }))
+    await expect(fetchDhSession(id)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
+    expect(currentCredential()).toEqual(own)
+  })
+
+  it('nie ufa kodowi restartu bez poprawnego nagłówka epoch', async () => {
+    saveCredential(own)
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: {
+      code: 'BACKEND_EPOCH_MISMATCH', message: 'Proxy',
+    } }), { status: 503 }))
+    await expect(fetchDhSession(id)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
+    expect(currentCredential()).toEqual(own)
+  })
+})

@@ -101,38 +101,18 @@ wiadomość `m = 65` zaszyfruje się do `2790`.
 
 ### Zakładka Diffie–Hellman
 
-Zakładka DH pokazuje sesję wymiany kluczy między dwoma osobnymi procesami
-węzłów, Alice i Bobem, koordynowaną przez backend. Oprócz backendu trzeba
-więc uruchomić oba węzły, każdy w osobnym terminalu – instrukcja
-w [`backend/DH_SESSIONS.md`](../backend/DH_SESSIONS.md).
+Obecny klient korzysta wyłącznie z API v2 i niezależnych procesów
+nodes.multi_session_cli. Najprościej uruchomić pięć usług przez Compose według
+[głównego README](../README.md). W trybie deweloperskim backend i węzły wymagają
+plików tokenów zgodnie z [kontraktem backendu](../backend/MULTI_SESSION.md).
+Nie używaj transportu v1 z backend/DH_SESSIONS.md do obecnego UI.
 
-- Gdy któryś węzeł nie działa, przycisk „Rozpocznij sesję” jest nieaktywny,
-  a pod nim widać, który proces trzeba uruchomić.
-- Wspólny sekret K widać tylko wtedy, gdy węzły uruchomiono z opcją
-  `--allow-diagnostics`. Bez niej panel pokazuje „K – obliczony, zna go tylko
-  proces …” – to nie jest błąd.
-
-Szybkie sprawdzenie: dla `p = 23`, `g = 5` i węzłów w trybie testowym
-z sekretami 6 i 15 interfejs powinien pokazać `A = 8`, `B = 19`,
-a z diagnostyką `K = 2` po obu stronach.
-
-#### Scenariusz „Atak MITM”
-
-Scenariusz ataku wymaga trzeciego procesu – Mallory – uruchomionego obok
-Alice i Boba, w osobnym terminalu. Instrukcja w
-[`backend/MITM_SESSIONS.md`](../backend/MITM_SESSIONS.md).
-
-- Bez działającego procesu Mallory przycisk „Rozpocznij sesję” jest nieaktywny
-  w tym scenariuszu; zwykła wymiana działa bez niej.
-- Sekrety Mallory (K<sub>MA</sub>, K<sub>MB</sub>) widać tylko wtedy, gdy jej proces
-  też uruchomiono z `--allow-diagnostics`.
-- Tabela „Porównanie scenariuszy” pokazuje ostatnią zakończoną sesję każdego
-  scenariusza, więc oba trzeba uruchomić po kolei – koordynator obsługuje
-  jedną sesję naraz.
-
-Szybkie sprawdzenie: z węzłami jak wyżej i Mallory w trybie testowym
-z sekretami 7 i 11 interfejs powinien pokazać, że Alice otrzymała `X = 17`,
-a Bob `Y = 22`, oraz `K_A = K_MA = 12`, `K_B = K_MB = 22`.
+Każda karta ma własną sesję. Koordynator może równocześnie obsługiwać normal
+oraz MITM wielu kart, a lokalna tabela porównania zachowuje ukończone scenariusze.
+Mallory jest wymagana tylko w MITM. K wymaga zgody użytkownika i flagi
+--allow-diagnostics danego węzła. Compose losuje wykładniki lokalnie; małe liczby
+edukacyjne mogą dać równe K nawet w MITM. Stałe wektory opisane w nodes/README.md
+służą testom pojedynczych agentów, nie konfiguracji sekretów runtime v2.
 
 ## Kompilacja produkcyjna
 
@@ -152,9 +132,8 @@ Zakładka DH korzysta z koordynatora API v2 z #69 / PR #85 oraz procesów
 wielosesyjnych z #68 / PR #82. Uruchomienie wszystkich komponentów wymaga
 wspólnej migracji. Transport i tokeny ról opisuje `backend/MULTI_SESSION.md`.
 Dla tego klienta uruchom backend oraz `nodes.multi_session_cli` z tokenami ról,
-a frontend przez Vite (`npm run dev`). Obecny Compose i proxy Nginx opisują
-lokalną konfigurację v1. Wdrożenie klienta v2 przez Compose wymaga również
-przełączenia transportu węzłów, sekretów i publicznych ścieżek proxy na v2.
+a frontend przez Vite (`npm run dev`), albo użyj zintegrowanego Compose v2
+z #87 opisanego w głównym README. Proxy i procesy Compose są przełączone na v2.
 
 Klient pobiera epoch z `GET /api/v2/dh/nodes`, tworzy sesję z
 `Idempotency-Key` i `X-Backend-Epoch`, a następnie zachowuje
@@ -188,3 +167,21 @@ npm test -- tests/dhApi.unit.test.tsx
 Testy używają atrap fetch i storage. Weryfikacja dwóch rzeczywistych przeglądarek
 i procesów z backendem należy do QA #71. Build i lint uruchamia się standardowymi
 poleceniami `npm run build` i `npm run lint`.
+
+
+## Lokalny Compose DH v2 — #87
+
+Pełne środowisko uruchamiaj według [głównego README](../README.md).
+Produkcyjny build React serwuje Nginx pod localhost/127.0.0.1 z portem
+RADH_HTTP_PORT (domyślnie 8080). Frontend nie ma tokenów ról; używa jedynie
+poświadczenia własnej sesji per karta. Internal i stare sesje v1 są blokowane.
+
+Diagnostyka wymaga dwóch zgód: RADH_DIAGNOSTICS=1 przy uruchomieniu węzłów
+oraz opt-in użytkownika w UI. Przy 0 endpointy diagnostyczne zwracają null.
+Rzeczywisty poprawny epoch różny od zapisanego oznacza restart; brak epoch
+w błędzie proxy nie usuwa poświadczenia. Brak/niepoprawny epoch w sukcesie v2
+to INVALID_RESPONSE. Nadal usuwamy poświadczenie przy potwierdzonym 404/410
+backendu. 429/503 przekazuje Retry-After bez automatycznego odtwarzania sesji.
+
+Regresja proxy: `npm test -- tests/dhApi.unit.test.tsx`; całość: `npm test`,
+`npm run lint`, `npm run build`. Testy fetch nie zastępują smoke rzeczywistych usług.

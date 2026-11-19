@@ -788,3 +788,5 @@ cmake-build-*/
 # Test artifacts
 playwright-report/
 test-results/
+# Lokalne poświadczenia Compose, nigdy w Git.
+/.local/secrets/

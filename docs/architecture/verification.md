@@ -1,3 +1,106 @@
+# Weryfikacja integracji Compose v2 — #87
+
+Data: 2026-11-19. Gałąź chore/87-compose-multi-session, baza
+origin/feat/70-multi-session-ui = 5ca0454 (z #82, #85 i #86).
+**Publiczna beta pozostaje NO-GO. Runtime Compose nie został tu potwierdzony.**
+
+## Rzeczywiste wyniki bieżącej zmiany
+
+| Sprawdzenie | Wynik |
+| --- | --- |
+| git diff --check, składnia deploy/*.py, sh -n deploy/node-entrypoint.sh | PASS |
+| docker compose config --quiet / config --format json | PASS, Compose 5.6.0 |
+| Statyczna kontrola pięciu usług, mountów per rola, RO, cap_drop, PID, loopback i dokładnego IP proxy | PASS; nie dowodzi zachowania mountów runtime |
+| RADH_HTTP_PORT=18080 RADH_DIAGNOSTICS=1 docker compose config | PASS: port, oba Origin i flagi wszystkich ról spójne |
+| docker compose build | NOT RUN runtime — próba exit 1, permission denied na /var/run/docker.sock |
+| docker compose run --rm --no-deps web -t | NOT RUN — próba exit 1, brak dostępu do demona |
+| docker compose up -d --build --wait i docker compose ps | NOT RUN — obie próby exit 1, ten sam brak dostępu |
+| RADH_DIAGNOSTICS=1 docker compose up -d --wait | NOT RUN — próba exit 1, brak dostępu do demona |
+| python3 deploy/smoke.py oraz --diagnostics | NOT RUN scenariuszy — obie próby exit 1: środowisko blokuje otwieranie socketów |
+| Inicjalizacja sekretów, UID/GID, mount RO, SELinux | NOT RUN runtime; uruchomienie inicjalizatora bez sudo poprawnie odmówiło działania, niczego nie utworzono |
+| CMake configure/build, CTest | PASS, 2/2 |
+| python3 -m pytest backend/tests/unit -q | PASS, 66 |
+| Nowe procesy wielosesyjne i istniejące agenty (tests/test_multi_session + test_nodes + test_mallory_nodes) | PASS, 219 |
+| Istniejąca regresja agentów/adaptera i natywnego RSA/DH bez serwera HTTP | PASS, 642 (zestawy się pokrywają, nie sumować) |
+| timeout 60s python3 -m pytest -q -o faulthandler_timeout=15 | NOT COMPLETE, exit 124: istniejący TestClient w fixture test_sessions.api; nie ma raportu pełnego zaliczenia |
+| npm test | PASS, 37 testów w 2 plikach (w tym 9 nowych przypadków regresji proxy) |
+| npm run lint | PASS |
+| npm run build | PASS, TypeScript i Vite 8.3.4 |
+| Restart backendu i SIGTERM usług | NOT RUN runtime |
+
+Brak vitest/oxlint/tsc na początku rozwiązano instalacją npm ci na hoście użytkownika;
+instalacja offline w środowisku nie miała paczki why-is-node-running w cache.
+Nie zmieniono locka ani zależności. Testy fetch są jednostkowe, nie dowodzą
+uruchomienia Nginx czy wymiany przez prawdziwe kontenery. Nie dodano skip/xfail.
+
+## Polecenia do wykonania na Fedorze z rootful Docker Engine
+
+```sh
+test -f .env || cp .env.example .env
+sudo python3 deploy/init_secrets.py
+sudo docker compose config --quiet
+sudo docker compose build
+sudo docker compose run --rm --no-deps web -t
+sudo docker compose up -d --build --wait
+sudo docker compose ps
+# Każda sonda kontroluje faktyczne UID/GID/0400/RO i możliwość odczytu:
+sudo docker compose exec -T backend python -m deploy.healthcheck backend
+sudo docker compose exec -T alice python -m deploy.healthcheck node
+sudo docker compose exec -T bob python -m deploy.healthcheck node
+sudo docker compose exec -T mallory python -m deploy.healthcheck node
+# Wyświetla wyłącznie metadane plików i etykiety, nigdy zawartość:
+sudo ls -ldZ .local/secrets
+sudo ls -lZ .local/secrets
+```
+
+Do kontroli mountów użyj (Compose nie ma przenośnego podpolecenia inspect):
+
+```sh
+sudo docker inspect $(sudo docker compose ps -q) --format '{{.Name}} user={{.Config.User}} readonly={{.HostConfig.ReadonlyRootfs}} mounts={{json .Mounts}}'
+python3 deploy/smoke.py
+RADH_DIAGNOSTICS=1 sudo --preserve-env=RADH_DIAGNOSTICS docker compose up -d --wait
+python3 deploy/smoke.py --diagnostics
+sudo docker compose up -d --wait
+```
+
+Smoke nie wyłącza limitów (create 6/min, burst 2), respektuje Retry-After.
+Przed obiema próbami wybierz zgodną konfigurację węzłów: domyślnie .env ma
+RADH_DIAGNOSTICS=0, drugi wariant powyżej jawnie ustawia 1. Dla zmienionego portu
+użyj --url http://127.0.0.1:PORT. Skrypt nie wypisuje tokenów, kluczy ani K.
+Sprawdza dwa osobne ID/tokeny/klucze create, retry create, auth 401/404 bez mutacji,
+ukończone normal/MITM, ich wiadomości i historię, zgodność/brak diagnostyki,
+DELETE jednego rekordu bez zmiany drugiego, idempotentny DELETE i cleanup finally.
+Starty są wysłane równolegle. Skrypt osobno raportuje, czy w snapshotach
+rzeczywiście zaobserwowano oba running; ich brak nie jest dowodem współbieżności.
+
+Dodatkowo w dwóch kartach UI utworzyć własne sesje, odświeżyć jedną i usunąć ją
+bez wpływu na drugą. Zatrzymać backend podczas aktywnej sesji, uruchomić ponownie
+z nowym epoch; potwierdzić utratę starej sesji, rejestrację węzłów i nową wymianę.
+Polecenia: sudo docker compose stop backend; sudo docker compose start backend;
+sudo docker compose up -d --wait. Potwierdzić brak niekontrolowanych procesów
+po sudo docker compose stop i poprawny start. Nie zaliczono tutaj tych scenariuszy.
+
+Próby publicznego API (bez tokenów): /internal i /internal/health/ready →403,
+/api/v1/dh/sessions/current oraz heartbeat v1 →404 NOT_FOUND proxy, wiadomości,
+ACK i forward pod publicznym v2 →404, POST diagnostyki i niedozwolone metody
+znanych tras →403. ID inne niż 32 małe hex →404. GET /api/v2/dh/nodes →200 z epoch.
+Docs/OpenAPI/ReDoc →403. Przy wyłączonym legacy sprawdzić też niedostępność v1
+bezpośrednio z sieci usług — jest to osobna kontrola wyłączenia routerów backendu.
+Nie traktować 404 proxy jako dowodu wyłączenia routerów wewnątrz backendu.
+
+## Definition of Done — stan dowodów
+
+Potwierdzono automatycznie modele konfiguracji, regresję frontendowego epoch,
+regresję C/agentów, backendowe jednostki i przygotowanie dokumentacji/CI.
+Rozbieżność #68/#69 dotycząca remaining_ttl_seconds w completed jest opisana
+w deployment.md; wymaga osobnego uzgodnienia retencji agenta.
+Pięć healthy, rzeczywiste mounty/SELinux, RSA i normal/MITM przez proxy, auth
+runtime, sygnały i restart pozostają **otwarte**, do wykonania powyższymi poleceniami.
+Nie ma podstaw do oznaczenia całego #87 ani publicznego release gate jako zaliczonego.
+
+<details>
+<summary>Historyczne wyniki #73 / Compose v1 — nie dotyczą bieżącego uruchomienia v2</summary>
+
 # Weryfikacja lokalna #73
 
 Data: 2026-11-17. Baza: main a37d066, gałąź `chore/73-deployment-threat-model`.
@@ -166,3 +269,5 @@ Dodatkowo sprawdzić 413 dla body >4 KiB, CSP/no-store na sukcesach i błędach,
 po zmianie IP backendu oraz user/capabilities/read-only/limity przez Docker inspect.
 Uruchomienie poleceń G01–G25 wymaga przyszłego kodu #68–71, nie obecnego v1.
 Publiczna publikacja i testy obciążeniowe nie były wykonywane.
+
+</details>

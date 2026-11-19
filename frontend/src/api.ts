@@ -536,8 +536,13 @@ async function requestJson(
       headers: { ...(data === undefined ? {} : { 'Content-Type': 'application/json' }), ...options.headers },
       body: data === undefined ? undefined : JSON.stringify(data),
     })
-    if (options.epoch && response.headers.get('X-Backend-Epoch') !== options.epoch) {
+    const returnedEpoch = response.headers.get('X-Backend-Epoch')
+    if (options.epoch && isSessionId(returnedEpoch) && returnedEpoch !== options.epoch) {
       throw new ApiError('Serwer uruchomił się ponownie. Rozpocznij nową sesję.', 'BACKEND_EPOCH_MISMATCH')
+    }
+    // Brak epoch w błędzie proxy nie potwierdza restartu ani utraty sesji.
+    if (url.startsWith('/api/v2/') && response.ok && !isSessionId(returnedEpoch)) {
+      throw new ApiError('Backend zwrócił odpowiedź bez poprawnego epoch.', 'INVALID_RESPONSE')
     }
     options.onResponse?.(response)
     const body: unknown = response.status === 204 ? null : await response.json().catch(() => null)
@@ -547,6 +552,10 @@ async function requestJson(
       const retry = response.headers.get('Retry-After')
       const seconds = retry && /^\d+$/.test(retry) ? Math.min(Number(retry), 30) : 0
       const error = toApiError(response.status, body)
+      if (url.startsWith('/api/v2/') && !isSessionId(returnedEpoch) &&
+          (response.status === 404 || response.status === 410 || error.code === 'BACKEND_EPOCH_MISMATCH')) {
+        throw new ApiError('Niepotwierdzona odpowiedź pośrednika.', 'INVALID_RESPONSE', undefined, seconds)
+      }
       throw new ApiError(error.message, error.code, response.status, seconds)
     }
     return body

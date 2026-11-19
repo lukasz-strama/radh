@@ -23,4 +23,4 @@ COPY backend/ backend/
 COPY nodes/ nodes/
 COPY deploy/healthcheck.py deploy/node-entrypoint.sh deploy/
 USER 10001:10001
-CMD ["python", "-m", "uvicorn", "app.main:app", "--app-dir", "backend", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log", "--no-proxy-headers", "--limit-concurrency", "64", "--timeout-keep-alive", "5"]
+CMD ["python", "-m", "uvicorn", "app.main:app", "--app-dir", "backend", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log", "--proxy-headers", "--limit-concurrency", "64", "--timeout-keep-alive", "5"]

@@ -1,169 +1,137 @@
-# Wdrożenie RADH — audyt, środowisko lokalne i cel publicznej bety
+# Lokalne wdrożenie wielosesyjne — #87
 
-Stan audytu: `main` a37d066, 2026-11-17. **Compose w #73 uruchamia obecną
-jednosesyjną aplikację v1. Nie jest wdrożeniem publicznej bety.**
-Kontrakt docelowy: [multi-session.md](multi-session.md). Ocena ryzyka:
-[threat-model.md](../security/threat-model.md). Publikacja wymaga
-[release-gate.md](../security/release-gate.md).
+Stan kodu: gałąź bazowa origin/feat/70-multi-session-ui, 5ca0454; zawiera #82,
+#85 i #86. Integracja nie zmienia API ani kryptografii. **Publiczna beta NO-GO**:
+nie dostarcza publicznego TLS, pełnego release gate ani niezależnego odbioru QA #71.
+Kontrakt: [multi-session.md](multi-session.md), [STRIDE](../security/threat-model.md),
+[gate](../security/release-gate.md), [wyniki](verification.md).
 
-## Obecna architektura — potwierdzone fakty
-
-- C11/CMake buduje bibliotekę współdzieloną. Brak stanu globalnego C; wyniki
-  i wskaźniki należą do wywołującego, walidacja oraz zapis dopiero po sukcesie.
-  Python ładuje bibliotekę przez ctypes (ścieżka z env lub katalog build),
-  sprawdza typy/zakresy przed konwersją i mapuje statusy na wyjątki.
-- FastAPI ma jeden `SessionStore.session`, globalną pamięć obecności i
-  historię `used_ids` bez cleanupu. Jeden worker jest wymaganiem poprawności.
-  REST RSA jest bezstanowy; DH demo jest centralną funkcją wyłącznie matematyczną.
-- Jeden proces Alice, Bob, Mallory obsługuje po jednej sesji. Ich klient HTTP
-  odpytuje `/current`, publikuje, pobiera wiadomość i ACK; Mallory ma osobny forward.
-  Osobny wątek heartbeat nie wykonuje operacji na stanie kryptograficznym.
-- Protokół nie zawiera prywatnych wykładników. Diagnostyka K jest jawna,
-  opcjonalna i odrębna; backend nie dowodzi równości K. Nie ma auth, limitów
-  sesji/CPU i bezpiecznego publicznego dostępu do cudzych rekordów.
-- React nie oblicza RSA/DH. Formularz RSA/keygen wywołuje backend; DH polluje
-  stan co 1 s i obecność co 3 s. Vite proxy działa tylko w development.
-  Produkcyjne pliki `dist` potrzebują własnego reverse proxy.
-- CI: jeden job buduje C/CTest i uruchamia pytest, drugi lint/build frontendu.
-  Brak obrazów, skanu zależności, SBOM, publikacji czy TLS w dotychczasowym repo.
-  Testy obejmują rzeczywiste procesy i retry normal/MITM, nie wielu właścicieli.
-  Po reorganizacji testów zauważono niespójny cel monkeypatch w
-  `tests/test_dh_nodes/test_session_fixture.py`: import fixture przez
-  `tests.test_dh_nodes.test_sessions`, cel `test_sessions.TestClient`.
-  To zależność do przeglądu QA, nie poprawka produkcyjna wykonywana w #73.
-- Dokumenty DH_SESSIONS/MITM_SESSIONS opisują v1; `nodes/README` opisuje również
-  lokalne JSON Lines, które nie wysyła heartbeatów. Nie zastępować nimi transportu HTTP.
-
-## Diagram komponentów i granic
+## Skład i granice zaufania
 
 ```mermaid
 flowchart LR
-  subgraph Untrusted[Granica 1: niezaufana przeglądarka]
-    UI[React - publiczne dane i token własnej sesji w wersji docelowej]
-  end
-  UI -->|HTTPS docelowo| RP[Proxy - statyczne dist i allowlista API]
-  subgraph Private[Granica 2: prywatna sieć na VPS]
-    RP -->|publiczne API| API[FastAPI - jeden worker]
-    A[Proces Alice] -->|internal HTTP + token roli docelowo| API
-    B[Proces Bob] -->|internal HTTP + token roli docelowo| API
-    M[Proces Mallory] -->|internal HTTP + token roli docelowo| API
-    API --> MEM[Ograniczona pamięć sesji - docelowo]
-    API --> C1[CryptoCore - ctypes]
-    A --> C2[CryptoCore]
-    B --> C3[CryptoCore]
-    M --> C4[CryptoCore]
-  end
-  subgraph Admin[Granica 3: operator hosta]
-    LOG[Rotowane logi i monitoring]
-    SEC[Pliki sekretów - docelowo]
-  end
-  API --> LOG
-  RP --> LOG
-  SEC -.-> API
-  SEC -.-> A
-  SEC -.-> B
-  SEC -.-> M
-```
-
-Operator/root hosta może odczytać pamięć procesów i sekrety, dlatego jest zaufany.
-Węzły są zaufane do własnej roli, nie do przejmowania ról innych węzłów.
-Wspólny obraz nie oznacza wspólnego procesu lub współdzielenia pamięci.
-
-## Lokalny Compose dodany w #73
-
-Pliki: `compose.yaml`, `.dockerignore`, `.env.example`, `deploy/runtime.Dockerfile`,
-`deploy/web.Dockerfile`, konfiguracja Nginx, entrypoint i healthcheck.
-Backend i trzy węzły używają tego samego zbudowanego obrazu runtime, ale startują
-jako cztery odrębne kontenery/procesy. Domyślne losowanie sekretów pozostaje w węzłach.
-Brak zmian implementacji aplikacji, C i frontendu dla #68–71.
-
-```mermaid
-flowchart TB
-  Browser[Przeglądarka hosta] -->|HTTP 127.0.0.1:8080| Web
-  subgraph VPS[Jeden host - lokalne środowisko Compose]
-    subgraph Edge[Sieć edge]
-      Web[web - Nginx non-root :8080 - dist]
-    end
-    subgraph Services[Sieć services - internal true]
-      Web -->|HTTP backend:8000| Backend[backend - FastAPI jeden worker]
-      Alice[alice - Python] --> Backend
-      Bob[bob - Python] --> Backend
-      Mallory[mallory - Python] --> Backend
-    end
+  UI[Przeglądarka localhost] -->|HTTP loopback| WEB[web: Nginx + React v2]
+  subgraph PRIVATE[Prywatna sieć services]
+    WEB -->|API v2 + Owner Bearer| API[backend: FastAPI 1 worker + CryptoCore]
+    A[Alice: multi_session_cli] -->|internal + token Alice| API
+    B[Bob: multi_session_cli] -->|internal + token Bob| API
+    M[Mallory: multi_session_cli] -->|internal + token Mallory| API
   end
 ```
 
-`services` nie ma wyjścia do Internetu. `web` jest dodatkowo w edge, aby można
-było opublikować port; nie jest routerem IP i nie dostaje NET_ADMIN.
-Port backendu nie jest publikowany. Ujawniony jest wyłącznie
-`127.0.0.1:${RADH_HTTP_PORT:-8080}`. Nie używać host networking, `privileged`,
-montowania docker.sock ani hostowego katalogu projektu do runtime.
-Każdy proces działa jako non-root; capabilities usunięte, no-new-privileges,
-read-only root, mały tmpfs, ograniczone PID/CPU/RAM, logi max. 3×10 MB/usługę.
-Nie oznacza to izolacji sesji użytkowników w v1; inny lokalny użytkownik hosta
-nadal może korzystać z globalnej sesji przez ten port.
+Pięć usług pozostaje niezależnymi procesami. Ulotny wielosesyjny rejestr jest
+w jednym backendzie; każdy węzeł ma własną ograniczoną mapę agentów. Nie ma
+procesu per użytkownik, bazy, Redis ani WebSocketów. Frontend ma tylko token
+właściciela swojej sesji (sessionStorage), nigdy poświadczenia ról.
 
-Proxy dopuszcza istniejące operacje UI: RSA/keygen/DH demo, tworzenie/start/cancel
-sesji i odczyty, w tym **GET `/api/v1/dh/sessions/current`** z istniejącym
-limiterem i konfiguracją proxy. Ten odczyt umożliwia UI odzyskanie ID i anulowanie
-sesji po odświeżeniu strony; pozostałe metody `/current` są blokowane
-(403; TRACE jest odrzucane wcześniej przez Nginx kodem 405).
-Endpoint zniknie dopiero przy migracji do v2 w #68–70. Proxy nie wystawia
-heartbeatów, publikowania/ACK/forward ani zapisu diagnostyki. Węzły korzystają bezpośrednio z `http://backend:8000`.
-Istniejące API aplikacji nadal nie ma autoryzacji, proxy nie dopisuje fikcyjnych
-poświadczeń. Lokalny limiter proxy (20 r/s/IP, burst) i limit body 4 KiB nie są
-implementacją pełnego admission control z kontraktu wielosesyjnego.
-Brak TLS i tokenów w tej konfiguracji jest celowy i wyklucza jej publiczne użycie.
+Publiczny port: wyłącznie 127.0.0.1:${RADH_HTTP_PORT:-8080}. Backend 8000 nie
+jest publikowany. Sieć services ma internal=true. Web jest też w edge, ale nie
+ma NET_ADMIN ani funkcji routera. Podsiec services domyślnie 172.30.87.0/24,
+web ma stały adres 172.30.87.10. Uvicorn z --proxy-headers ufa wyłącznie temu
+adresowi przez FORWARDED_ALLOW_IPS. Nginx nadpisuje XFF/Proto; nagłówki od innych
+węzłów nie są zaufane. Przy zmianie podsieci ustawić spójnie RADH_SERVICES_SUBNET
+i RADH_PROXY_IP, unikając konfliktu z VPN i innymi sieciami Dockera.
 
-### Powtarzalność buildów i wersje
+Allowlista proxy: GET nodes, POST create, GET/DELETE session, POST start/cancel,
+GET events/diagnostics/diagnostics/mallory. ID ma dokładnie 32 małe hex.
+Internal, stare sesje/heartbeat v1, /current, publikacja/ACK/forward i zapisy K
+są niedostępne publicznie. Nieznane API daje 404, niedozwolona metoda znanej
+trasy 403 (TRACE może być odrzucone wcześniej przez Nginx jako 405).
+RSA/keygen/demo DH zachowują wyłącznie dotychczasowe POST pod /api/v1/.
+Docs/OpenAPI/ReDoc są blokowane. Limiter proxy 20 r/s/IP, burst 20 (demo burst 5),
+body 4 KiB, timeouty i security headers pozostają. Limity backendu nie są podnoszone.
+Authorization, Idempotency-Key i epoch przechodzą do backendu; odpowiedzi zachowują
+Retry-After i epoch, API i błędy proxy mają no-store. Nie logujemy URI/body/headerów.
 
-| Obraz / zależności | Wersja domyślna | Uzasadnienie |
-| --- | --- | --- |
-| Python | `python:3.12.16-slim-bookworm` | Linia 3.12 zgodna z CI; ten sam glibc w builderze i runtime C |
-| Node | `node:22.23.5-bookworm-slim` | Linia 22 zgodna z CI i wymaganiem Vite >=22.12; wyłącznie builder |
-| Nginx | `nginx:1.30.6-alpine3.24` | Jawna wersja stabilnej linii, mały runtime statycznych plików |
-| npm | `frontend/package-lock.json` + npm ci | Istniejący lock bez zmiany zależności Szymona |
-| Python runtime | `deploy/requirements.lock` | Pełny snapshot istniejącego backend/.venv, zgodny z zakresami backend/requirements.txt |
+## Sekrety i Fedora Linux
 
-Tagi zweryfikowano w oficjalnych indeksach [Python](https://raw.githubusercontent.com/docker-library/official-images/master/library/python),
-[Node](https://raw.githubusercontent.com/docker-library/official-images/master/library/node),
-[Nginx](https://raw.githubusercontent.com/docker-library/official-images/master/library/nginx).
-Tag z numerem patch może być ponownie zbudowany przez wydawcę: to ogranicza dryf,
-ale nie zapewnia bitowej identyczności. **Przed publiczną betą** operator zapisuje
-manifesty multiarch/digesty z rzeczywiście pobranych obrazów, skanuje je i używa
-`image@sha256:...`; nie wpisujemy wymyślonych digestów. apt korzysta z bieżących
-repozytoriów Debiana, lock Python nie zawiera hashy artefaktów. Reprodukowalność
-bitowa (snapshot apt, hashe pip) to jawnie nierozwiązany element release gate.
+Wymagany rootful Docker bez userns-remap. Skrypt inicjalizacji wymaga sudo, aby
+ustawić UID/GID 10001. Nie polegamy na uid/gid/mode w deklaracji Compose secrets:
+file-based secrets są mountami plików hosta, a ich deklaracja nie naprawia praw.
+Używamy jawnych read-only bindów z create_host_path=false. Brak pliku blokuje
+start zamiast utworzyć pusty katalog. Na SELinux stosujemy współdzieloną etykietę
+`z`, bo backend i właściwy węzeł czytają ten sam plik. Bez wyłączania SELinux.
 
-Builder kompiluje i testuje C, instaluje zamrożone zależności do prefixu. Runtime
-nie zawiera kompilatora ani źródeł C; ma bibliotekę .so w stałej ścieżce env.
-Osobny builder Node wykonuje lint/build. Do Nginx trafiają tylko `dist` i konfiguracja.
-Allowlista `.dockerignore` wyklucza .git, .env, klucze, venv, node_modules, buildy
-hosta, testy i niezwiązane lokalne dokumenty (np. RACI.md).
-Lock jest punktem startowym, nie dowodem braku podatności; aktualizacje w
-oddzielnym przeglądzie QA/bezpieczeństwa, nie automatycznie `latest` przy deployu.
+```sh
+# Z katalogu repozytorium:
+test -f .env || cp .env.example .env
+sudo python3 deploy/init_secrets.py
+sudo docker compose config --quiet
+sudo docker compose build
+sudo docker compose run --rm --no-deps web -t
+sudo docker compose up -d --wait
+sudo docker compose ps
+```
 
-### Konfiguracja i healthchecki v1
+Katalog .local/secrets ma root:root 0700, każdy plik 10001:10001 0400.
+Tokeny generuje secrets.token_urlsafe(32), trzy niezależne; inicjalizator nie
+nadpisuje istniejących i odrzuca symlinki oraz nieprawidłowe prawa. Katalog jest
+ignorowany przez Git i build context. Nie umieszczać tokenów w .env, ARG, ENV
+obrazu ani argumentach procesu. Backend montuje wszystkie trzy pliki, węzeł
+wyłącznie swój; web nie ma żadnych mountów/zmiennych poświadczeń.
+Zmiana tokenów wymaga kontrolowanego restartu backendu i węzłów (sesje giną).
+Rotacja bez przestoju pozostaje osobną bramką G13, poza #87.
 
-- `.env.example`: tylko port, tag lokalnego obrazu, `RADH_DIAGNOSTICS=0|1`.
-  Nie ma działających dziś tokenów usług; nie dodawać atrap sugerujących auth.
-- URL koordynatora ustawiony w Compose na nazwę usługi `backend`; nie localhost.
-- `RADH_DIAGNOSTICS=1` dodaje flagę `--allow-diagnostics` dla każdego węzła.
-  Bez tego UI pokazuje, że K zostało w procesie. Nie włączamy test-mode w Compose.
-- Sonda backendu: HTTP `/openapi.json`, obecność trasy keygen, ładowanie CryptoCore
-  i symbolu keygen. Nie zmienia stanu sesji i nie wykonuje kosztownej wymiany.
-- Sonda węzła: PID 1 istnieje oraz jego rola ma świeży heartbeat u koordynatora.
-  Nie wysyła sztucznego heartbeat w imieniu procesu. W v1 może być oszukana przez
-  inny proces tej roli — docelowo instance_id i auth rozwiążą tę lukę.
-- Sonda proxy: GET `/healthz` — sprawdza tylko proxy. Pełna gotowość wymaga też
-  healthy backend i online wszystkich potrzebnych ról. Healthcheck 10 s/3 retry;
-  unhealthy nie uruchamia automatycznie restartu w Compose.
-- `depends_on: service_healthy` porządkuje start, ale nie obsługuje późniejszej
-  awarii. `restart: unless-stopped` restartuje zakończone procesy, nie unhealthy.
-  Operator monitoruje sondy i rozstrzyga zawieszenie; restart backendu traci sesję,
-  restart węzła traci wykładnik. Anuluj starą sesję i utwórz nową.
+Po starcie sonda każdej usługi runtime weryfikuje UID/GID/0400, możliwość
+odczytu i flagę read-only rzeczywiście zamontowanych plików przez statvfs.
+Backend dodatkowo odpytuje /internal/health/ready (koordynator + załadowanie C),
+węzeł kontroluje proces PID 1/rolę i GET /api/v2/dh/nodes, bez heartbeatów sondy.
+Web zachowuje /healthz. Runtime non-root/read-only/tmpfs, cap_drop ALL,
+no-new-privileges, CPU/RAM/PID oraz rotowane logi pozostają w Compose.
 
-## Docelowy VPS po #68–71 — nie jest implementowany w Compose v1
+## Diagnostyka, test i lifecycle
+
+```sh
+python3 deploy/smoke.py
+# Po zmianie portu w .env, np. 18080:
+python3 deploy/smoke.py --url http://127.0.0.1:18080
+# Osobna próba z raportowaniem K przez węzły:
+RADH_DIAGNOSTICS=1 sudo --preserve-env=RADH_DIAGNOSTICS docker compose up -d --wait
+python3 deploy/smoke.py --diagnostics
+sudo docker compose up -d --wait  # powrót do wartości .env
+sudo docker compose logs --tail=100 web backend alice bob mallory
+sudo docker compose stop
+sudo docker compose start
+sudo docker compose down
+```
+
+UI dodatkowo wymaga opt-in właściciela sesji. Smoke świadomie tworzy sesje
+z opt-in właściciela także przy wyłączonych węzłach, aby sprawdzić brak K.
+Respektuje Retry-After, więc idempotentne create może czekać na limiter; nie
+wyłącza limitów. Sprząta własne sesje w finally; w razie niedostępności backendu
+pozostaje TTL i komunikat błędu cleanupu. Równoległe starty i rzeczywiście
+zaobserwowane nakładanie running są raportowane oddzielnie. Nie drukuje K/tokenów.
+
+SIGTERM przechodzi przez exec do multi_session_cli. Restart backendu zmienia
+epoch i usuwa ulotne rekordy; agent unieważnia stare dane i rejestruje się ponownie.
+Po utracie lease proces kończy się, a unless-stopped uruchamia nową instancję.
+Użytkownik musi utworzyć nowe sesje. Healthcheck unhealthy nie jest automatycznym
+restartem zawieszonego procesu. Test restartu i brak starych sekretów wymagają
+odbioru runtime, nie są dowiedzione samą konfiguracją.
+
+Aktualizacja: zbudować obrazy z jednego SHA, wykonać smoke i kontrolowanie
+odtworzyć komplet. Zachować tagi poprzednich runtime/web do rollbacku całego
+zestawu; sesje nie przeżywają wdrożenia. Jeden backend z pamięcią oznacza brak
+skalowania poziomego, HA i trwałości. Monitoring/alerty, TLS/domena, digesty/SBOM,
+skany CVE i poufny kanał zgłoszeń nadal wymagają release gate. Edukacyjne RSA/DH
+32-bitowe nie chronią prawdziwych danych.
+
+## Ograniczenia i historia
+
+Compose v1 z #73 było lokalnym środowiskiem przejściowym. Instrukcje dopuszczania
+/current w tamtej wersji są historyczne i nie dotyczą #87. Wersje bazowych obrazów
+pozostają przypięte jak w #73; nie aktualizowano zależności ani ABI dla integracji.
+Rootless/userns-remap wymaga osobnego mapowania UID i testów mountów. Nie deklarujemy
+weryfikacji SELinux, restartów, sygnałów ani pięciu healthy bez rzeczywistego Dockera.
+
+
+Rozbieżność ujawniona podczas integracji: #69 wysyła skrócone
+remaining_ttl_seconds dla completed, ale #68 w tym stanie nadal utrzymuje lokalne
+okno 30 s od pierwszej obserwacji. Backend odrzuca raport po swoim deadline;
+lokalny agent może pozostać dłużej o opóźnienie discovery. Nie zmieniono transportu
+w #87; poprawkę retencji należy uzgodnić z właścicielem #68 przed odbiorem gate.
+
+## Docelowy VPS — plan #73 poza lokalną integracją #87
 
 Jedna maszyna Linux, początkowo 2 vCPU/4 GiB RAM, bez Kubernetesa i bez bazy.
 Nginx (lub równoważny pojedynczy proxy) serwuje dist i kończy TLS 1.2/1.3.
@@ -178,15 +146,15 @@ wewnętrznym routerem z tokenami ról. Publiczny proxy ma allowlistę v2 oraz RS
 blokuje legacy sesje v1, `/internal`, docs i schema. Forwarded headers są
 nadpisywane przez proxy, a backend ufa wyłącznie konkretnemu adresowi/CIDR proxy.
 Nie ufać `X-Forwarded-For` z Internetu ani stosować `forwarded-allow-ips=*` bez
-izolacji listenera. Obecny Compose wyłącza zaufanie do proxy headers całkowicie;
-limity IP w docelowym backendzie wymagają zmiany konfiguracji po #69.
+izolacji listenera. Lokalny Compose #87 ufa wyłącznie skonfigurowanemu IP web; ustawienia
+TLS i publicznego listenera wymagają oddzielnego wdrożenia oraz odbioru gate.
 
 ### Sekrety, zasoby, logi
 
 Tokeny ról generuje operator (`secrets.token_urlsafe(32)`), trzy niezależne pliki
 z dostępem tylko dla odpowiedniego UID; backend dostaje ich skróty lub prywatne
 pliki konfiguracyjne. Bez ARG/ENV podczas builda, obrazu, frontendu i Git.
-Docelowe ścieżki `_FILE` opisuje kontrakt; aktualny kod ich jeszcze nie obsługuje.
+Ścieżki `_FILE` są obsługiwane przez #68/#69 i montowane w lokalnym Compose #87.
 W Sprincie A dopuszczamy wymianę tokenów ról z zatrzymaniem/restartem usług
 oraz fencing; rotacja bez przestoju z maks. 60 s nakładania tokenów to follow-up
 operacyjny obowiązkowy przed publikacją (G13), poza implementacją #68–71.

@@ -30,78 +30,78 @@ Formularz wysyła dane do backendu, który wykonuje obliczenia w bibliotece C.
 Poniższe polecenia są przeznaczone dla Linux/macOS (Bash lub Zsh).
 Zacznij w katalogu głównym sklonowanego repozytorium `radh`.
 
-## Cały aktualny system przez Docker Compose (lokalnie)
+## Cały system przez Docker Compose v2 (Fedora Linux, lokalnie)
 
-Wymagany Docker Engine z Compose v2.20+ (lub nowszym zgodnym pluginem) i dostępem
-użytkownika do demona. Z katalogu głównego repozytorium:
+Wymagany rootful Docker Engine z działającym `sudo docker compose` i Python 3.11+.
+Z katalogu repozytorium:
 
 ```sh
 test -f .env || cp .env.example .env
-docker compose config --quiet
-docker compose build
-docker compose up -d --wait
+sudo python3 deploy/init_secrets.py
+sudo docker compose config --quiet
+sudo docker compose build
+sudo docker compose run --rm --no-deps web -t
+sudo docker compose up -d --wait
+sudo docker compose ps
 ```
 
-Otwórz <http://127.0.0.1:8080>. Jeden reverse proxy serwuje produkcyjny build
-React i przekazuje API do jednego FastAPI. Alice, Bob i Mallory są trzema
-osobnymi procesami/kontenerami. Nie trzeba uruchamiać ich dodatkowo w terminalach.
-Biblioteka C jest kompilowana i testowana w builderze; CMake/Python/Node nie
-muszą być instalowane na hoście. Pierwszy build wymaga pobrania obrazów i pakietów.
+Otwórz <http://127.0.0.1:8080> lub <http://localhost:8080>. Pięć usług to web
+(Nginx + React), backend (jeden Uvicorn + CryptoCore) i niezależne procesy
+Alice/Bob/Mallory korzystające wyłącznie z internal API. UI używa DH v2;
+`RADH_LEGACY_API_ENABLED=false` wyłącza stare sesje i heartbeat v1. `/current`
+nie jest dostępne. RSA/keygen i matematyczne demo DH zachowują endpointy v1.
+
+Inicjalizator tworzy trzy niezależne tokeny w ignorowanym `.local/secrets/`.
+Nie nadpisuje istniejących. Root jest wymagany do ustawienia UID/GID 10001,
+trybu plików 0400 i katalogu root:root 0700. Backend ma trzy read-only bindy,
+a każdy węzeł tylko własny. Web/front nie otrzymują tokenów. Compose nie zmienia
+właściciela plików za nas; runtime healthcheck sprawdza UID/GID/tryb/odczyt i
+read-only mount. SELinux na Fedorze: współdzielone pliki mają bind `selinux: z`.
+Wariant rootless Docker wymaga osobnego uzgodnienia mapowania UID, nie jest
+obsługiwany przez ten skrypt. Nie stosuj chmod 644 ani wyłączania SELinux.
 
 ```sh
-# Stan, logi i szybka kontrola API
-docker compose ps
-docker compose logs --tail=100 -f web backend alice bob mallory
-curl --fail http://127.0.0.1:8080/api/v1/dh/nodes
-curl --fail http://127.0.0.1:8080/api/v1/rsa/demo/keygen \
-   -H 'Content-Type: application/json' -d '{"p":61,"q":53,"e":17}'
-```
-
-Ręczny smoke (zwykły Python 3.11+ na hoście, bez dodatkowych pakietów):
-
-```sh
+sudo docker compose logs --tail=100 web backend alice bob mallory
 python3 deploy/smoke.py
-# Jeśli RADH_DIAGNOSTICS=1:
+# Osobna próba: jawny lokalny opt-in węzłów; w UI dodatkowo zaznacz zgodę na K.
+RADH_DIAGNOSTICS=1 sudo --preserve-env=RADH_DIAGNOSTICS docker compose up -d --wait
 python3 deploy/smoke.py --diagnostics
+# Powrót do konfiguracji .env (domyślnie diagnostyka wyłączona):
+sudo docker compose up -d --wait
 ```
 
-Smoke sprawdza blokady proxy, odczytuje własną bieżącą sesję przez GET `/current`
-i anuluje ją jak UI po utracie lokalnego ID, następnie wykonuje normal/MITM.
-Tworzy własne sesje i zastępuje ukończoną sesję w v1;
-uruchamiaj go na wolnym lokalnym środowisku. Nie wysyła żądań poza loopback.
+Smoke używa rzeczywistych usług na loopback, tworzy własne sesje normal/MITM,
+sprawdza auth, idempotencję, diagnostykę i DELETE. Respektuje 429/Retry-After;
+może czekać na budżet create (6/min, burst 2). Sprząta wyłącznie własne sesje.
+Równoległe starty nie są automatycznie dowodem nakładania stanów running —
+skrypt raportuje, czy rzeczywiście je zaobserwował. Nie wypisuje tokenów ani K.
 
-Po zgłoszeniu heartbeatów role mają `online: true`. Brak sesji `/current` (404)
-przez proxy przed utworzeniem pierwszej sesji jest normalny. GET `/current`
-pozostaje dostępny lokalnie dla resetu UI po odświeżeniu; inne metody są blokowane.
-Endpoint zostanie usunięty dopiero w API v2 (#68–70). UI pozwala utworzyć sesję
-normal lub MITM. Przy domyślnym losowaniu sekretów wyniki K nie są stałym wektorem.
-Aby pokazywać K edukacyjnie w UI, ustaw w `.env` `RADH_DIAGNOSTICS=1` i wykonaj
-`docker compose up -d`; domyślnie K pozostają w procesach.
-Nie przekazuj prawdziwych kluczy ani danych poufnych.
+W `.env` zmień `RADH_HTTP_PORT`, np. 18080, i odtwórz usługi. Port oraz oba
+`RADH_ALLOWED_ORIGINS` są wyprowadzane z tej samej wartości. Smoke uruchom wtedy
+z `--url http://127.0.0.1:18080`. Domyślna prywatna podsieć 172.30.87.0/24
+musi być wolna na hoście/VPN; przy zmianie ustaw zgodnie RADH_SERVICES_SUBNET
+i RADH_PROXY_IP. Backend ufa XFF wyłącznie z dokładnego IP web, nie z całej sieci.
 
 ```sh
-# Zatrzymanie i ponowny start (bez przebudowy)
-docker compose stop
-docker compose start
-# Usunięcie kontenerów i sieci; ulotne sesje giną
-docker compose down
-# Przebudowa po zmianach kodu/biblioteki/dependencji
-docker compose build --pull
-docker compose up -d --wait
+sudo docker compose stop
+sudo docker compose start
+sudo docker compose down  # usuwa kontenery/sieci; pliki tokenów pozostają
+sudo docker compose build --pull
+sudo docker compose up -d --wait
 ```
 
-Zmiana `RADH_HTTP_PORT` w `.env` zmienia tylko port loopback. Nie publikuj tego
-Compose w Internecie: obecny system ma jedną globalną sesję i nie ma auth/TLS
-publicznej bety. Compose nie implementuje wielosesyjności z #68–71.
-Healthcheck `unhealthy` wymaga diagnozy (`docker compose logs`); sama polityka
-restart nie restartuje działającego, lecz zawieszonego procesu. Restart backendu
-lub węzła wymaga rozpoczęcia nowej sesji. Starych sekretów nie da się odzyskać.
+Restart backendu usuwa ulotne sesje i zmienia epoch. Węzły rejestrują się ponownie;
+jeżeli stracą lease, kończą proces i polityka restart uruchamia nową instancję.
+Sekretów DH nie można odtworzyć; utwórz nowe sesje. Unhealthy nie oznacza
+automatycznego restartu działającego procesu: sprawdź logi i `docker compose ps`.
+Brak tokenów blokuje mount/start, błędne uprawnienia blokują healthcheck. Po zmianie
+kodu/config Nginx przebuduj obrazy, sam restart nie kopiuje plików z hosta.
 
-Architektura i konfiguracja: [deployment](docs/architecture/deployment.md).
-Kontrakt dla zespołu: [multi-session](docs/architecture/multi-session.md).
-Bezpieczeństwo: [model STRIDE](docs/security/threat-model.md) i
-[warunki publikacji](docs/security/release-gate.md). Wyniki rzeczywiście wykonanej
-weryfikacji: [verification](docs/architecture/verification.md).
+Szczegóły i polecenia weryfikacyjne: [wdrożenie](docs/architecture/deployment.md)
+i [wyniki testów](docs/architecture/verification.md). **Publiczna beta: NO-GO**
+do spełnienia [release gate](docs/security/release-gate.md). To edukacyjna
+kryptografia 32-bitowa, bez produkcyjnego TLS w Compose; nie publikuj tego portu.
+
 
 ## Przygotowanie i kompilacja
 
@@ -141,7 +141,11 @@ npm --prefix frontend run lint
 ponownie po zmianie zależności. `build` sprawdza typy TypeScript i zapisuje
 zbudowany frontend w `frontend/dist/`, a `lint` sprawdza kod.
 
-## Uruchomienie całego projektu lokalnie
+## Ręczne uruchomienie poza Compose (historyczny demonstrator v1)
+
+**Uwaga:** poniższe polecenia procesów DH dotyczą historycznego v1 i nie
+obsługują obecnego UI v2. Do pełnej aplikacji użyj Compose powyżej.
+Ręczne uruchomienie v2 opisano w backend/MULTI_SESSION.md oraz nodes/MULTI_SESSION.md.
 
 Uruchom backend i frontend w osobnych terminalach w katalogu głównym repozytorium. Biblioteka C jest
 ładowana przez backend i nie wymaga osobnego procesu.

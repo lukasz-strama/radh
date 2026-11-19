@@ -41,6 +41,29 @@ services:
     <<: *runtime
     mem_limit: 512m
     cpus: 1.0
+    environment:
+      RADH_LEGACY_API_ENABLED: "false"
+      RADH_ALLOWED_ORIGINS: http://localhost:${RADH_HTTP_PORT:-8080},http://127.0.0.1:${RADH_HTTP_PORT:-8080}
+      FORWARDED_ALLOW_IPS: ${RADH_PROXY_IP:-172.30.87.10}
+      RADH_ALICE_TOKEN_FILE: /run/secrets/alice
+      RADH_BOB_TOKEN_FILE: /run/secrets/bob
+      RADH_MALLORY_TOKEN_FILE: /run/secrets/mallory
+    volumes:
+      - type: bind
+        source: ./.local/secrets/alice
+        target: /run/secrets/alice
+        read_only: true
+        bind: {create_host_path: false, selinux: z}
+      - type: bind
+        source: ./.local/secrets/bob
+        target: /run/secrets/bob
+        read_only: true
+        bind: {create_host_path: false, selinux: z}
+      - type: bind
+        source: ./.local/secrets/mallory
+        target: /run/secrets/mallory
+        read_only: true
+        bind: {create_host_path: false, selinux: z}
     healthcheck:
       test: [CMD, python, -m, deploy.healthcheck, backend]
       interval: 10s
@@ -49,19 +72,40 @@ services:
       start_period: 15s
   alice:
     <<: *node
+    volumes:
+      - type: bind
+        source: ./.local/secrets/alice
+        target: /run/secrets/alice
+        read_only: true
+        bind: {create_host_path: false, selinux: z}
     environment:
+      RADH_ALICE_TOKEN_FILE: /run/secrets/alice
       RADH_NODE_ROLE: alice
       RADH_COORDINATOR_URL: http://backend:8000
       RADH_DIAGNOSTICS: ${RADH_DIAGNOSTICS:-0}
   bob:
     <<: *node
+    volumes:
+      - type: bind
+        source: ./.local/secrets/bob
+        target: /run/secrets/bob
+        read_only: true
+        bind: {create_host_path: false, selinux: z}
     environment:
+      RADH_BOB_TOKEN_FILE: /run/secrets/bob
       RADH_NODE_ROLE: bob
       RADH_COORDINATOR_URL: http://backend:8000
       RADH_DIAGNOSTICS: ${RADH_DIAGNOSTICS:-0}
   mallory:
     <<: *node
+    volumes:
+      - type: bind
+        source: ./.local/secrets/mallory
+        target: /run/secrets/mallory
+        read_only: true
+        bind: {create_host_path: false, selinux: z}
     environment:
+      RADH_MALLORY_TOKEN_FILE: /run/secrets/mallory
       RADH_NODE_ROLE: mallory
       RADH_COORDINATOR_URL: http://backend:8000
       RADH_DIAGNOSTICS: ${RADH_DIAGNOSTICS:-0}
@@ -73,7 +117,10 @@ services:
     # Port jest celowo związany na stałe z loopback, bez opcji 0.0.0.0 w .env.
     ports:
       - "127.0.0.1:${RADH_HTTP_PORT:-8080}:8080"
-    networks: [edge, services]
+    networks:
+      edge: {}
+      services:
+        ipv4_address: ${RADH_PROXY_IP:-172.30.87.10}
     user: "101:101"
     read_only: true
     tmpfs:
@@ -103,3 +150,6 @@ networks:
   edge: {}
   services:
     internal: true
+    ipam:
+      config:
+        - subnet: ${RADH_SERVICES_SUBNET:-172.30.87.0/24}
