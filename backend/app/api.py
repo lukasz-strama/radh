@@ -3,9 +3,10 @@
 from functools import lru_cache
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from .crypto_core import CryptoCore
+from .coordinator_http import runtime
 from .models import (
     DhExchangeRequest, DhExchangeResponse,
     ErrorResponse, RsaEncryptRequest, RsaEncryptResponse,
@@ -44,14 +45,13 @@ def get_crypto_core() -> CryptoCore:
     },
 )
 def encrypt_rsa(
-    request: RsaEncryptRequest,
+    request: RsaEncryptRequest, http_request: Request,
     crypto_core: Annotated[CryptoCore, Depends(get_crypto_core)],
 ) -> RsaEncryptResponse:
-    ciphertext = crypto_core.encrypt(
-        request.message,
-        request.public_exponent,
-        request.modulus,
-    )
+    with runtime(http_request).demo_slot():
+        ciphertext = crypto_core.encrypt(
+            request.message, request.public_exponent, request.modulus,
+        )
     return RsaEncryptResponse(ciphertext=ciphertext)
 
 
@@ -71,9 +71,10 @@ def encrypt_rsa(
         503: {"model": ErrorResponse, "description": "CryptoCore lub operacja keygen są niedostępne"},
     },
 )
-def generate_rsa_keys(request: RsaKeygenRequest) -> RsaKeygenResponse:
+def generate_rsa_keys(request: RsaKeygenRequest, http_request: Request) -> RsaKeygenResponse:
     # Załaduj bibliotekę dopiero po walidacji żądania.
-    result = get_crypto_core().generate_rsa_keys(request.p, request.q, request.e)
+    with runtime(http_request).demo_slot():
+        result = get_crypto_core().generate_rsa_keys(request.p, request.q, request.e)
     return RsaKeygenResponse(n=result.n, e=result.e, d=result.d, phi=result.phi)
 
 
@@ -94,12 +95,13 @@ def generate_rsa_keys(request: RsaKeygenRequest) -> RsaKeygenResponse:
     },
 )
 def exchange_dh(
-    request: DhExchangeRequest,
+    request: DhExchangeRequest, http_request: Request,
     crypto_core: Annotated[CryptoCore, Depends(get_crypto_core)],
 ) -> DhExchangeResponse:
-    result = crypto_core.exchange(
-        request.prime, request.generator, request.alice_secret, request.bob_secret,
-    )
+    with runtime(http_request).demo_slot():
+        result = crypto_core.exchange(
+            request.prime, request.generator, request.alice_secret, request.bob_secret,
+        )
     return DhExchangeResponse(
         alice_public=result.alice_public,
         bob_public=result.bob_public,

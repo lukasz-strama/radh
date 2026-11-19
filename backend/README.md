@@ -7,6 +7,15 @@ Python nie zawiera zastępczej implementacji RSA ani DH.
 > **Uwaga:** jest to edukacyjne, 32-bitowe RSA bez paddingu. Nie używaj go do
 > ochrony prawdziwych danych.
 
+## Wielosesyjny koordynator DH (#69)
+
+API v2 i transport internal oraz instrukcja migracji dla węzłów, frontendu i QA
+znajdują się w [MULTI_SESSION.md](MULTI_SESSION.md). Koordynator wymaga jednego
+workera backendu, tokenów ról i wspólnej migracji klientów #68/#70.
+Routery v1 pozostają domyślnie dostępne dla dotychczasowych klientów.
+Po wspólnej migracji ustaw `RADH_LEGACY_API_ENABLED=false`, aby wyłączyć
+routery sesji i heartbeat v1 oraz objąć demo v1 limitami nowej warstwy HTTP.
+
 ## Wymagania
 
 - Python 3.11 lub nowszy,
