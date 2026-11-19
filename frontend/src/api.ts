@@ -252,9 +252,10 @@ export async function resumeDhSession(id: string, signal?: AbortSignal): Promise
 }
 
 export async function fetchDhSession(id: string, signal?: AbortSignal): Promise<DhSession> {
-  const raw = await ownRequest('GET', id, '', signal) as Record<string, unknown>
+  const raw = await ownRequest('GET', id, '', signal) as Record<string, unknown> | null
+  if (!raw) throw unexpectedFormat()
   const history = await ownRequest('GET', id, '/events?after=0&limit=32', signal) as Record<string, unknown>
-  if (history.session_id !== id || history.backend_epoch !== raw.backend_epoch) throw unexpectedFormat()
+  if (!history || history.session_id !== id || history.backend_epoch !== raw.backend_epoch) throw unexpectedFormat()
   const session = toDhSession({ ...raw, events: history.events })
   if (session.id !== id || session.epoch !== credentialFor(id).epoch) throw unexpectedFormat()
   return session

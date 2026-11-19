@@ -151,6 +151,10 @@ Podgląd zbudowanej wersji: `npm run preview`.
 Zakładka DH korzysta z koordynatora API v2 z #69 / PR #85 oraz procesów
 wielosesyjnych z #68 / PR #82. Uruchomienie wszystkich komponentów wymaga
 wspólnej migracji. Transport i tokeny ról opisuje `backend/MULTI_SESSION.md`.
+Dla tego klienta uruchom backend oraz `nodes.multi_session_cli` z tokenami ról,
+a frontend przez Vite (`npm run dev`). Obecny Compose i proxy Nginx opisują
+lokalną konfigurację v1. Wdrożenie klienta v2 przez Compose wymaga również
+przełączenia transportu węzłów, sekretów i publicznych ścieżek proxy na v2.
 
 Klient pobiera epoch z `GET /api/v2/dh/nodes`, tworzy sesję z
 `Idempotency-Key` i `X-Backend-Epoch`, a następnie zachowuje

@@ -47,7 +47,7 @@ type ViewState =
 // Dostępność węzłów z heartbeatów.
 type NodesState =
   | { status: 'loading' }
-  | { status: 'error'; message: string }
+  | { status: 'error'; message: string; retryAfter: number }
   | { status: 'ready'; nodes: NodesAvailability }
 
 // K z diagnostyki: Alice, Bob i (w MITM) oba sekrety Mallory.
@@ -125,7 +125,10 @@ async function checkNodes(signal?: AbortSignal): Promise<NodesState> {
   try {
     return { status: 'ready', nodes: await fetchDhNodes(signal) }
   } catch (error) {
-    return { status: 'error', message: errorMessage(error, 'nieoczekiwany błąd.') }
+    return {
+      status: 'error', message: errorMessage(error, 'nieoczekiwany błąd.'),
+      retryAfter: error instanceof ApiError ? error.retryAfter : 0,
+    }
   }
 }
 
@@ -254,7 +257,8 @@ export function DhExchange() {
       const state = await checkNodes(controller.signal)
       if (!active) return
       setNodes(state)
-      timer = window.setTimeout(tick, NODES_POLL_MS)
+      const delay = state.status === 'error' ? Math.max(NODES_POLL_MS, state.retryAfter * 1000) : NODES_POLL_MS
+      timer = window.setTimeout(tick, delay)
     }
     void tick()
     return () => {
@@ -300,6 +304,7 @@ export function DhExchange() {
 
       connectionLostAt = null
       setNotice(null)
+      let retryDelay = SESSION_POLL_MS
       if (session.status === 'expired' || session.status === 'failed' || session.status === 'cancelled') {
         diagnostics = NO_DIAGNOSTICS
         setLastByMode((previous) => {
@@ -313,6 +318,7 @@ export function DhExchange() {
         try {
           diagnostics = { ...diagnostics, ...(await fetchDhDiagnostics(session.id, controller.signal)) }
         } catch (error) {
+          if (error instanceof ApiError) retryDelay = Math.max(retryDelay, error.retryAfter * 1000)
           if (error instanceof ApiError && (error.status === 401 || error.status === 403 ||
               error.status === 404 || error.status === 410 || error.code === 'BACKEND_EPOCH_MISMATCH')) {
             if (active && id === requestId.current) {
@@ -325,6 +331,7 @@ export function DhExchange() {
           try {
             diagnostics = { ...diagnostics, ...(await fetchDhMalloryDiagnostics(session.id, controller.signal)) }
           } catch (error) {
+            if (error instanceof ApiError) retryDelay = Math.max(retryDelay, error.retryAfter * 1000)
             if (error instanceof ApiError && (error.status === 401 || error.status === 403 ||
                 error.status === 404 || error.status === 410 || error.code === 'BACKEND_EPOCH_MISMATCH')) {
               if (active && id === requestId.current) setView({ status: 'error', message: error.message })
@@ -348,7 +355,7 @@ export function DhExchange() {
           session.diagnosticsEnabled && !allKeysKnown(session.mode, diagnostics) &&
           session.terminalAt !== null &&
           Date.now() - Date.parse(session.terminalAt) < DIAGNOSTICS_GRACE_MS)
-      if (keepPolling) timer = window.setTimeout(tick, SESSION_POLL_MS)
+      if (keepPolling) timer = window.setTimeout(tick, retryDelay)
     }
 
     timer = window.setTimeout(tick, SESSION_POLL_MS)
