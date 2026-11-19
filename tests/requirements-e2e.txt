@@ -1,0 +1,2 @@
+# Testy E2E interfejsu (tests/test_ui_e2e, RADH_E2E=1); przeglądarki i drivery z systemu.
+selenium==4.53.0
