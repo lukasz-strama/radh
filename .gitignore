@@ -790,3 +790,5 @@ playwright-report/
 test-results/
 # Lokalne poświadczenia Compose, nigdy w Git.
 /.local/secrets/
+
+frontend/e2e-artifacts/
