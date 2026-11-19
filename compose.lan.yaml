@@ -1,0 +1,11 @@
+# Jawny wariant demo w zaufanej sieci Wi-Fi; domyślny Compose pozostaje na loopback.
+# Użycie: RADH_LAN_IP=192.168.1.30 docker compose -f compose.yaml -f compose.lan.yaml up -d --wait
+services:
+  backend:
+    environment:
+      RADH_ALLOWED_ORIGINS: http://localhost:${RADH_HTTP_PORT:-8080},http://127.0.0.1:${RADH_HTTP_PORT:-8080},http://${RADH_LAN_IP:?Ustaw IPv4 komputera w sieci Wi-Fi}:${RADH_HTTP_PORT:-8080}
+  web:
+    # Nie doklejamy portu do bazowej listy; deklarujemy dokładnie dwa interfejsy.
+    ports: !override
+      - "127.0.0.1:${RADH_HTTP_PORT:-8080}:8080"
+      - "${RADH_LAN_IP:?Ustaw IPv4 komputera w sieci Wi-Fi}:${RADH_HTTP_PORT:-8080}:8080"

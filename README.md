@@ -56,7 +56,10 @@ Nie nadpisuje istniejących. Root jest wymagany do ustawienia UID/GID 10001,
 trybu plików 0400 i katalogu root:root 0700. Backend ma trzy read-only bindy,
 a każdy węzeł tylko własny. Web/front nie otrzymują tokenów. Compose nie zmienia
 właściciela plików za nas; runtime healthcheck sprawdza UID/GID/tryb/odczyt i
-read-only mount. SELinux na Fedorze: współdzielone pliki mają bind `selinux: z`.
+read-only mount. SELinux na Fedorze: inicjalizator jawnie nadaje trzem plikom
+współdzieloną etykietę `container_file_t:s0`, także dla istniejących tokenów.
+Pozostawiono bind `selinux: z`, ale Compose 5.6 może pominąć tę opcję przy
+`create_host_path: false`; nie polegamy na niej jako jedynym relabelowaniu.
 Wariant rootless Docker wymaga osobnego uzgodnienia mapowania UID, nie jest
 obsługiwany przez ten skrypt. Nie stosuj chmod 644 ani wyłączania SELinux.
 
@@ -102,6 +105,39 @@ i [wyniki testów](docs/architecture/verification.md). **Publiczna beta: NO-GO**
 do spełnienia [release gate](docs/security/release-gate.md). To edukacyjna
 kryptografia 32-bitowa, bez produkcyjnego TLS w Compose; nie publikuj tego portu.
 
+
+## Demo na iPhonie przez Wi-Fi — dwóch użytkowników
+
+Telefon i komputer muszą być w tej samej zaufanej sieci Wi-Fi. Dodatkowy plik
+`compose.lan.yaml` zachowuje localhost i dodaje wyłącznie wskazany adres LAN
+oraz odpowiadający mu Origin. Domyślny `compose.yaml` nadal jest tylko lokalny.
+
+Przykład dla komputera 192.168.1.30 (aktualny adres sprawdź `ip -4 -brief address`):
+
+```sh
+sudo env RADH_LAN_IP=192.168.1.30 docker compose -f compose.yaml -f compose.lan.yaml up -d --wait
+```
+
+Na iPhonie otwórz Safari: **http://192.168.1.30:8080**. Na komputerze możesz
+pozostać przy http://localhost:8080. Każde urządzenie ma własne poświadczenie
+sesji. Uruchom normal na komputerze i MITM na telefonie; Reset telefonu powinien
+usunąć wyłącznie jego sesję. Najlepiej przygotować oba formularze i rozpocząć
+wymiany jednocześnie. Nie wysyłaj drugiemu użytkownikowi tokenu, wystarczy adres.
+
+Włączenie wariantu LAN odtwarza backend ze zmienioną listą Origin — dotychczasowe
+ulotne sesje znikną. Utwórz nowe. Nie potrzeba przebudowy obrazu. Dla jawnego
+raportowania K dodaj `RADH_DIAGNOSTICS=1` po `sudo env` i zaznacz opt-in w UI.
+Po demonstracji usuń nasłuchiwanie LAN:
+
+```sh
+sudo docker compose -f compose.yaml up -d --wait
+```
+
+Jeżeli telefon nie łączy: sprawdź adres komputera, wspólną sieć Wi-Fi i wyłączoną
+izolację klientów/tryb sieci gościnnej. Sprawdź najpierw ten sam adres LAN w
+przeglądarce komputera. Nie wyłączaj SELinux ani firewalla. Wariant służy demo
+w zaufanej LAN przez HTTP; nie przekierowuj portu na routerze. Publiczna beta
+pozostaje NO-GO. Szczegóły: [wdrożenie — LAN](docs/architecture/deployment.md#demo-lan).
 
 ## Przygotowanie i kompilacja
 
