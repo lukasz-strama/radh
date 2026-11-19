@@ -318,3 +318,15 @@ python -m pytest tests/test_mallory_nodes.py -v
 python -m pytest tests/test_nodes.py -v
 python -m pytest
 ```
+
+## Wielosesyjny transport internal v2 — #68
+
+Nowy, jawnie wybierany klient: `python -m nodes.multi_session_cli --role alice`.
+Analogicznie uruchamia się Boba i Mallory jako dwa pozostałe procesy.
+Pełna konfiguracja, synchronizacja, retry i granica integracji z #69:
+[MULTI_SESSION.md](MULTI_SESSION.md).
+
+`backend.dh_transport` i lokalny JSON Lines pozostają dotychczasowymi interfejsami
+v1 / pojedynczego agenta. Compose nadal uruchamia v1. Nowy klient nie korzysta
+z `/current`, nie przełącza się na v1 po błędzie i wymaga API internal z #69.
+Brak takiego API nie jest powodem do uruchamiania klientów v2 na obecnym Compose.

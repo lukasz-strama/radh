@@ -263,3 +263,10 @@ ale klient transportu wymaga #44. Dla pełnego uruchomienia na `main` należy
 scalić #44 przed uruchamianiem klientów (zalecana kolejność: #44, #45, #46).
 Nie jest wymagane łączenie zmian w jeden PR. Samo zatwierdzenie kontraktu nie
 scala żadnego PR; integrację wykonują opiekunowie repozytorium.
+
+## Przejście na wielosesyjne internal v2 — #68/#69
+
+Opis powyżej pozostaje kontraktem działającego v1. Nowy, oddzielnie uruchamiany
+klient `nodes.multi_session_cli` opisano w [nodes/MULTI_SESSION.md](../nodes/MULTI_SESSION.md).
+Wymaga koordynatora #69 i nie jest domyślnym transportem Compose. Nie wykonuje
+fallbacku do `/current`; atomowa migracja całego systemu wymaga #68–70.
