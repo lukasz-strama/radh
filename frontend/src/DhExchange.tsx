@@ -119,6 +119,9 @@ const NODES_POLL_MS = 3000
 // Ostatni ACK może zakończyć sesję, zanim węzły zgłoszą K, więc diagnostykę
 // czytamy jeszcze przez tyle po zakończeniu (albo krócej, gdy przyjdą wszystkie wartości).
 const DIAGNOSTICS_GRACE_MS = 30_000
+// Zakończoną sesję serwer trzyma jeszcze przez czas retencji, potem ją usuwa (410).
+// Sprawdzamy to rzadko, żeby poinformować o wygaśnięciu, zamiast pokazywać nieaktualny stan.
+const TERMINAL_POLL_MS = 15_000
 
 // Pyta koordynatora o dostępność węzłów; błąd zamienia na stan do wyświetlenia.
 async function checkNodes(signal?: AbortSignal): Promise<NodesState> {
@@ -203,6 +206,13 @@ export function DhExchange() {
   )
   const [diagnosticsEnabled, setDiagnosticsEnabled] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  // Błąd ostatniej akcji (start, wznowienie) przy zachowanej sesji – widok sesji zostaje,
+  // żeby dalej było widać jej stan, w tym wygaśnięcie.
+  const [actionError, setActionError] = useState<string | null>(null)
+  // Po 429/503 przy starcie serwer każe odczekać (Retry-After) – do tego czasu
+  // przycisk startu jest zablokowany, żeby nie dokładać kolejnych odrzuconych prób.
+  const [startBlocked, setStartBlocked] = useState(false)
+  const unblockTimer = useRef<number | undefined>(undefined)
   const actionController = useRef<AbortController | null>(null)
   const [mode, setMode] = useState<DhMode>('normal')
   // Ostatnia zakończona sesja każdego scenariusza – do porównania obok siebie.
@@ -246,7 +256,34 @@ export function DhExchange() {
     return () => controller.abort()
   }, [])
 
-  useEffect(() => () => actionController.current?.abort(), [])
+  useEffect(
+    () => () => {
+      actionController.current?.abort()
+      window.clearTimeout(unblockTimer.current)
+    },
+    [],
+  )
+
+  // Kontrakt: po wygaśnięciu sesji K znika z widoku – także z porównania scenariuszy.
+  function dropComparisonKeys(id: string) {
+    setLastByMode((previous) => {
+      const next = { ...previous }
+      for (const key of ['normal', 'mitm'] as const) {
+        const saved = next[key]
+        if (saved?.id === id) next[key] = withDiagnostics(saved, NO_DIAGNOSTICS)
+      }
+      return next
+    })
+  }
+
+  // Blokuje start na czas z Retry-After, jeśli błąd go podał (429/503).
+  function blockStartIfAsked(error: unknown) {
+    if (!(error instanceof ApiError) || error.retryAfter <= 0) return
+    if (error.status !== 429 && error.status !== 503) return
+    window.clearTimeout(unblockTimer.current)
+    setStartBlocked(true)
+    unblockTimer.current = window.setTimeout(() => setStartBlocked(false), error.retryAfter * 1000)
+  }
 
   // Dostępność węzłów sprawdzamy od razu i potem co NODES_POLL_MS.
   useEffect(() => {
@@ -278,7 +315,16 @@ export function DhExchange() {
     let timer: number | undefined
     let diagnostics: Diagnostics = NO_DIAGNOSTICS
     let connectionLostAt: number | null = null
+    let firstTick = true
     const controller = new AbortController()
+
+    // Serwer usunął sesję po upływie retencji (410): mówimy o tym zamiast pokazywać
+    // nieaktualny stan. Poświadczenie usuwa już klient API.
+    function sessionGone() {
+      dropComparisonKeys(sessionId as string)
+      setView({ status: 'empty' })
+      setNotice('Sesja wygasła i została usunięta z serwera. Możesz rozpocząć nową.')
+    }
 
     async function tick() {
       let session: DhSession
@@ -286,6 +332,10 @@ export function DhExchange() {
         session = await fetchDhSession(sessionId as string, controller.signal)
       } catch (error) {
         if (!active || id !== requestId.current) return
+        if (error instanceof ApiError && error.status === 410) {
+          sessionGone()
+          return
+        }
         if (error instanceof ApiError && (error.status === 429 || error.status === 503 || error.code === 'NETWORK_ERROR' || error.code === 'REQUEST_TIMEOUT')) {
           connectionLostAt ??= Date.now()
           if (Date.now() - connectionLostAt < 30_000) {
@@ -307,14 +357,23 @@ export function DhExchange() {
       let retryDelay = SESSION_POLL_MS
       if (session.status === 'expired' || session.status === 'failed' || session.status === 'cancelled') {
         diagnostics = NO_DIAGNOSTICS
-        setLastByMode((previous) => {
-          const saved = previous[session.mode]
-          return saved?.id === session.id
-            ? { ...previous, [session.mode]: withDiagnostics(saved, NO_DIAGNOSTICS) }
-            : previous
-        })
+        dropComparisonKeys(session.id)
       }
-      if (session.diagnosticsEnabled && (session.status === 'running' || session.status === 'completed')) {
+      // Błąd ostatniej akcji dotyczył sesji „utworzonej”; po zmianie stanu jest nieaktualny.
+      if (session.status !== 'created') setActionError(null)
+      // Po zakończeniu K czytamy tylko w oknie DIAGNOSTICS_GRACE_MS (albo raz po odświeżeniu
+      // strony), a nie przy każdym rzadkim sprawdzeniu wygaśnięcia.
+      const inGrace =
+        session.terminalAt !== null &&
+        Date.now() - Date.parse(session.terminalAt) < DIAGNOSTICS_GRACE_MS
+      const wantDiagnostics =
+        session.diagnosticsEnabled &&
+        (session.status === 'running' ||
+          (session.status === 'completed' &&
+            !allKeysKnown(session.mode, diagnostics) &&
+            (inGrace || firstTick)))
+      firstTick = false
+      if (wantDiagnostics) {
         try {
           diagnostics = { ...diagnostics, ...(await fetchDhDiagnostics(session.id, controller.signal)) }
         } catch (error) {
@@ -322,7 +381,8 @@ export function DhExchange() {
           if (error instanceof ApiError && (error.status === 401 || error.status === 403 ||
               error.status === 404 || error.status === 410 || error.code === 'BACKEND_EPOCH_MISMATCH')) {
             if (active && id === requestId.current) {
-              setView({ status: 'error', message: error.message })
+              if (error.status === 410) sessionGone()
+              else setView({ status: 'error', message: error.message })
             }
             return
           }
@@ -334,7 +394,10 @@ export function DhExchange() {
             if (error instanceof ApiError) retryDelay = Math.max(retryDelay, error.retryAfter * 1000)
             if (error instanceof ApiError && (error.status === 401 || error.status === 403 ||
                 error.status === 404 || error.status === 410 || error.code === 'BACKEND_EPOCH_MISMATCH')) {
-              if (active && id === requestId.current) setView({ status: 'error', message: error.message })
+              if (active && id === requestId.current) {
+                if (error.status === 410) sessionGone()
+                else setView({ status: 'error', message: error.message })
+              }
               return
             }
           }
@@ -348,14 +411,18 @@ export function DhExchange() {
         setLastByMode((previous) => ({ ...previous, [shown.mode]: shown }))
       }
 
-      const keepPolling =
-        session.status === 'created' ||
-        session.status === 'running' ||
-        (session.status === 'completed' &&
-          session.diagnosticsEnabled && !allKeysKnown(session.mode, diagnostics) &&
-          session.terminalAt !== null &&
-          Date.now() - Date.parse(session.terminalAt) < DIAGNOSTICS_GRACE_MS)
-      if (keepPolling) timer = window.setTimeout(tick, retryDelay)
+      // Trwająca sesja: co SESSION_POLL_MS. Zakończona: jeszcze w oknie diagnostyki
+      // tak samo, potem rzadko, aż serwer ją usunie. Wygasła: koniec (komunikat już jest).
+      const waitingForKeys =
+        session.status === 'completed' &&
+        session.diagnosticsEnabled &&
+        !allKeysKnown(session.mode, diagnostics) &&
+        inGrace
+      if (session.status === 'created' || session.status === 'running' || waitingForKeys) {
+        timer = window.setTimeout(tick, retryDelay)
+      } else if (session.status !== 'expired') {
+        timer = window.setTimeout(tick, Math.max(TERMINAL_POLL_MS, retryDelay))
+      }
     }
 
     timer = window.setTimeout(tick, SESSION_POLL_MS)
@@ -368,12 +435,13 @@ export function DhExchange() {
 
   async function handleStart(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (isLoading || nodesOffline || activeId) return
+    if (isLoading || nodesOffline || activeId || startBlocked) return
     const id = ++requestId.current
     actionController.current?.abort()
     const controller = new AbortController()
     actionController.current = controller
     setNotice(null)
+    setActionError(null)
     setView({ status: 'empty' })
 
     const form = new FormData(event.currentTarget)
@@ -396,7 +464,28 @@ export function DhExchange() {
       scrollToSceneIfBelow(sceneRef.current)
     } catch (error) {
       if (id !== requestId.current) return
-      setView({ status: 'error', message: errorMessage(error, 'Wystąpił nieoczekiwany błąd.') })
+      blockStartIfAsked(error)
+      const message = errorMessage(error, 'Wystąpił nieoczekiwany błąd.')
+      if (!(await showKeptSession(id, message, controller.signal))) {
+        setView({ status: 'error', message })
+      }
+    }
+  }
+
+  // Sesja została utworzona, ale start się nie udał: pokazujemy jej stan (z odpytywaniem,
+  // więc widać też wygaśnięcie) i błąd akcji obok. Zwraca false, gdy sesji nie ma.
+  async function showKeptSession(id: number, message: string, signal: AbortSignal) {
+    const own = currentCredential()
+    if (!own) return false
+    try {
+      const kept = await fetchDhSession(own.id, signal)
+      if (id !== requestId.current) return true
+      setView({ status: 'session', session: kept })
+      // Przy wygasłej sesji wystarczy jej własny komunikat.
+      setActionError(kept.status === 'expired' ? null : message)
+      return true
+    } catch {
+      return false
     }
   }
 
@@ -407,12 +496,18 @@ export function DhExchange() {
     actionController.current?.abort()
     const controller = new AbortController()
     actionController.current = controller
+    setActionError(null)
     setView({ status: 'loading' })
     try {
       const session = await resumeDhSession(own.id, controller.signal)
       if (id === requestId.current) setView({ status: 'session', session })
     } catch (error) {
-      if (id === requestId.current) setView({ status: 'error', message: errorMessage(error, 'Nie udało się wznowić sesji.') })
+      if (id !== requestId.current) return
+      blockStartIfAsked(error)
+      const message = errorMessage(error, 'Nie udało się wznowić sesji.')
+      if (!(await showKeptSession(id, message, controller.signal))) {
+        setView({ status: 'error', message })
+      }
     }
   }
 
@@ -423,6 +518,7 @@ export function DhExchange() {
     actionController.current = controller
     setFieldErrors({})
     setNotice(null)
+    setActionError(null)
     setView({ status: 'loading' })
     try {
       await resetOwnDhSession(controller.signal)
@@ -530,11 +626,15 @@ export function DhExchange() {
               nie zna.
             </p>
 
-            <label className="hint">
-              <input type="checkbox" checked={diagnosticsEnabled}
+            {/* Świadoma zgoda na diagnostykę: bez niej węzły nie zgłaszają K. */}
+            <label className="dh-check">
+              <input
+                type="checkbox"
+                checked={diagnosticsEnabled}
                 disabled={isLoading || activeId !== null}
-                onChange={(event) => setDiagnosticsEnabled(event.target.checked)} />
-              {' '}Pokaż edukacyjnie wspólne sekrety sesji
+                onChange={(event) => setDiagnosticsEnabled(event.target.checked)}
+              />
+              Pokaż edukacyjnie wspólne sekrety sesji
             </label>
 
             <div className="dh-buttons">
@@ -542,7 +642,7 @@ export function DhExchange() {
                 type="submit"
                 busy={isLoading}
                 busyLabel="Uruchamianie…"
-                disabled={nodesOffline || activeId !== null}
+                disabled={nodesOffline || activeId !== null || startBlocked}
                 aria-describedby={
                   nodesOffline || nodes.status === 'error' ? 'dh-nodes-hint' : undefined
                 }
@@ -562,6 +662,7 @@ export function DhExchange() {
             )}
             <NodesHint nodes={nodes} mode={mode} />
             {notice && <Notice tone="warning">{notice}</Notice>}
+            {actionError && session && <Notice tone="error">{actionError}</Notice>}
             {session?.status === 'expired' && (
               <Notice tone="warning">Sesja wygasła. Reset usunie jej historię i pozwoli rozpocząć nową.</Notice>
             )}

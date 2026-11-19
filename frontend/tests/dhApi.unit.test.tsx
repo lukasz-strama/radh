@@ -268,3 +268,41 @@ describe('błędy reverse proxy bez epoch', () => {
     expect(currentCredential()).toEqual(own)
   })
 })
+
+describe('komunikaty błędów API v2', () => {
+  it('zastępuje ogólny komunikat backendu opisem kodu i podaje czas z Retry-After', async () => {
+    fetchMock.mockResolvedValueOnce(nodes())
+    fetchMock.mockResolvedValueOnce(response({ error: {
+      code: 'RATE_LIMITED', message: 'Nie można wykonać operacji.',
+    } }, 429, epoch, { 'Retry-After': '7' }))
+    await expect(startDhSession({ prime: 23, generator: 5 }, 'normal')).rejects.toMatchObject({
+      status: 429, retryAfter: 7,
+      message: 'Za dużo prób w krótkim czasie. Spróbuj ponownie za 7 s.',
+    })
+  })
+
+  it.each([
+    ['NODE_UNAVAILABLE', 409, 'Nie wszystkie potrzebne procesy węzłów są dostępne.'],
+    ['INVALID_SESSION_STATE', 409, 'Tej operacji nie można wykonać w obecnym stanie sesji.'],
+    ['SESSION_EXPIRED', 410, 'Sesja wygasła i została usunięta z serwera.'],
+  ])('tłumaczy %s', async (code, status, message) => {
+    saveCredential(own)
+    fetchMock.mockResolvedValueOnce(response({ error: { code, message: 'Nie można wykonać operacji.' } }, status))
+    await expect(resumeDhSession(id)).rejects.toMatchObject({ code, message })
+  })
+
+  it('zostawia komunikat backendu dla nieznanego kodu', async () => {
+    saveCredential(own)
+    fetchMock.mockResolvedValueOnce(response({ error: { code: 'COS_NOWEGO', message: 'Opis z backendu.' } }, 409))
+    await expect(resumeDhSession(id)).rejects.toMatchObject({ message: 'Opis z backendu.' })
+  })
+
+  it('nie zmienia komunikatów API v1 (RSA)', async () => {
+    fetchMock.mockResolvedValueOnce(response({ error: {
+      code: 'INVALID_P', message: 'Liczba p musi być pierwsza.',
+    } }, 422))
+    await expect(generateRsaKeys({ p: 60, q: 53, e: 17 })).rejects.toMatchObject({
+      message: 'Liczba p musi być pierwsza.',
+    })
+  })
+})
