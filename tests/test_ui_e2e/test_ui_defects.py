@@ -1,8 +1,9 @@
-"""QA UI: wykryte defekty jako testy ``xfail(strict=True)``.
+"""QA UI: wykryte defekty.
 
-Każdy test opisuje oczekiwane zachowanie. Dopóki defekt istnieje, test „oczekiwanie
-nie przechodzi” (XFAIL); po naprawie stanie się XPASS i — przez ``strict`` —
-zatrzyma CI, żeby zdjąć oznaczenie i zamknąć bug issue. Kroki reprodukcji: docstring.
+Otwarte defekty są testami ``xfail(strict=True)``: dopóki defekt istnieje, test
+„oczekiwanie nie przechodzi” (XFAIL); po naprawie stanie się XPASS i — przez
+``strict`` — zatrzyma CI, żeby zdjąć oznaczenie i zamknąć bug issue.
+Naprawione defekty zostają jako zwykłe testy regresji. Kroki reprodukcji: docstring.
 """
 
 import pytest
@@ -17,9 +18,10 @@ def run_normal(page):
     page.wait(lambda: "sesja zakończona" in page.session_badges(), timeout=30, message="sesja zakończona")
 
 
-@pytest.mark.xfail(strict=True, reason="BUG-UI-01: checkbox diagnostyki ma 44 px i stoi nad etykietą")
 def test_bug_ui_01_diagnostics_checkbox_layout(page, width):
-    """1. Otwórz zakładkę Diffie–Hellman. 2. Spójrz na „Pokaż edukacyjnie wspólne sekrety sesji”.
+    """Regresja BUG-UI-01 (naprawione w #90).
+
+    1. Otwórz zakładkę Diffie–Hellman. 2. Spójrz na „Pokaż edukacyjnie wspólne sekrety sesji”.
     Oczekiwane: zwykły checkbox (≈20 px) w jednym wierszu z etykietą, jak radio „Scenariusz”.
     Faktycznie: reguła `.panel input:not([type='radio'])` (App.css) nadaje mu min-height 44 px,
     a `.panel label` układa go w kolumnie — duży kwadrat wyśrodkowany nad tekstem."""
@@ -37,7 +39,7 @@ def test_bug_ui_01_diagnostics_checkbox_layout(page, width):
 @pytest.mark.xfail(strict=True, reason="BUG-UI-02: odrzucona próba tworzenia blokuje kolejną do Reset")
 def test_bug_ui_02_rejected_create_blocks_next_attempt(page, width):
     """1. DH, wpisz p = 24 (nie jest pierwsza — sprawdza ją backend), kliknij „Rozpocznij sesję”.
-    2. Pojawia się „Niepoprawne parametry sesji DH.” — popraw p na 23 i kliknij ponownie.
+    2. Pojawia się „Parametr p musi być liczbą pierwszą.” — popraw p na 23 i kliknij ponownie.
     Oczekiwane: nowa sesja startuje. Faktycznie: „Poprzednia próba utworzenia wymaga porzucenia.
     Kliknij Reset…”. Przyczyna: `startDhSession` (api.ts) zapisuje `radh.dh.v2.creation` przed
     POST i nie usuwa go po ostatecznym odrzuceniu 4xx (422/409), więc inne parametry = konflikt."""
@@ -55,9 +57,10 @@ def test_bug_ui_02_rejected_create_blocks_next_attempt(page, width):
 
 
 @pytest.mark.widths(390, 1440)
-@pytest.mark.xfail(strict=True, reason="BUG-UI-03: „Rozpocznij sesję” po zakończonej sesji czyści wynik")
 def test_bug_ui_03_start_after_completed_hides_result(page, width):
-    """1. DH, uruchom zwykłą wymianę i poczekaj na „sesja zakończona”.
+    """Regresja BUG-UI-03 (naprawione w #90).
+
+    1. DH, uruchom zwykłą wymianę i poczekaj na „sesja zakończona”.
     2. Bez Reset kliknij ponownie „Rozpocznij sesję” (przycisk jest aktywny).
     Oczekiwane: przycisk nieaktywny z podpowiedzią albo wynik zostaje na ekranie z komunikatem.
     Faktycznie: przebieg i wynik znikają (placeholder „Podaj parametry…”), pojawia się

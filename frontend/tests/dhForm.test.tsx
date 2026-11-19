@@ -24,7 +24,7 @@ beforeEach(() => {
   online = { alice: true, bob: true, mallory: true }
   fetchMock = vi.fn((url: string) => {
     if (url === '/api/v2/dh/nodes') return Promise.resolve(nodesResponse())
-    return Promise.resolve(json({ error: { code: 'INVALID_PRIME', message: 'Niepoprawne parametry sesji DH.' } }, 422))
+    return Promise.resolve(json({ error: { code: 'INVALID_PRIME', message: 'Nie można wykonać operacji.' } }, 422))
   })
   vi.stubGlobal('fetch', fetchMock)
 })
@@ -86,7 +86,7 @@ describe('formularz DH', () => {
     await user.clear(screen.getByLabelText('Liczba pierwsza (p)'))
     await user.type(screen.getByLabelText('Liczba pierwsza (p)'), '24')
     await user.click(screen.getByRole('button', { name: 'Rozpocznij sesję' }))
-    expect((await screen.findByRole('alert')).textContent).toContain('Niepoprawne parametry sesji DH.')
+    expect((await screen.findByRole('alert')).textContent).toContain('Parametr p musi być liczbą pierwszą.')
   })
 })
 
@@ -95,7 +95,7 @@ describe('znane defekty (it.fails — po naprawie zamienić na it)', () => {
   // więc poprawione parametry dają „Poprzednia próba utworzenia wymaga porzucenia…”.
   it.fails('BUG-UI-02: po 422 nie zostaje zapisana próba tworzenia', async () => {
     await expect(startDhSession({ prime: 24, generator: 5 }, 'normal')).rejects.toThrow(
-      'Niepoprawne parametry sesji DH.')
+      'Parametr p musi być liczbą pierwszą.')
     expect(pendingCreation()).toBeNull()
   })
 

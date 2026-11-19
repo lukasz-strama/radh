@@ -61,7 +61,7 @@ def test_dh_backend_rejection_is_shown(page, width):
     page.fill("prime", "24")
     start(page)
     page.wait(lambda: page.notices(".dh-form"), message="komunikat backendu")
-    assert page.notices(".dh-form") == ["Niepoprawne parametry sesji DH."]
+    assert page.notices(".dh-form") == ["Parametr p musi być liczbą pierwszą."]
     assert page.js("return document.querySelector('.dh-form .notice--error').getAttribute('role')") == "alert"
     assert page.session_badges() == []
     page.screenshot("dh-backend-error")
