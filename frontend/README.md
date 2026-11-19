@@ -126,6 +126,8 @@ Podgląd zbudowanej wersji: `npm run preview`.
 ## Pozostałe polecenia
 
 - `npm run lint` – sprawdzenie kodu linterem (oxlint).
+- `npm test` – testy klienta API i zachowania UI (Vitest).
+
 ## Wielosesyjny klient DH (#70)
 
 Zakładka DH korzysta z koordynatora API v2 z #69 / PR #85 oraz procesów

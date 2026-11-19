@@ -556,7 +556,7 @@ async function requestJson(
           (response.status === 404 || response.status === 410 || error.code === 'BACKEND_EPOCH_MISMATCH')) {
         throw new ApiError('Niepotwierdzona odpowiedź pośrednika.', 'INVALID_RESPONSE', undefined, seconds)
       }
-      throw new ApiError(error.message, error.code, response.status, seconds)
+      throw new ApiError(v2Message(url, error, response.status, seconds), error.code, response.status, seconds)
     }
     return body
   } catch (error) {
@@ -571,6 +571,41 @@ async function requestJson(
     window.clearTimeout(timeout)
     options.signal?.removeEventListener('abort', abort)
   }
+}
+
+// Komunikaty API v2 po kodzie błędu. Backend v2 przy większości błędów podaje tylko
+// ogólne „Nie można wykonać operacji.”, więc dla znanych kodów mówimy wprost, co się stało.
+const V2_ERROR_MESSAGES: Record<string, string> = {
+  INVALID_PRIME: 'Parametr p musi być liczbą pierwszą.',
+  INVALID_GENERATOR: 'Generator musi spełniać 2 ≤ g < p.',
+  RATE_LIMITED: 'Za dużo prób w krótkim czasie.',
+  SESSION_CAPACITY: 'Serwer obsługuje teraz najwięcej sesji, ile może.',
+  RUNNING_CAPACITY: 'Zbyt wiele sesji trwa jednocześnie.',
+  CRYPTO_BUSY: 'Serwer jest chwilowo zajęty obliczeniami.',
+  NODE_UNAVAILABLE: 'Nie wszystkie potrzebne procesy węzłów są dostępne.',
+  INVALID_SESSION_STATE: 'Tej operacji nie można wykonać w obecnym stanie sesji.',
+  SESSION_NOT_FOUND: 'Sesja nie istnieje albo należy do innej karty.',
+  SESSION_EXPIRED: 'Sesja wygasła i została usunięta z serwera.',
+  UNAUTHORIZED: 'Brak uprawnień do tej sesji.',
+  BACKEND_EPOCH_MISMATCH: 'Serwer uruchomił się ponownie. Rozpocznij nową sesję.',
+  CREATE_RETRY_EXPIRED: 'Nie udało się potwierdzić utworzenia sesji. Kliknij Reset i rozpocznij nową.',
+  CREATION_GONE: 'Ta próba utworzenia sesji została już usunięta. Kliknij Reset i rozpocznij nową.',
+  IDEMPOTENCY_CONFLICT:
+    'Ponowienie nie zgadza się z pierwszą próbą utworzenia. Kliknij Reset i rozpocznij nową.',
+  ORIGIN_NOT_ALLOWED: 'Serwer nie przyjmuje żądań z tej strony.',
+  SERVICE_UNAVAILABLE: 'Usługa jest chwilowo niedostępna.',
+  INTERNAL_ERROR: 'Wystąpił błąd serwera.',
+}
+
+// Komunikat błędu API v2: po kodzie, z czasem oczekiwania przy 429/503.
+// Błędy API v1 (RSA) zostają bez zmian – tam backend podaje pełne komunikaty.
+function v2Message(url: string, error: ApiError, status: number, retryAfter: number): string {
+  if (!url.startsWith('/api/v2/')) return error.message
+  let message = (error.code && V2_ERROR_MESSAGES[error.code]) || error.message
+  if (retryAfter > 0 && (status === 429 || status === 503)) {
+    message += ` Spróbuj ponownie za ${retryAfter} s.`
+  }
+  return message
 }
 
 function unexpectedFormat(): ApiError {

@@ -40,7 +40,8 @@
   gap: var(--space-1);
 }
 
-.panel input:not([type='radio']) {
+/* Pola tekstowe; radio i checkbox mają własny wygląd niżej */
+.panel input:not([type='radio']):not([type='checkbox']) {
   box-sizing: border-box;
   min-height: var(--touch-target);
   padding: var(--space-2) var(--space-3);
@@ -613,6 +614,24 @@ details[open] > .dh-collapsible-header {
   gap: var(--space-2);
   min-height: var(--touch-target);
   cursor: pointer;
+}
+
+/* Zgoda na pokazanie K: checkbox obok tekstu, cały wiersz klikalny */
+.panel .dh-check {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch-target);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.dh-check input {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--color-accent);
 }
 
 /* Większe radio, w kolorze akcentu */
