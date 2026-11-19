@@ -49,8 +49,18 @@ Wymagany rootful Docker bez userns-remap. Skrypt inicjalizacji wymaga sudo, aby
 ustawić UID/GID 10001. Nie polegamy na uid/gid/mode w deklaracji Compose secrets:
 file-based secrets są mountami plików hosta, a ich deklaracja nie naprawia praw.
 Używamy jawnych read-only bindów z create_host_path=false. Brak pliku blokuje
-start zamiast utworzyć pusty katalog. Na SELinux stosujemy współdzieloną etykietę
-`z`, bo backend i właściwy węzeł czytają ten sam plik. Bez wyłączania SELinux.
+start zamiast utworzyć pusty katalog. Inicjalizator na hoście z SELinux jawnie
+wywołuje chcon dla trzech plików: typ container_file_t, współdzielony zakres s0.
+Backend i właściwy węzeł czytają ten sam plik, więc nie nadajemy prywatnych
+kategorii pojedynczego kontenera. Nie zmieniamy praw 0400 ani polityki SELinux.
+
+Uwaga potwierdzona w Compose 5.6: create_host_path=false wybiera Mount API,
+a buildBindOption nie przekazuje relabelowania. Pole selinux:z pozostaje w
+konfiguracji, lecz samo nie gwarantuje etykiety. Źródło:
+[implementacja Compose 5.6](https://github.com/docker/compose/blob/v5.6.0/pkg/compose/create.go).
+Po odtworzeniu etykiet hosta przez restorecon ponownie uruchom inicjalizator;
+chcon nie tworzy trwałej reguły fcontext. Zmiana jest ograniczona do trzech plików,
+nie do katalogu projektu lub katalogu domowego.
 
 ```sh
 # Z katalogu repozytorium:
@@ -213,3 +223,34 @@ fencing i przeprojektowanie trwałości; samo dodanie Redis nie przenosi sekret�
 
 Rzeczywiste wykonanie w środowisku autora opisuje [verification.md](verification.md).
 Żaden diagram ani healthcheck nie dowodzi dopuszczenia do Internetu.
+
+
+## Demo LAN
+
+`compose.lan.yaml` jest jawnym nakładanym wariantem dla prezentacji kilku
+użytkowników w jednej zaufanej sieci Wi-Fi. Wymaga RADH_LAN_IP, np. 192.168.1.30.
+Używa wyłącznie konkretnego IP hosta oraz 127.0.0.1, nie wildcard 0.0.0.0.
+Backend pozostaje nieopublikowany; role, pliki tokenów, allowlista, limity i
+hardening są takie same jak lokalnie. Origin zawiera oba localhost/127.0.0.1
+oraz dokładny adres LAN z RADH_HTTP_PORT. Nie włączamy wildcard CORS.
+
+```sh
+sudo env RADH_LAN_IP=192.168.1.30 docker compose -f compose.yaml -f compose.lan.yaml config --quiet
+sudo env RADH_LAN_IP=192.168.1.30 docker compose -f compose.yaml -f compose.lan.yaml up -d --wait
+# Powrót do samego loopback:
+sudo docker compose -f compose.yaml up -d --wait
+```
+
+Nakładka używa !override dla dokładnej listy portów; wymaga Compose 2.24.4+
+([dokumentacja Docker](https://docs.docker.com/reference/compose-file/merge/)).
+Zmiana Origin odtwarza backend i gubi ulotne sesje. Wystarczą istniejące obrazy,
+bez zmiany frontendu. Klucze tworzenia UI używają getRandomValues, dostępnego
+również poza secure context
+([dokumentacja API](https://developer.mozilla.org/en-US/docs/Web/API/Crypto/getRandomValues));
+nie korzystają z wymagających HTTPS subtle/randomUUID. Działania prawdziwego
+Safari i sieci Wi-Fi trzeba potwierdzić na telefonie, nie testem konfiguracji.
+
+Telefon wchodzi pod http://IP_KOMPUTERA:PORT, komputer może korzystać z localhost.
+Różne urządzenia mają niezależne sessionStorage i sesje. Zmiana/reset jednego
+nie powinna zmieniać drugiego. Demo w HTTP w zaufanej LAN nie jest publicznym
+wdrożeniem ani spełnieniem gate TLS; nie konfigurować przekierowania routera.

@@ -4,9 +4,27 @@ from pathlib import Path
 import re
 import secrets
 import stat
+import subprocess
 import sys
 
 ROLES = ('alice', 'bob', 'mallory')
+SELINUX_ENFORCE = Path('/sys/fs/selinux/enforce')
+
+
+def label_secrets(directory: Path) -> None:
+    """Nadaj współdzielony kontekst tylko plikom sekretów, bez zmiany ich treści."""
+    if not SELINUX_ENFORCE.is_file():
+        return
+    # Compose 5.6 pomija relabel z przy Mount API wymaganym przez create_host_path=false.
+    # s0 jest współdzielone: jeden plik musi czytać backend i przypisana rola.
+    try:
+        subprocess.run(
+            ['chcon', '--type=container_file_t', '--range=s0', '--',
+             *(str(directory / role) for role in ROLES)],
+            check=True, capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        raise ValueError('Nie można ustawić etykiet SELinux sekretów; sprawdź chcon i politykę hosta.') from None
 
 
 def initialize(directory: Path) -> None:
@@ -48,6 +66,8 @@ def initialize(directory: Path) -> None:
             os.fchmod(stream.fileno(), 0o400)
             stream.write(token + b'\n')
         tokens.add(token)
+    # Także przy ponownej inicjalizacji: napraw etykiety bez regeneracji tokenów.
+    label_secrets(directory)
 
 
 if __name__ == '__main__':

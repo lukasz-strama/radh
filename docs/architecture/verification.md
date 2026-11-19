@@ -4,6 +4,53 @@ Data: 2026-11-19. Gałąź chore/87-compose-multi-session, baza
 origin/feat/70-multi-session-ui = 5ca0454 (z #82, #85 i #86).
 **Publiczna beta pozostaje NO-GO. Runtime Compose nie został tu potwierdzony.**
 
+## Demo LAN — kontrola konfiguracji
+
+Dodano jawną nakładkę compose.lan.yaml dla RADH_LAN_IP. Walidacja Compose
+5.6.0 i odczyt modelu JSON: PASS dla 192.168.1.30:8080 i portu 18080; dokładnie
+dwa bindy (127.0.0.1 i wskazany LAN), właściwy Origin, brak publikacji backendu,
+niezmienione role/mounty/non-root/read-only. Bez zmiennej RADH_LAN_IP wariant
+poprawnie odmawia walidacji. Bazowy Compose nadal udostępnia tylko loopback.
+Git diff --check: PASS. Rzeczywisty dostęp Safari przez Wi-Fi: NOT RUN w środowisku
+autora. Nie deklarujemy sukcesu na telefonie na podstawie config.
+
+Użytkownik potwierdził po poprawce SELinux: wszystkie pięć usług Healthy, smoke
+bez diagnostyki zaliczył allowlistę, RSA/keygen, normal i MITM, zaobserwował oba
+running, autoryzację/idempotencję/izolację/brak K i cleanup. To wynik hosta
+użytkownika dla wariantu localhost, nie dowód dostępności nowego wariantu LAN.
+Osobna próba z RADH_DIAGNOSTICS=1 nadal wymaga potwierdzenia.
+
+## Aktualizacja: próba na hoście Fedora i poprawka SELinux
+
+Wyniki przekazane przez użytkownika 2026-11-19: inicjalizator, build obrazów
+oraz nginx -t przeszły. Start Compose zatrzymał się na backendzie z błędem
+odczytu poświadczenia Alice. Pliki miały poprawne 10001:10001/0400, ale
+etykietę user_home_t:s0; alert SELinux wskazywał read procesu python.
+Nie jest to zaliczenie pięciu healthy ani smoke.
+
+Na gałęzi fix/87-selinux-secret-mounts dodano jawne chcon tylko trzech plików
+w inicjalizatorze, wykonywane na SELinux także dla istniejących tokenów.
+Pozostają read-only, create_host_path=false, non-root i 0400. Nie regenerujemy
+tokenów ani nie wyłączamy SELinux. Przyczyna potwierdzona kodem Compose 5.6:
+Mount API wymuszane przez create_host_path=false nie przenosi opcji SELinux z.
+
+Po poprawce: 5 testów tests/test_deploy/test_secret_labels.py PASS,
+składnia Pythona, Compose config i git diff --check PASS. Runtime poprawki
+w środowisku autora nadal blokuje docker.sock. Na hoście wykonać:
+
+```sh
+sudo docker compose down
+sudo python3 deploy/init_secrets.py
+sudo ls -lZ .local/secrets
+# Każdy plik ma container_file_t:s0, nadal 10001:10001 i 0400.
+RADH_DIAGNOSTICS=0 sudo --preserve-env=RADH_DIAGNOSTICS docker compose up -d --force-recreate --wait
+python3 deploy/smoke.py
+```
+
+Nie jest potrzebna przebudowa obrazu dla samej zmiany hostowego inicjalizatora.
+Poniższa tabela zachowuje wcześniejsze wyniki ograniczonego środowiska autora;
+nowy wynik użytkownika rozstrzyga powyższa sekcja.
+
 ## Rzeczywiste wyniki bieżącej zmiany
 
 | Sprawdzenie | Wynik |
