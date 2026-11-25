@@ -94,6 +94,20 @@ Tryb zgodności zachowuje dotychczasowe ograniczenia bezpieczeństwa v1
 i jest przeznaczony do lokalnej migracji. Publiczne wdrożenie wymaga v2,
 wyłączonego legacy oraz bramek bezpieczeństwa opisanych w #73.
 
+## Uwierzytelniony DH — #103
+
+Scenariusz RSA + DH jest addytywnym rozszerzeniem tego samego rekordu, blokad,
+tokenów, epoch, TTL i API v2. `scenario=classic` zachowuje dotychczasowy przebieg;
+`scenario=authenticated` dodaje zaufane publiczne klucze RSA, podpisy transkryptu
+i dwa raporty weryfikacji. Kolekcje mają limit po dwa elementy, a limit historii
+pozostaje 32. Prywatne klucze RSA pozostają wyłącznie w procesach węzłów.
+
+Pełny kontrakt stanów, internal API, idempotencji i kanonicznego transkryptu:
+[AUTHENTICATED_DH.md](AUTHENTICATED_DH.md). Istniejące discovery zachowuje kształt
+dla kompatybilności węzłów #68. Klient #102 rozpoznaje scenariusz przez
+`GET /internal/v1/dh/sessions/{id}/authentication`: `200` oznacza authenticated,
+a `409 AUTHENTICATION_NOT_ENABLED` klasyczny DH.
+
 ## Informacje dla węzłów — #68 / PR #82
 
 Heartbeat pod `/internal/v1/dh/nodes/{role}/heartbeat` przyjmuje

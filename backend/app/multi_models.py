@@ -7,14 +7,17 @@ from pydantic import Field
 
 from .models import Uint32
 from .session_models import (
-    Interception, MalloryDiagnostics, Message, ProtocolModel, SessionDiagnostics,
+    Interception, MalloryDiagnostics, Message, ProtocolModel, Role,
+    SessionDiagnostics,
 )
 
 HexId = Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{32}$")]
 MessageId = Literal["alice-public", "bob-public"]
 Status = Literal["created", "running", "completed", "cancelled", "expired", "failed"]
-Participant = Literal["waiting", "published", "received"]
+Participant = Literal["waiting", "published", "received", "verified"]
 Mode = Literal["normal", "mitm"]
+Scenario = Literal["classic", "authenticated"]
+TranscriptHash = Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{64}$")]
 
 
 class Create(ProtocolModel):
@@ -22,7 +25,54 @@ class Create(ProtocolModel):
     prime: Uint32
     generator: Uint32
     mode: Mode = "normal"
+    scenario: Scenario = Field(
+        default="classic",
+        description="classic albo authenticated (RSA + podpisany transkrypt DH).",
+    )
     diagnostics_enabled: Annotated[bool, Field(strict=True)] = False
+
+
+class TrustedKeyRequest(ProtocolModel):
+    modulus: Uint32 = Field(description="Publiczny moduł RSA n; wymagane n > 255.")
+    public_exponent: Uint32 = Field(description="Publiczny wykładnik RSA e.")
+
+
+class TrustedKey(TrustedKeyRequest):
+    session_id: HexId
+    backend_epoch: HexId
+    owner: Role
+
+
+class SignatureRequest(ProtocolModel):
+    transcript_hash: TranscriptHash = Field(description="SHA-256 kanonicznego transkryptu.")
+    signature: Uint32 = Field(description="Edukacyjny podpis RSA reprezentanta transkryptu.")
+
+
+class Signature(SignatureRequest):
+    session_id: HexId
+    backend_epoch: HexId
+    signer: Role
+
+
+class VerificationRequest(ProtocolModel):
+    signer: Role
+    transcript_hash: TranscriptHash
+    verified: Annotated[bool, Field(strict=True)]
+
+
+class Verification(VerificationRequest):
+    session_id: HexId
+    backend_epoch: HexId
+    verifier: Role
+    published_transcript_hash: TranscriptHash
+
+
+class AuthenticationState(ProtocolModel):
+    session_id: HexId
+    backend_epoch: HexId
+    trusted_keys: list[TrustedKey] = Field(default_factory=list, max_length=2)
+    signatures: list[Signature] = Field(default_factory=list, max_length=2)
+    verifications: list[Verification] = Field(default_factory=list, max_length=2)
 
 
 class Participants(ProtocolModel):
@@ -42,6 +92,7 @@ class SessionView(Create):
     participants: Participants = Field(default_factory=Participants)
     messages: list[Message] = Field(default_factory=list)
     interceptions: list[Interception] = Field(default_factory=list)
+    authentication: AuthenticationState
 
 
 class Created(ProtocolModel):
@@ -55,6 +106,8 @@ class Event(ProtocolModel):
         "session_created", "session_started", "public_value", "message_processed",
         "session_completed", "session_cancelled", "message_intercepted",
         "message_forwarded", "session_failed", "session_expired",
+        "trusted_key_published", "signature_published",
+        "signature_verified", "signature_rejected",
     ]
     created_at: datetime
     sender: Literal["alice", "bob", "mallory"] | None = None
@@ -62,6 +115,7 @@ class Event(ProtocolModel):
     public_value: Uint32 | None = None
     message_id: str | None = None
     status: Literal["intercepted", "queued", "processed"] = "processed"
+    verified: bool | None = None
 
 
 class Events(ProtocolModel):
@@ -90,9 +144,13 @@ class Presence(ProtocolModel):
     mallory: NodePresence
 
 
-class Descriptor(Create):
+class Descriptor(ProtocolModel):
     session_id: HexId
     backend_epoch: HexId
+    prime: Uint32
+    generator: Uint32
+    mode: Mode
+    diagnostics_enabled: Annotated[bool, Field(strict=True)]
     status: Status
     revision: int
     expires_at: datetime
