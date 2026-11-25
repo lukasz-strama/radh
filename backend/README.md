@@ -91,6 +91,27 @@ Niepoprawne dane zwracają kontrolowany błąd, na przykład:
 }
 ```
 
+## Deszyfrowanie i tekstowy cykl RSA (#99)
+
+Nowe trasy demonstracyjne:
+
+- `POST /api/v1/rsa/demo/decrypt` przyjmuje `ciphertext`, `private_exponent`
+  i `modulus`, a zwraca `message`;
+- `POST /api/v1/rsa/demo/text/encrypt` przyjmuje `text`, `public_exponent`
+  i `modulus`, a zwraca tablicę `ciphertexts`;
+- `POST /api/v1/rsa/demo/text/decrypt` przyjmuje `ciphertexts`,
+  `private_exponent` i `modulus`, a zwraca `text`.
+
+Tekst jest kodowany jako UTF-8 i każdy bajt jest przetwarzany osobnym wywołaniem
+CryptoCore. Moduł musi być większy od 255, a tekst i tablica szyfrogramów mają
+limit 128 elementów/bajtów. Całe żądanie zajmuje jeden slot ograniczonej
+kolejki. Trasy tekstowe mają osobny limit 10 żądań/min z burstem 2.
+
+Wymagany symbol C i statusy opisuje
+[CRYPTOCORE_RSA_DECRYPT.md](CRYPTOCORE_RSA_DECRYPT.md). Bez symbolu nowe
+deszyfrowanie zwraca `503`; obecne szyfrowanie liczbowe działa bez zmian.
+Textbook RSA jest pozbawione paddingu, 32-bitowe i służy wyłącznie do edukacji.
+
 
 ## Generowanie kluczy RSA (#56)
 

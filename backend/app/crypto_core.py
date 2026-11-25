@@ -204,6 +204,19 @@ class CryptoCore:
         self._library = library
         self._encrypt = encrypt
 
+        # Addytywny kontrakt #98/#99. Brak symbolu nie blokuje istniejącego
+        # szyfrowania, ale nowe operacje deszyfrowania zwracają kontrolowane 503.
+        decrypt = getattr(library, "radh_rsa_decrypt_u32", None)
+        if decrypt is not None:
+            decrypt.argtypes = [
+                ctypes.c_uint32,
+                ctypes.c_uint32,
+                ctypes.c_uint32,
+                ctypes.POINTER(ctypes.c_uint32),
+            ]
+            decrypt.restype = ctypes.c_int
+        self._decrypt = decrypt
+
         try:
             exchange = library.radh_dh_exchange_u32
         except AttributeError as exc:
@@ -280,6 +293,37 @@ class CryptoCore:
             CryptoCoreStatus.INVALID_MESSAGE,
         })
         return ciphertext.value
+
+    def decrypt(self, ciphertext: int, private_exponent: int, modulus: int) -> int:
+        """Wywołaj C: ciphertext^private_exponent mod modulus."""
+
+        _require_uint32("ciphertext", ciphertext)
+        _require_uint32("private_exponent", private_exponent)
+        _require_uint32("modulus", modulus)
+        if self._decrypt is None:
+            raise CryptoCoreLoadError(
+                "Biblioteka CryptoCore nie eksportuje funkcji "
+                "radh_rsa_decrypt_u32. Zbuduj ponownie bibliotekę C."
+            )
+
+        message = ctypes.c_uint32()
+        raw_status = self._decrypt(
+            ctypes.c_uint32(ciphertext),
+            ctypes.c_uint32(private_exponent),
+            ctypes.c_uint32(modulus),
+            ctypes.byref(message),
+        )
+        if raw_status == CryptoCoreStatus.INVALID_MESSAGE:
+            raise CryptoCoreCallError(
+                int(CryptoCoreStatus.INVALID_MESSAGE),
+                "CIPHERTEXT_OUT_OF_RANGE",
+                "Szyfrogram musi być mniejszy od modułu.",
+            )
+        self._check_status(raw_status, {
+            CryptoCoreStatus.INVALID_MODULUS,
+            CryptoCoreStatus.INVALID_EXPONENT,
+        })
+        return message.value
 
     def generate_rsa_keys(self, p: int, q: int, e: int) -> RsaKeygenResult:
         """Wygeneruj edukacyjną parę kluczy przez CryptoCore."""

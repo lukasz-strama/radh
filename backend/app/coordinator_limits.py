@@ -50,6 +50,8 @@ class Settings:
     create_rate_burst: int = 2
     crypto_rate_per_minute: int = 20
     crypto_rate_burst: int = 5
+    rsa_text_rate_per_minute: int = 10
+    rsa_text_rate_burst: int = 2
     read_token_rate_per_minute: int = 120
     read_ip_rate_per_minute: int = 240
     internal_rate_per_minute: int = 3000
