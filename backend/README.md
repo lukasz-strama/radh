@@ -91,6 +91,25 @@ Niepoprawne dane zwracają kontrolowany błąd, na przykład:
 }
 ```
 
+## Losowanie parametrów RSA i DH (#96)
+
+Backend udostępnia dwie trasy bez body żądania:
+
+- `POST /api/v1/rsa/demo/parameters` zwraca `{"p":...,"q":...,"e":...}`;
+- `POST /api/v1/dh/demo/parameters` zwraca `{"prime":...,"generator":...}`.
+
+Parametry są losowane przez `secrets` w zakresie 16-bitowych liczb pierwszych
+`257..65521`. RSA jest zatwierdzane przez istniejący keygen CryptoCore. DH wymaga
+addytywnego symbolu opisanego w
+[CRYPTOCORE_PARAMETER_VALIDATION.md](CRYPTOCORE_PARAMETER_VALIDATION.md). Brak
+symbolu daje kontrolowane `503` wyłącznie na trasie losowania DH.
+
+Każde żądanie ma wspólny limit 256 losowań, ograniczoną kolejkę obliczeń i
+osobny limit 10 żądań na minutę z burstem 2. Wyczerpanie prób zwraca
+`503 PARAMETER_GENERATION_EXHAUSTED`; nasycenie kolejki `503 CRYPTO_BUSY`, a
+nadmiar żądań `429 RATE_LIMITED`. Odpowiedź RSA celowo nie zawiera `d` ani
+`phi`, a bezpieczny format logów Nginx nie zapisuje treści odpowiedzi.
+
 
 ## Generowanie kluczy RSA (#56)
 
