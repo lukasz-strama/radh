@@ -94,6 +94,28 @@ static const test_case_t rsa_cases[] = {
     {3233, 0, 3233, RADH_STATUS_INVALID_EXPONENT, 0}
 };
 
+/* Stałe wyniki zweryfikowano niezależnie przez Python pow(c, d, n). */
+static const test_case_t rsa_decrypt_cases[] = {
+    {2790, 2753, 3233, RADH_STATUS_OK, 65},
+    {0, 2753, 3233, RADH_STATUS_OK, 0},
+    {1, 2753, 3233, RADH_STATUS_OK, 1},
+    {3232, 2753, 3233, RADH_STATUS_OK, 3232},
+    {42, 1, 3233, RADH_STATUS_OK, 42},
+    {1, 1, 2, RADH_STATUS_OK, 1},
+    {UINT32_MAX - 1, UINT32_MAX, UINT32_MAX, RADH_STATUS_OK, UINT32_MAX - 1},
+    {UINT32_MAX - 2, UINT32_MAX - 1, UINT32_MAX, RADH_STATUS_OK, UINT32_C(1073741824)},
+    {0, 1, 0, RADH_STATUS_INVALID_MODULUS, 0},
+    {0, 1, 1, RADH_STATUS_INVALID_MODULUS, 0},
+    {2790, 0, 3233, RADH_STATUS_INVALID_EXPONENT, 0},
+    {3233, 2753, 3233, RADH_STATUS_INVALID_MESSAGE, 0},
+    {3234, 2753, 3233, RADH_STATUS_INVALID_MESSAGE, 0},
+    {UINT32_MAX, UINT32_MAX, UINT32_MAX, RADH_STATUS_INVALID_MESSAGE, 0},
+    /* Błędny moduł ma pierwszeństwo przed wykładnikiem, a wykładnik przed c. */
+    {UINT32_MAX, 0, 0, RADH_STATUS_INVALID_MODULUS, 0},
+    {UINT32_MAX, 0, 1, RADH_STATUS_INVALID_MODULUS, 0},
+    {3233, 0, 3233, RADH_STATUS_INVALID_EXPONENT, 0},
+};
+
 static unsigned int run_cases(
     const char *name,
     operation_t operation,
@@ -371,6 +393,8 @@ int main(void)
         sizeof(modexp_cases) / sizeof(modexp_cases[0]));
     failures += run_cases("rsa", radh_rsa_encrypt_u32, rsa_cases,
         sizeof(rsa_cases) / sizeof(rsa_cases[0]));
+    failures += run_cases("rsa decrypt", radh_rsa_decrypt_u32, rsa_decrypt_cases,
+        sizeof(rsa_decrypt_cases) / sizeof(rsa_decrypt_cases[0]));
     failures += check_small_domain();
     failures += check_dh_cases();
     failures += check_dh_small_domain();

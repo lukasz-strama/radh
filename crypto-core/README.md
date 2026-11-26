@@ -1,8 +1,9 @@
 # CryptoCore
 
 Biblioteka współdzielona dla RADH wykonuje potęgowanie modularne, edukacyjne
-szyfrowanie i generowanie kluczy RSA oraz wymianę kluczy DH na liczbach `uint32_t`. Backend FastAPI może
-ładować ją przez Python `ctypes`. Biblioteka i testy C nie wymagają zależności
+szyfrowanie i deszyfrowanie RSA, generowanie kluczy RSA oraz wymianę kluczy DH
+na liczbach `uint32_t`. Backend FastAPI może ładować ją przez Python `ctypes`.
+Biblioteka i testy C nie wymagają zależności
 zewnętrznych ani Pythona; implementacja nie alokuje pamięci dynamicznie.
 
 **Ta implementacja nie zapewnia bezpieczeństwa kryptograficznego.** Operuje na
@@ -104,6 +105,13 @@ radh_status_t radh_rsa_encrypt_u32(
     uint32_t *ciphertext
 );
 
+radh_status_t radh_rsa_decrypt_u32(
+    uint32_t ciphertext,
+    uint32_t private_exponent,
+    uint32_t modulus,
+    uint32_t *message
+);
+
 typedef struct {
     uint32_t alice_public;
     uint32_t bob_public;
@@ -139,8 +147,26 @@ radh_status_t radh_dh_validate_parameters_u32(
 - `message`: od 0 do `modulus - 1`.
 - `public_exponent`: od 1 do `UINT32_MAX`.
 
-RSA sprawdza wyłącznie te zakresy. Nie sprawdza, czy moduł jest iloczynem dwóch
-liczb pierwszych ani czy wykładnik stanowi poprawny klucz RSA.
+`radh_rsa_decrypt_u32` oblicza `m = c^d mod n` i zapisuje wynik do `*message`.
+Zwraca status pierwszej niespełnionej reguły w poniższej kolejności.
+
+| Sprawdzenie | Status przy błędzie |
+| --- | --- |
+| `message != NULL` | `RADH_STATUS_INVALID_POINTER` (1) |
+| `modulus >= 2` | `RADH_STATUS_INVALID_MODULUS` (2) |
+| `private_exponent > 0` | `RADH_STATUS_INVALID_EXPONENT` (3) |
+| `ciphertext < modulus` | `RADH_STATUS_INVALID_MESSAGE` (4) |
+
+Sukces zwraca `RADH_STATUS_OK` (0). Każdy błąd pozostawia przekazaną pamięć
+wyniku bez zmian. Dla `c = 2790`, `d = 2753` i `n = 3233` wynikiem jest `m = 65`.
+Szyfrowanie i deszyfrowanie sprawdzają zakresy argumentów. Poprawność klucza
+pochodzącego z podanych liczb pierwszych sprawdza `radh_rsa_keygen_u32`.
+
+Deszyfrowanie deleguje obliczenia do `radh_modexp_u32`. Potęgowanie zajmuje
+O(log d) czasu dla `d >= 2` (stały czas dla `d = 1`) i O(1) pamięci dodatkowej.
+Symbol rozszerza ABI o trzy `ctypes.c_uint32` i `POINTER(ctypes.c_uint32)`,
+z wynikiem `ctypes.c_int`. Dotychczasowe sygnatury i statusy zachowują zgodność.
+To edukacyjne, 32-bitowe textbook RSA bez paddingu i ochrony danych produkcyjnych.
 
 `radh_dh_exchange_u32` wykonuje demonstrację wymiany kluczy Diffiego–Hellmana:
 
@@ -177,12 +203,13 @@ Publiczny enum `radh_status_t` ma jawne, stałe wartości:
 | `RADH_STATUS_INVALID_POINTER` | 1 | Wskaźnik wyjścia jest `NULL`. |
 | `RADH_STATUS_INVALID_MODULUS` | 2 | Moduł 0 dla modexp albo moduł mniejszy niż 2 dla RSA. |
 | `RADH_STATUS_INVALID_EXPONENT` | 3 | Wykładnik RSA jest równy 0. |
-| `RADH_STATUS_INVALID_MESSAGE` | 4 | Wiadomość RSA jest większa lub równa modułowi. |
+| `RADH_STATUS_INVALID_MESSAGE` | 4 | Wartość wiadomości lub szyfrogramu RSA jest większa lub równa modułowi. |
 | `RADH_STATUS_INVALID_PRIME` | 5 | Parametr DH `prime` nie jest liczbą pierwszą (także 0 i 1). |
 | `RADH_STATUS_INVALID_GENERATOR` | 6 | Generator DH jest poza zakresem albo kontrola pełnego rzędu wykazała mniejszy rząd. |
 | `RADH_STATUS_INVALID_SECRET` | 7 | Co najmniej jeden sekret DH jest równy 0. |
 
-Kolejność walidacji RSA to wskaźnik, moduł, wykładnik, wiadomość.
+Szyfrowanie i deszyfrowanie RSA sprawdzają kolejno wskaźnik, moduł, wykładnik
+i wartość wejściową (wiadomość lub szyfrogram).
 Modexp sprawdza tylko wskaźnik i moduł. DH sprawdza kolejno wskaźnik,
 pierwszość `prime`, zakres `generator`, dodatniość `alice_secret`, dodatniość
 `bob_secret`. Przy kilku błędach funkcja zwraca pierwszy z nich.
@@ -326,7 +353,7 @@ library_name = (
 library_path = (Path("crypto-core/build") / library_name).resolve()
 core = ctypes.CDLL(str(library_path))
 
-for name in ("radh_modexp_u32", "radh_rsa_encrypt_u32"):
+for name in ("radh_modexp_u32", "radh_rsa_encrypt_u32", "radh_rsa_decrypt_u32"):
     function = getattr(core, name)
     function.argtypes = [
         ctypes.c_uint32,
@@ -341,6 +368,12 @@ status = core.radh_rsa_encrypt_u32(65, 17, 3233, ctypes.byref(ciphertext))
 if status != 0:
     raise ValueError(f"CryptoCore status: {status}")
 print(ciphertext.value)  # 2790
+
+message = ctypes.c_uint32(0)
+status = core.radh_rsa_decrypt_u32(ciphertext.value, 2753, 3233, ctypes.byref(message))
+if status != 0:
+    raise ValueError(f"CryptoCore status: {status}")
+print(message.value)  # 65
 
 result = ctypes.c_uint32(0)
 status = core.radh_modexp_u32(15, 3, 13, ctypes.byref(result))
