@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { ApiError, encryptRsa, generateRsaKeys } from './api'
+import { ApiError, drawRsaParameters, encryptRsa, generateRsaKeys } from './api'
 import type { RsaEncryptRequest } from './api'
 import { validateRsaInput, validateRsaKeyParams } from './validation'
 import type { FieldErrors, RsaKeyField, RsaKeyFieldErrors } from './validation'
 import { Field } from './Field'
 import { Button, DataBadge, Notice } from './ui'
+import { useParameterDraw } from './useParameterDraw'
 
 // Wynik szyfrowania razem z parametrami, które faktycznie zostały wysłane.
 // (Pola formularza mogą się zmienić po kliknięciu, więc nie bierzemy ich z pól.)
@@ -149,6 +150,18 @@ function KeyGenPanel({ onUsePublicKey }: { onUsePublicKey: (keys: RsaKeys) => vo
   // Ostatnia wygenerowana para; null = brak (także po nowej próbie, zanim przyjdzie wynik).
   const [keys, setKeys] = useState<RsaKeys | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  // Pola trzymamy w stanie, żeby losowanie mogło je wypełnić; edycja ręczna działa jak dotąd.
+  const [values, setValues] = useState<Record<RsaKeyField, string>>(KEY_DEFAULTS)
+  const parameters = useParameterDraw(drawRsaParameters, (drawn) => {
+    setValues({ p: String(drawn.p), q: String(drawn.q), e: String(drawn.e) })
+    setFieldErrors({})
+  })
+
+  // Ręczna edycja ma pierwszeństwo: przerywa trwające losowanie, żeby go nie nadpisało.
+  function edit(field: RsaKeyField, value: string) {
+    parameters.cancel()
+    setValues((previous) => ({ ...previous, [field]: value }))
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -191,20 +204,35 @@ function KeyGenPanel({ onUsePublicKey }: { onUsePublicKey: (keys: RsaKeys) => vo
         name="p"
         label="Liczba pierwsza (p)"
         error={fieldErrors.p}
-        defaultValue={KEY_DEFAULTS.p}
+        value={values.p}
+        onChange={(value) => edit('p', value)}
       />
       <Field
         name="q"
         label="Liczba pierwsza (q)"
         error={fieldErrors.q}
-        defaultValue={KEY_DEFAULTS.q}
+        value={values.q}
+        onChange={(value) => edit('q', value)}
       />
       <Field
         name="e"
         label="Wykładnik publiczny (e)"
         error={fieldErrors.e}
-        defaultValue={KEY_DEFAULTS.e}
+        value={values.e}
+        onChange={(value) => edit('e', value)}
       />
+
+      {/* Losowanie tylko wypełnia pola – klucze generuje się dopiero przyciskiem niżej. */}
+      <Button
+        variant="secondary"
+        busy={parameters.isDrawing}
+        busyLabel="Losowanie…"
+        disabled={parameters.isBlocked}
+        onClick={parameters.draw}
+      >
+        Losuj parametry
+      </Button>
+      {parameters.error && <Notice tone="error">{parameters.error}</Notice>}
 
       <Button type="submit" busy={isLoading} busyLabel="Generowanie…">
         Generuj klucze

@@ -63,6 +63,36 @@ export type RsaKeygenResponse = {
   phi: number
 }
 
+// Losowanie parametrów do formularzy (#96, #97, backend/README.md). Backend losuje
+// 16-bitowe liczby pierwsze i zatwierdza komplet w CryptoCore; frontend tylko
+// sprawdza format i wpisuje wartości do pól. Odpowiedź RSA celowo nie zawiera d ani φ.
+const RSA_PARAMETERS_URL = '/api/v1/rsa/demo/parameters'
+const DH_PARAMETERS_URL = '/api/v1/dh/demo/parameters'
+
+export async function drawRsaParameters(signal?: AbortSignal): Promise<RsaKeygenRequest> {
+  const body = (await requestJson('POST', RSA_PARAMETERS_URL, undefined, { signal })) as Record<
+    string,
+    unknown
+  > | null
+  const { p, q, e } = body ?? {}
+  if (!isUint32(p) || !isUint32(q) || !isUint32(e)) throw unexpectedFormat()
+  return { p, q, e }
+}
+
+export async function drawDhParameters(signal?: AbortSignal): Promise<DhSessionParams> {
+  const body = (await requestJson('POST', DH_PARAMETERS_URL, undefined, { signal })) as Record<
+    string,
+    unknown
+  > | null
+  const { prime, generator } = body ?? {}
+  if (!isUint32(prime) || !isUint32(generator)) throw unexpectedFormat()
+  return { prime, generator }
+}
+
+function isUint32(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 0xffffffff
+}
+
 export async function generateRsaKeys(data: RsaKeygenRequest): Promise<RsaKeygenResponse> {
   const body = (await requestJson('POST', '/api/v1/rsa/demo/keygen', data)) as Record<
     string,
@@ -556,7 +586,7 @@ async function requestJson(
           (response.status === 404 || response.status === 410 || error.code === 'BACKEND_EPOCH_MISMATCH')) {
         throw new ApiError('Niepotwierdzona odpowiedź pośrednika.', 'INVALID_RESPONSE', undefined, seconds)
       }
-      throw new ApiError(v2Message(url, error, response.status, seconds), error.code, response.status, seconds)
+      throw new ApiError(friendlyMessage(url, error, response.status, seconds), error.code, response.status, seconds)
     }
     return body
   } catch (error) {
@@ -595,12 +625,16 @@ const V2_ERROR_MESSAGES: Record<string, string> = {
   ORIGIN_NOT_ALLOWED: 'Serwer nie przyjmuje żądań z tej strony.',
   SERVICE_UNAVAILABLE: 'Usługa jest chwilowo niedostępna.',
   INTERNAL_ERROR: 'Wystąpił błąd serwera.',
+  PARAMETER_GENERATION_EXHAUSTED: 'Nie udało się wylosować parametrów.',
 }
 
-// Komunikat błędu API v2: po kodzie, z czasem oczekiwania przy 429/503.
-// Błędy API v1 (RSA) zostają bez zmian – tam backend podaje pełne komunikaty.
-function v2Message(url: string, error: ApiError, status: number, retryAfter: number): string {
-  if (!url.startsWith('/api/v2/')) return error.message
+// Komunikat błędu API v2 i tras losowania parametrów: po kodzie, z czasem oczekiwania
+// przy 429/503. Ich limiter odpowiada tym samym ogólnym tekstem co API v2.
+// Pozostałe błędy API v1 (RSA, keygen) zostają bez zmian – tam backend podaje pełne komunikaty.
+function friendlyMessage(url: string, error: ApiError, status: number, retryAfter: number): string {
+  if (!url.startsWith('/api/v2/') && url !== RSA_PARAMETERS_URL && url !== DH_PARAMETERS_URL) {
+    return error.message
+  }
   let message = (error.code && V2_ERROR_MESSAGES[error.code]) || error.message
   if (retryAfter > 0 && (status === 429 || status === 503)) {
     message += ` Spróbuj ponownie za ${retryAfter} s.`

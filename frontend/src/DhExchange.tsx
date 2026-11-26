@@ -5,10 +5,12 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { Badge, Button, DataBadge, Notice } from './ui'
+import { useParameterDraw } from './useParameterDraw'
 import type { DataKind, Tone } from './ui'
 import {
   ApiError,
   currentCredential,
+  drawDhParameters,
   resetOwnDhSession,
   resumeDhSession,
   fetchDhDiagnostics,
@@ -201,6 +203,19 @@ function errorMessage(error: unknown, fallback: string): string {
 
 export function DhExchange() {
   const [fieldErrors, setFieldErrors] = useState<DhFieldErrors>({})
+  // Pola p i g trzymamy w stanie, żeby losowanie mogło je wypełnić. Losowanie zmienia
+  // tylko formularz: nie dotyka trwającej sesji i niczego nie uruchamia.
+  const [params, setParams] = useState<Record<DhField, string>>(DEFAULTS)
+  const parameters = useParameterDraw(drawDhParameters, (drawn) => {
+    setParams({ prime: String(drawn.prime), generator: String(drawn.generator) })
+    setFieldErrors({})
+  })
+
+  // Ręczna edycja ma pierwszeństwo: przerywa trwające losowanie, żeby go nie nadpisało.
+  function editParam(field: DhField, value: string) {
+    parameters.cancel()
+    setParams((previous) => ({ ...previous, [field]: value }))
+  }
   const [view, setView] = useState<ViewState>(() =>
     currentCredential() ? { status: 'loading' } : { status: 'empty' },
   )
@@ -517,6 +532,8 @@ export function DhExchange() {
   async function handleReset() {
     const id = ++requestId.current
     actionController.current?.abort()
+    // Reset unieważnia też trwające losowanie parametrów.
+    parameters.cancel()
     const controller = new AbortController()
     actionController.current = controller
     setFieldErrors({})
@@ -615,14 +632,27 @@ export function DhExchange() {
               name="prime"
               label="Liczba pierwsza (p)"
               error={fieldErrors.prime}
-              defaultValue={DEFAULTS.prime}
+              value={params.prime}
+              onChange={(value) => editParam('prime', value)}
             />
             <Field
               name="generator"
               label="Generator (g)"
               error={fieldErrors.generator}
-              defaultValue={DEFAULTS.generator}
+              value={params.generator}
+              onChange={(value) => editParam('generator', value)}
             />
+            {/* Losowanie tylko wypełnia pola – sesję rozpoczyna się przyciskiem niżej. */}
+            <Button
+              variant="secondary"
+              busy={parameters.isDrawing}
+              busyLabel="Losowanie…"
+              disabled={parameters.isBlocked || isLoading}
+              onClick={parameters.draw}
+            >
+              Losuj parametry
+            </Button>
+            {parameters.error && <Notice tone="error">{parameters.error}</Notice>}
             <p className="hint">
               Klucze prywatne losują procesy{' '}
               {mode === 'mitm' ? 'Alice, Boba i Mallory' : 'Alice i Boba'}. Przeglądarka ich
