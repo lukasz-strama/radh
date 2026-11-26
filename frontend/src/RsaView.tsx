@@ -1,24 +1,16 @@
 import { useRef, useState } from 'react'
-import type { FormEvent, ReactNode } from 'react'
+import type { FormEvent } from 'react'
 import { ApiError, drawRsaParameters, generateRsaKeys } from './api'
 import type { RsaKeygenRequest } from './api'
 import { validateRsaKeyParams } from './validation'
 import type { RsaKeyField, RsaKeyFieldErrors } from './validation'
 import { Field } from './Field'
-import { Button, DataBadge, Notice } from './ui'
+import { Button, Notice } from './ui'
 import { useParameterDraw } from './useParameterDraw'
 import { RsaCyclePanel } from './RsaCycle'
 import type { RsaCycleHandle } from './RsaCycle'
-
-// Para kluczy z backendu razem z parametrami, które faktycznie zostały wysłane.
-type RsaKeys = {
-  p: number
-  q: number
-  e: number
-  n: number
-  phi: number
-  d: number
-}
+import { RsaKeySteps } from './RsaKeySteps'
+import type { RsaKeys } from './RsaKeySteps'
 
 // Zakładka RSA: generowanie kluczy i pełny cykl – szyfrowanie oraz deszyfrowanie.
 export function RsaView() {
@@ -61,6 +53,10 @@ function KeyGenPanel({
   // Ostatnia wygenerowana para; null = brak (także po nowej próbie, zanim przyjdzie wynik).
   const [keys, setKeys] = useState<RsaKeys | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  // Numer ostatniego żądania – spóźniona odpowiedź po edycji pól jest ignorowana.
+  const requestId = useRef(0)
+  // Skąd pochodzą wartości w polach: z losowania czy z ręcznej edycji.
+  const source = useRef<RsaKeys['source']>('manual')
   // Pola zostają niesterowane (wartości czyta FormData). Losowanie wpisuje nowe
   // wartości, montując pola od nowa (`key`) z nowym defaultValue. Pola sterowane
   // rozjeżdżały się z DOM, gdy wartość zmieniła się bez zdarzenia input (np. clear()
@@ -72,13 +68,28 @@ function KeyGenPanel({
     (values) => {
       setDrawn((previous) => ({ values: keyFields(values), version: previous.version + 1 }))
       setFieldErrors({})
+      source.current = 'drawn'
+      // Stara para nie pasuje już do pól.
+      setKeys(null)
     },
   )
+
+  // Ręczna edycja ma pierwszeństwo: przerywa losowanie i trwające generowanie, a stary
+  // wynik znika, żeby nie było widać wartości niepasujących do pól.
+  function edit() {
+    parameters.cancel()
+    requestId.current += 1
+    setIsLoading(false)
+    setKeys(null)
+    source.current = 'manual'
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     // Podczas losowania pola mogą się jeszcze zmienić – generujemy dopiero po nim.
     if (isLoading || parameters.isDrawing) return
+    const id = ++requestId.current
+    const keySource = source.current
     setApiError(null)
     setKeys(null)
 
@@ -99,13 +110,15 @@ function KeyGenPanel({
     try {
       // n, φ(n) i d pochodzą wyłącznie z odpowiedzi backendu (CryptoCore).
       const response = await generateRsaKeys(validation.data)
-      setKeys({ ...validation.data, ...response })
+      if (id !== requestId.current) return
+      setKeys({ ...validation.data, ...response, source: keySource })
     } catch (error) {
+      if (id !== requestId.current) return
       setApiError(
         error instanceof ApiError ? error.message : 'Wystąpił nieoczekiwany błąd.',
       )
     } finally {
-      setIsLoading(false)
+      if (id === requestId.current) setIsLoading(false)
     }
   }
 
@@ -113,14 +126,13 @@ function KeyGenPanel({
     <form className="panel" onSubmit={handleSubmit} noValidate aria-labelledby="rsa-keygen-title">
       <h2 id="rsa-keygen-title">Generowanie kluczy</h2>
 
-      {/* Ręczna edycja ma pierwszeństwo: przerywa trwające losowanie, żeby go nie nadpisało. */}
       <Field
         name="p"
         label="Liczba pierwsza (p)"
         error={fieldErrors.p}
         key={`p-${drawn.version}`}
         defaultValue={drawn.values.p}
-        onChange={parameters.cancel}
+        onChange={edit}
       />
       <Field
         name="q"
@@ -128,7 +140,7 @@ function KeyGenPanel({
         error={fieldErrors.q}
         key={`q-${drawn.version}`}
         defaultValue={drawn.values.q}
-        onChange={parameters.cancel}
+        onChange={edit}
       />
       <Field
         name="e"
@@ -136,7 +148,7 @@ function KeyGenPanel({
         error={fieldErrors.e}
         key={`e-${drawn.version}`}
         defaultValue={drawn.values.e}
-        onChange={parameters.cancel}
+        onChange={edit}
       />
 
       {/* Losowanie tylko wypełnia pola – klucze generuje się dopiero przyciskiem niżej. */}
@@ -160,7 +172,7 @@ function KeyGenPanel({
         Generuj klucze
       </Button>
 
-      <KeyResult keys={keys} />
+      <RsaKeySteps keys={keys} />
 
       {/* Klucz publiczny (n, e) trafia do szyfrowania, prywatny (n, d) do deszyfrowania. */}
       <div className="rsa-key-buttons">
@@ -187,63 +199,4 @@ function KeyGenPanel({
 // Liczby z backendu w postaci pól formularza (jak przy ręcznym wpisaniu).
 function keyFields(values: RsaKeygenRequest): Record<RsaKeyField, string> {
   return { p: String(values.p), q: String(values.q), e: String(values.e) }
-}
-
-// Wynik generowania z oznaczeniami: nazwa i wartość w jednym wierszu, wzór pod spodem.
-// Bez wyniku w miejscu wartości jest „?”.
-function KeyResult({ keys }: { keys: RsaKeys | null }) {
-  const show = (value: number | undefined) => (value === undefined ? '?' : String(value))
-  return (
-    <dl className="result rsa-keys">
-      <KeyRow label="Moduł" value={show(keys?.n)} formula={<>n = p · q</>} />
-      <KeyRow label="Funkcja Eulera" value={show(keys?.phi)} formula={<>φ(n) = (p − 1)(q − 1)</>} />
-      <KeyRow
-        label="Wykładnik prywatny"
-        value={show(keys?.d)}
-        formula={
-          <>
-            d = e<sup>−1</sup> mod φ(n)
-          </>
-        }
-      />
-      <KeyRow
-        label={
-          <>
-            Klucz publiczny <DataBadge kind="public" />
-          </>
-        }
-        value={`(${show(keys?.n)}, ${show(keys?.e)})`}
-        formula={<>(n, e)</>}
-      />
-      <KeyRow
-        label={
-          <>
-            Klucz prywatny <DataBadge kind="private" />
-          </>
-        }
-        value={`(${show(keys?.n)}, ${show(keys?.d)})`}
-        formula={<>(n, d)</>}
-      />
-    </dl>
-  )
-}
-
-function KeyRow({
-  label,
-  value,
-  formula,
-}: {
-  label: ReactNode
-  value: string
-  formula: ReactNode
-}) {
-  return (
-    <div>
-      <dt>{label}</dt>
-      <dd>
-        <output>{value}</output>
-      </dd>
-      <dd className="formula rsa-key-formula">{formula}</dd>
-    </div>
-  )
 }
