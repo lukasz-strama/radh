@@ -29,6 +29,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND_DIR = ROOT / "backend"
 ROLES = ("alice", "bob", "mallory")
+NODE_RUNNER = ("-m", "nodes.multi_session_cli")
 WAIT_SECONDS = 20
 POLL_SECONDS = 0.6
 
@@ -170,10 +171,10 @@ class Stack:
         self.stop_backend()
         self.start_backend()
 
-    def start_node(self, role: str) -> subprocess.Popen:
+    def start_node(self, role: str, runner: tuple[str, ...] = NODE_RUNNER) -> subprocess.Popen:
         self.node_starts[role] = self.node_starts.get(role, 0) + 1
         log = (self.tmp / f"{role}-{self.node_starts[role]}.log").open("wb")
-        command = [sys.executable, "-m", "nodes.multi_session_cli", "--role", role, "--url", self.url]
+        command = [sys.executable, *runner, "--role", role, "--url", self.url]
         if self.allow_diagnostics:
             command.append("--allow-diagnostics")
         process = subprocess.Popen(command, cwd=ROOT, env=self._env(), stdout=log,
@@ -181,9 +182,9 @@ class Stack:
         self.nodes[role] = process
         return process
 
-    def start_nodes(self, roles=ROLES) -> None:
+    def start_nodes(self, roles=ROLES, *, runner: tuple[str, ...] = NODE_RUNNER) -> None:
         for role in roles:
-            self.start_node(role)
+            self.start_node(role, runner=runner)
         self.wait_online(roles)
 
     def stop_node(self, role: str, kill: bool = False) -> None:
@@ -240,10 +241,12 @@ class Stack:
 
     def create(self, mode: str = "normal", prime: int = 23, generator: int = 5,
                diagnostics: bool = True, client: httpx.Client | None = None,
-               key: str | None = None) -> Owned:
+               key: str | None = None, scenario: str | None = None) -> Owned:
         key = key or new_key()
-        response = self.create_raw({"prime": prime, "generator": generator, "mode": mode,
-                                    "diagnostics_enabled": diagnostics}, key=key, client=client)
+        body = {"prime": prime, "generator": generator, "mode": mode, "diagnostics_enabled": diagnostics}
+        if scenario is not None:
+            body["scenario"] = scenario
+        response = self.create_raw(body, key=key, client=client)
         assert response.status_code == 201, response.text
         body = response.json()
         return Owned(body["session"]["session_id"], body["session_token"], key, body)

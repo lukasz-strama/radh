@@ -11,8 +11,10 @@ from .coordinator_http import Runtime, bearer, runtime
 from .coordinator_limits import reject
 from .models import ErrorResponse
 from .multi_models import (
-    Create, Created, Discovery, Events, Failure, Heartbeat, HeartbeatRequest, HexId,
-    Inbox, Interceptions, MalloryReport, MessageId, Presence, Publish, Report, SessionView,
+    AuthenticationState, Create, Created, Discovery, Events, Failure, Heartbeat,
+    HeartbeatRequest, HexId, Inbox, Interceptions, MalloryReport, MessageId,
+    Presence, Publish, Report, SessionView, Signature, SignatureRequest, TrustedKey,
+    TrustedKeyRequest, Verification, VerificationRequest,
 )
 from .session_models import (
     MalloryDiagnostics, Message, Interception, Replacement, SessionDiagnostics, NodeRole,
@@ -77,7 +79,7 @@ def invoke(rt, grant, method, *args):
 
 
 @public.post("/sessions", status_code=201, response_model=Created,
-             summary="Utwórz własną niezależną sesję DH")
+             summary="Utwórz sesję DH albo uwierzytelnioną RSA + DH")
 def create_session(
     body: Create, request: Request, rt: RT,
     key: Annotated[str | None, Header(alias="Idempotency-Key",
@@ -175,6 +177,42 @@ def inbox(record: Assigned, role: Node, rt: RT):
 @internal.post("/sessions/{session_id}/messages/{message_id}/ack", response_model=Message)
 def acknowledge(message_id: MessageId, record: Assigned, role: Node, rt: RT):
     return invoke(rt, record, "acknowledge", role, message_id)
+
+
+@internal.get(
+    "/sessions/{session_id}/authentication",
+    response_model=AuthenticationState,
+    summary="Pobierz zaufane klucze, podpisy i wyniki weryfikacji sesji",
+)
+def authentication(record: Assigned, role: Node, rt: RT):
+    return invoke(rt, record, "authentication", role)
+
+
+@internal.post(
+    "/sessions/{session_id}/trusted-keys",
+    response_model=TrustedKey,
+    summary="Opublikuj zaufany publiczny klucz RSA własnej roli",
+)
+def publish_trusted_key(body: TrustedKeyRequest, record: Assigned, role: Node, rt: RT):
+    return invoke(rt, record, "publish_trusted_key", role, body)
+
+
+@internal.post(
+    "/sessions/{session_id}/signatures",
+    response_model=Signature,
+    summary="Opublikuj podpis lokalnego transkryptu DH",
+)
+def publish_signature(body: SignatureRequest, record: Assigned, role: Node, rt: RT):
+    return invoke(rt, record, "publish_signature", role, body)
+
+
+@internal.post(
+    "/sessions/{session_id}/verifications",
+    response_model=Verification,
+    summary="Zgłoś wynik weryfikacji podpisu partnera",
+)
+def verify_signature(body: VerificationRequest, record: Assigned, role: Node, rt: RT):
+    return invoke(rt, record, "verify_signature", role, body)
 
 
 @internal.get("/sessions/{session_id}/interceptions", response_model=Interceptions)

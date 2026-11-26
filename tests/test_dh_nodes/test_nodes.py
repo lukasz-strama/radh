@@ -149,9 +149,9 @@ def test_invalid_session_id(alice, session_id):
 
 
 def test_reset_generates_fresh_local_secret_and_clears_key(adapter, monkeypatch):
-    values = iter([5, 14, UINT32_MAX - 1, 0])
+    values = iter([4, 13, 19, 0])
     def randbelow(bound):
-        assert bound == UINT32_MAX
+        assert bound == 20
         return next(values)
     monkeypatch.setattr("nodes.node.secrets.randbelow", randbelow)
     node = DhNode("alice", adapter)
@@ -162,8 +162,8 @@ def test_reset_generates_fresh_local_secret_and_clears_key(adapter, monkeypatch)
     assert node.state.received_public is None
     with pytest.raises(NodeError):
         node.diagnostics()
-    assert node.start_session("three", 23, 5).public_value == pow(5, UINT32_MAX, 23)
-    assert node.start_session("four", 23, 5).public_value == 5
+    assert node.start_session("three", 23, 5).public_value == pow(5, 21, 23)
+    assert node.start_session("four", 23, 5).public_value == pow(5, 2, 23)
 
 
 def test_c_failure_preserves_state_and_allows_retry(alice, adapter, monkeypatch):

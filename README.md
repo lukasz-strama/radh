@@ -15,10 +15,12 @@ Konwencje językowe, zasady branchowania, commitowania i tworzenia Pull Request�
 - [`crypto-core/`](crypto-core/) – edukacyjne operacje kryptograficzne w C11.
 - [`backend/`](backend/) – API FastAPI integrujące Python z CryptoCore przez `ctypes`.
 - [`frontend/`](frontend/) – interfejs React + TypeScript + Vite.
-- [`nodes/`](nodes/README.md) – niezależne procesy Alice i Bob z lokalnym interfejsem DH.
+- [`nodes/`](nodes/README.md) – procesy Alice, Bob i Mallory, klasyczny DH oraz uwierzytelniony DH w API v2.
 
 Obecnie można zaszyfrować pojedynczą liczbę za pomocą edukacyjnego RSA.
 Formularz wysyła dane do backendu, który wykonuje obliczenia w bibliotece C.
+Scenariusz `authenticated` w API DH v2 wiąże wymianę z podpisanym transkryptem.
+Szczegóły integracji opisuje [kontrakt uwierzytelnionego DH](backend/AUTHENTICATED_DH.md).
 
 ## Wymagania
 

@@ -6,7 +6,7 @@ import math
 import secrets
 from dataclasses import dataclass
 
-from .crypto_core import CryptoCore, CryptoCoreCallError, UINT32_MAX
+from .crypto_core import CryptoCore, CryptoCoreCallError, RsaKeygenResult, UINT32_MAX
 
 
 # Uzgodniony zakres demonstracyjny: nie więcej niż 16 bitów na liczbę
@@ -110,8 +110,7 @@ def _random_full_order_generator(prime: int, budget: _AttemptBudget) -> int:
             return candidate
 
 
-def generate_rsa_parameters(core: CryptoCore, max_attempts: int) -> RsaParameters:
-    """Wylosuj p, q i e, a następnie zatwierdź komplet przez RSA keygen w C."""
+def _generate_rsa(core: CryptoCore, max_attempts: int) -> tuple[RsaParameters, RsaKeygenResult]:
 
     budget = _AttemptBudget(max_attempts)
     validation_errors = {
@@ -138,7 +137,21 @@ def generate_rsa_parameters(core: CryptoCore, max_attempts: int) -> RsaParameter
             raise CryptoCoreCallError(
                 -1, "INTERNAL_ERROR", "CryptoCore zwrócił niespójny wynik keygen."
             )
-        return RsaParameters(p=p, q=q, e=e)
+        return RsaParameters(p=p, q=q, e=e), result
+
+
+def generate_rsa_parameters(core: CryptoCore, max_attempts: int) -> RsaParameters:
+    """Wylosuj p, q i e, a następnie zatwierdź komplet przez RSA keygen w C."""
+
+    parameters, _ = _generate_rsa(core, max_attempts)
+    return parameters
+
+
+def generate_rsa_keypair(core: CryptoCore, max_attempts: int) -> RsaKeygenResult:
+    """Wygeneruj parę do użycia wyłącznie w lokalnym procesie."""
+
+    _, keypair = _generate_rsa(core, max_attempts)
+    return keypair
 
 
 def generate_dh_parameters(core: CryptoCore, max_attempts: int) -> DhParameters:

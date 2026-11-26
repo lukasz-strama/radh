@@ -9,11 +9,16 @@ wywołują `radh_modexp_u32()` w C; nie używają centralnej wymiany DH.
 `node.py` nie zależy od transportu. `__main__.py` jest lokalnym narzędziem
 JSON Lines (jedno polecenie na linię stdin, jedna odpowiedź na linię stdout).
 Nie jest serwerem ani koordynatorem. `testing.py` wydziela deterministyczne
-ustawienie sekretu. Zwykły węzeł losuje go przez `secrets.randbelow(UINT32_MAX) + 1`
-przy każdej nowej sesji. Losowanie może przypadkiem dać tę samą liczbę.
+ustawienie sekretu. Zwykły węzeł, w tym obaj agenci Mallory, losuje wykładnik
+przy każdej nowej sesji z zakresu `[2, p-2]` dla `p >= 5` (BUG-NODE-01).
+Dla `p = 3` używa wykładnika 1, ponieważ przedział jest pusty. Generator
+pełnego rzędu daje w tych zakresach wartość publiczną różną od 1. Ręczny
+generator mniejszego rzędu nadal może dać 1. Testowy, jawnie ustawiony
+wykładnik zachowuje zakres `1..UINT32_MAX`.
 
-**Wyłącznie edukacja:** liczby 32-bitowe, brak uwierzytelniania, KDF i ochrony
-przed MITM. To nie jest narzędzie do zabezpieczania rzeczywistych danych.
+Tryb lokalny demonstruje klasyczne DH na liczbach 32-bitowych. Scenariusz z
+podpisami RSA jest dostępny w [wielosesyjnym transporcie v2](MULTI_SESSION.md)
+i również służy wyłącznie do demonstracji.
 
 ## Budowanie i uruchomienie
 

@@ -11,9 +11,14 @@ from typing import Callable
 
 from pydantic import ValidationError
 
-from backend.app.crypto_core import CryptoCoreCallError, CryptoCoreInputError
+from backend.app.crypto_core import CryptoCore, CryptoCoreCallError, CryptoCoreInputError, CryptoCoreLoadError
+from backend.app.parameter_generation import ParameterGenerationExhausted
+from .authenticated import AuthenticatedExchange
 from .internal_http import EpochChanged, InternalClient, InternalError
-from .internal_models import Descriptor, Discovery, Heartbeat, Inbox, Interception, Interceptions, Message, SessionView
+from .internal_models import (
+    AuthenticationState, Descriptor, Discovery, Heartbeat, Inbox, Interception, Interceptions,
+    Message, SessionContext, SessionView, Signature, TrustedKey, Verification,
+)
 from .mallory import MalloryNode
 from .node import DhNode, NodeError
 
@@ -27,6 +32,7 @@ class Entry:
     descriptor: Descriptor
     deadline: float
     node: DhNode | MalloryNode | None = None
+    authentication: AuthenticatedExchange | None = None
     published: bool = False
     acked: bool = False
     forwarded: set[str] = field(default_factory=set)
@@ -39,6 +45,14 @@ class Entry:
     next_attempt: float = 0
     first_error: float | None = None
     attempts: int = 0
+
+    def release(self) -> None:
+        self.node = None
+        self.authentication = None
+
+    def disable(self) -> None:
+        self.disabled = True
+        self.release()
 
 
 class MultiSessionTransport:
@@ -65,6 +79,8 @@ class MultiSessionTransport:
 
     def invalidate(self) -> None:
         with self.lock:
+            for entry in self.entries.values():
+                entry.disable()
             self.entries.clear()
             self.registered = False
             self.generation += 1
@@ -83,8 +99,7 @@ class MultiSessionTransport:
             if self.epoch != previous or self.generation != generation:
                 return
             if epoch != self.epoch:
-                self.entries.clear()
-                self.generation += 1
+                self.invalidate()
             self.epoch, self.registered = epoch, True
             self.lease_deadline = self.clock() + response.lease_seconds
 
@@ -100,8 +115,12 @@ class MultiSessionTransport:
     def _call(self, entry: Entry, method: str, suffix: str, body: dict | None = None):
         self.current(entry)
         d = entry.descriptor
-        raw, epoch = self.client.request(method, '/internal/v1/dh/sessions/' + d.session_id + suffix,
-                                         d.backend_epoch, body)
+        try:
+            raw, epoch = self.client.request(method, '/internal/v1/dh/sessions/' + d.session_id + suffix,
+                                             d.backend_epoch, body)
+        except InternalError:
+            self.current(entry)
+            raise
         self.current(entry)
         if epoch != d.backend_epoch:
             raise EpochChanged()
@@ -134,18 +153,19 @@ class MultiSessionTransport:
             for d in snapshot.sessions:
                 old = self.entries.get((epoch, d.session_id))
                 if old and (d.prime != old.descriptor.prime or d.generator != old.descriptor.generator
-                            or d.mode != old.descriptor.mode or d.revision < old.descriptor.revision
+                            or d.mode != old.descriptor.mode or d.scenario != old.descriptor.scenario
+                            or d.revision < old.descriptor.revision
                             or (old.descriptor.status != 'running' and d.status == 'running')):
                     raise InternalError(code='INVALID_RESPONSE')
             for key in list(self.entries):
                 if key not in keys:
-                    del self.entries[key]
+                    self.entries.pop(key).disable()
             for d in snapshot.sessions:
                 key = (epoch, d.session_id)
                 entry = self.entries.get(key)
                 if d.status not in ('running', 'completed') or (d.status == 'running' and not d.remaining_ttl_seconds):
                     if entry:
-                        entry.disabled, entry.node = True, None
+                        entry.disable()
                     continue
                 if entry is None:
                     if d.status != 'running':
@@ -163,27 +183,30 @@ class MultiSessionTransport:
                 else:
                     if entry.completed_at is None:
                         entry.completed_at = now
-                    entry.deadline = entry.completed_at + 30
+                    entry.deadline = min(entry.completed_at + 30, now + d.remaining_ttl_seconds)
                     if (not self.allow_diagnostics or not d.diagnostics_enabled
                             or d.diagnostics_received or entry.diagnostics_sent):
-                        entry.disabled, entry.node = True, None
+                        entry.disable()
             self.cleanup()
 
     def cleanup(self) -> None:
         with self.lock:
             for entry in self.entries.values():
                 if self.clock() >= entry.deadline:
-                    entry.disabled, entry.node = True, None
+                    entry.disable()
             if self.registered and self.clock() >= self.lease_deadline:
-                self.entries.clear()
-                self.registered = False
+                self.invalidate()
                 self.failed = True
                 self.stop.set()
 
     def _envelope(self, entry: Entry, envelope) -> None:
+        self._context(entry, envelope)
+        if envelope.revision < entry.descriptor.revision:
+            raise InternalError(code='INVALID_RESPONSE')
+
+    def _context(self, entry: Entry, envelope: SessionContext) -> None:
         d = entry.descriptor
-        if (envelope.session_id != d.session_id or envelope.backend_epoch != d.backend_epoch
-                or envelope.revision < d.revision):
+        if envelope.session_id != d.session_id or envelope.backend_epoch != d.backend_epoch:
             raise InternalError(code='INVALID_RESPONSE')
 
     def _message(self, entry: Entry, message: Message, *, own: bool = False) -> None:
@@ -194,28 +217,140 @@ class MultiSessionTransport:
                 or (not own and message.status not in ('queued', 'processed'))):
             raise InternalError(code='INVALID_RESPONSE')
 
+    def _publish(self, entry: Entry, node: DhNode) -> None:
+        if entry.published:
+            return
+        result = Message.model_validate(self._call(entry, 'POST', '/messages', {
+            'message_id': self.role + '-public', 'type': 'public_value',
+            'public_value': node.state.public_value,
+        }))
+        self._message(entry, result, own=True)
+        # W MITM odpowiedź na retry może już zawierać wartość podmienioną.
+        if ((entry.descriptor.mode == 'normal' or result.status == 'intercepted')
+                and result.public_value != node.state.public_value):
+            raise InternalError(code='INVALID_RESPONSE')
+        if entry.descriptor.mode == 'normal' and result.status == 'intercepted':
+            raise InternalError(code='INVALID_RESPONSE')
+        entry.published = True
+
+    def _inbox(self, entry: Entry) -> Message | None:
+        inbox = Inbox.model_validate(self._call(entry, 'GET', '/messages'))
+        self._envelope(entry, inbox)
+        if not inbox.messages:
+            return None
+        message = inbox.messages[0]
+        self._message(entry, message)
+        if message.status != 'queued':
+            raise InternalError(code='INVALID_RESPONSE')
+        return message
+
+    def _ack(self, entry: Entry, node: DhNode, message: Message) -> None:
+        self.current(entry)
+        node.receive_public(entry.descriptor.session_id, message.public_value)
+        result = Message.model_validate(self._call(
+            entry, 'POST', f'/messages/{message.message_id}/ack'))
+        self._message(entry, result)
+        if result.status != 'processed' or result.public_value != message.public_value:
+            raise InternalError(code='INVALID_RESPONSE')
+        entry.acked = True
+
+    def _authenticated(self, entry: Entry, node: DhNode, auth: AuthenticatedExchange) -> None:
+        d = entry.descriptor
+        role = self.role
+        assert role in ('alice', 'bob') and node.state.public_value is not None
+        peer = 'bob' if role == 'alice' else 'alice'
+        if d.status == 'running':
+            if not auth.key_published:
+                proposed = auth.public_key.model_dump()
+                key = TrustedKey.model_validate(self._call(entry, 'POST', '/trusted-keys', proposed))
+                self._context(entry, key)
+                if key.owner != role or key.model_dump(include=set(proposed)) != proposed:
+                    raise InternalError(code='INVALID_RESPONSE')
+                auth.key_published = True
+            self._publish(entry, node)
+            if auth.peer_message is None:
+                auth.peer_message = self._inbox(entry)
+                if auth.peer_message is None:
+                    return
+            if auth.verification is None:
+                snapshot = AuthenticationState.model_validate(self._call(entry, 'GET', '/authentication'))
+                self._context(entry, snapshot)
+                keys = {key.owner: key for key in snapshot.trusted_keys}
+                own = keys.get(role)
+                if (own is None or own.model_dump(include={'modulus', 'public_exponent'})
+                        != auth.public_key.model_dump()):
+                    raise InternalError(code='INVALID_RESPONSE')
+                if auth.peer_key is not None and keys.get(peer) != auth.peer_key:
+                    raise InternalError(code='INVALID_RESPONSE')
+                auth.peer_key = keys.get(peer)
+                if auth.peer_key is None:
+                    return
+                signatures = {item.signer: item for item in snapshot.signatures}
+                if ((role in signatures and signatures[role] != auth.signature)
+                        or (auth.signature_published and role not in signatures)
+                        or any(report.verifier == role for report in snapshot.verifications)):
+                    raise InternalError(code='INVALID_RESPONSE')
+                if auth.signature is None:
+                    auth.signature = auth.sign(auth.transcript(d, role, node.state.public_value, role))
+                if not auth.signature_published:
+                    signed = Signature.model_validate(self._call(
+                        entry, 'POST', '/signatures',
+                        auth.signature.model_dump(include={'signature', 'transcript_hash'}),
+                    ))
+                    if signed != auth.signature:
+                        raise InternalError(code='INVALID_RESPONSE')
+                    auth.signature_published = True
+                if peer not in signatures:
+                    return
+                auth.verification = auth.verify(
+                    auth.transcript(d, role, node.state.public_value, peer), signatures[peer], role,
+                )
+            if not auth.verification_published:
+                report = Verification.model_validate(self._call(
+                    entry, 'POST', '/verifications',
+                    auth.verification.model_dump(include={'signer', 'transcript_hash', 'verified'}),
+                ))
+                if report != auth.verification:
+                    raise InternalError(code='INVALID_RESPONSE')
+                if not report.verified:
+                    entry.disable()
+                    return
+                auth.verification_published = True
+        # "verified" w discovery potwierdza weryfikację, nie ACK. Ostatnie ACK
+        # może zostać zapisane mimo utraty odpowiedzi i dać już completed.
+        if auth.verification_published and not entry.acked:
+            assert auth.peer_message is not None
+            self._ack(entry, node, auth.peer_message)
+
     def process(self, entry: Entry) -> None:
         self.current(entry)
         d = entry.descriptor
         if entry.failure:
             result = SessionView.model_validate(self._call(entry, 'POST', '/fail', {'code': entry.failure}))
             self._envelope(entry, result)
-            if result.status != 'failed' or result.failure_code != entry.failure:
+            if (result.status != 'failed' or result.failure_code != entry.failure
+                    or result.scenario != d.scenario or result.mode != d.mode
+                    or result.prime != d.prime or result.generator != d.generator
+                    or result.diagnostics_enabled != d.diagnostics_enabled):
                 raise InternalError(code='INVALID_RESPONSE')
-            entry.disabled, entry.node = True, None
+            entry.disable()
             return
         with self.lock:
             self.current(entry)
             node = entry.node
+            auth = entry.authentication
         if node is None:
             if d.status != 'running':
-                entry.disabled = True
+                entry.disable()
                 return
             node = self.factory()
             node.start_session(d.session_id, d.prime, d.generator)
+            if d.scenario == 'authenticated' and self.role != 'mallory':
+                auth = AuthenticatedExchange(CryptoCore())
             with self.lock:
                 self.current(entry)
                 entry.node = node
+                entry.authentication = auth
         if d.status in ('running', 'completed'):
             if self.role == 'mallory':
                 envelope = Interceptions.model_validate(self._call(entry, 'GET', '/interceptions'))
@@ -247,40 +382,22 @@ class MultiSessionTransport:
                                 or result.delivered_value != value or result.status == 'pending'):
                             raise InternalError(code='INVALID_RESPONSE')
                         entry.forwarded.add(item.message_id)
+            elif auth is not None:
+                self._authenticated(entry, node, auth)
             elif d.status == 'running':
-                if not entry.published:
-                    result = Message.model_validate(self._call(entry, 'POST', '/messages', {
-                        'message_id': self.role + '-public', 'type': 'public_value',
-                        'public_value': node.state.public_value}))
-                    self._message(entry, result, own=True)
-                    # W MITM odpowiedź może już zawierać wartość podmienioną.
-                    if d.mode == 'normal' and result.public_value != node.state.public_value:
-                        raise InternalError(code='INVALID_RESPONSE')
-                    entry.published = True
+                self._publish(entry, node)
                 if not entry.acked:
-                    inbox = Inbox.model_validate(self._call(entry, 'GET', '/messages'))
-                    self._envelope(entry, inbox)
-                    for message in inbox.messages:
-                        self._message(entry, message)
-                        if message.status != 'queued':
-                            raise InternalError(code='INVALID_RESPONSE')
-                    for message in inbox.messages:
-                        node.receive_public(d.session_id, message.public_value)
-                        self.current(entry)
-                        result = Message.model_validate(self._call(
-                            entry, 'POST', f'/messages/{message.message_id}/ack'))
-                        self._message(entry, result)
-                        if result.status != 'processed' or result.public_value != message.public_value:
-                            raise InternalError(code='INVALID_RESPONSE')
-                        entry.acked = True
-                # Utrata odpowiedzi ostatniego ACK: kolejka jest już pusta.
-                if d.participant_status == 'received' and node.state.phase == 'complete':
-                    entry.acked = True
-        if self.role != 'mallory' and d.participant_status == 'received' and node.state.phase == 'complete':
+                    message = self._inbox(entry)
+                    if message is not None:
+                        self._ack(entry, node, message)
+        # W classic received oznacza, że backend zapisał ACK.
+        if d.participant_status == 'received' and node.state.phase == 'complete':
             entry.acked = True
         ready = (len(entry.forwarded) == 2 if self.role == 'mallory' else entry.acked)
         if (self.allow_diagnostics and d.diagnostics_enabled and not entry.diagnostics_sent
-                and not entry.diagnostics_disabled and ready and node.state.phase == 'complete'):
+                and not entry.diagnostics_disabled and not entry.disabled
+                and (d.scenario == 'classic' or d.status == 'completed')
+                and ready and node.state.phase == 'complete'):
             report = node.diagnostics()
             keys = ('shared_with_alice', 'shared_with_bob') if self.role == 'mallory' else ('shared_secret',)
             body = {key: report[key] for key in keys}
@@ -300,7 +417,7 @@ class MultiSessionTransport:
                 entry.diagnostics_disabled = True
                 return
             if entry is not None and error.code == 'ROLE_NOT_ASSIGNED':
-                entry.disabled, entry.node = True, None
+                entry.disable()
                 return
             self.failed = True
             self.stop.set()
@@ -321,19 +438,23 @@ class MultiSessionTransport:
             return
         if isinstance(error, StaleEntry):
             return
-        if isinstance(error, (NodeError, CryptoCoreCallError, CryptoCoreInputError)):
+        if isinstance(error, (NodeError, CryptoCoreCallError, CryptoCoreInputError,
+                              CryptoCoreLoadError, ParameterGenerationExhausted)):
             entry.failure = 'CRYPTO_CORE_ERROR'
+            entry.release()
             return
         if isinstance(error, InternalError) and (error.status in (404, 410, 422)
-                or (error.status == 409 and error.code not in ('ACK_REQUIRED', 'FORWARD_REQUIRED'))):
-            entry.disabled, entry.node = True, None
+                or (error.status == 409 and error.code not in (
+                    'ACK_REQUIRED', 'FORWARD_REQUIRED', 'PUBLIC_VALUES_REQUIRED'))):
+            entry.disable()
             return
         now = self.clock()
         entry.first_error = entry.first_error if entry.first_error is not None else now
         if now - entry.first_error >= 30:
             entry.failure = 'LOCAL_STATE_LOST'
+            entry.release()
             if entry.attempts > 10:
-                entry.disabled, entry.node = True, None
+                entry.disable()
         delay = min(8, .5 * 2 ** min(entry.attempts, 4)) * random.uniform(.8, 1.2)
         if isinstance(error, InternalError):
             delay = max(delay, error.retry_after)
@@ -344,7 +465,8 @@ class MultiSessionTransport:
         try:
             self.process(entry)
         except (InternalError, ValidationError, StaleEntry, NodeError,
-                CryptoCoreCallError, CryptoCoreInputError) as error:
+                CryptoCoreCallError, CryptoCoreInputError, CryptoCoreLoadError,
+                ParameterGenerationExhausted) as error:
             self.handle_error(error, entry)
         else:
             entry.attempts, entry.first_error = 0, None

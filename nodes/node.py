@@ -57,8 +57,11 @@ class DhNode:
     def state(self) -> NodeState:
         return self._state
 
-    def _new_secret(self) -> int:
-        return secrets.randbelow(UINT32_MAX) + 1
+    def _new_secret(self, prime: int) -> int:
+        # Dla p=3 przedział [2, p-2] jest pusty. Wykładnik 1 daje A=2.
+        if prime == 3:
+            return 1
+        return secrets.randbelow(prime - 3) + 2
 
     def start_session(self, session_id: str, p: int, g: int) -> NodeState:
         """Oblicz wartość publiczną i atomowo zastąp poprzednią sesję po sukcesie."""
@@ -71,7 +74,7 @@ class DhNode:
             raise NodeError("INVALID_GENERATOR", "Generator musi spełniać 2 <= g < p.")
         if session_id == self._state.session_id:
             raise NodeError("SESSION_ALREADY_STARTED", "Ta sesja została już rozpoczęta.")
-        secret = self._new_secret()
+        secret = self._new_secret(p)
         _uint32(secret, 1, "INVALID_SECRET")
         public_value = self._core.modexp(g, secret, p)
         state = NodeState(self._state.participant, session_id, "public_ready", p, g, public_value, None)

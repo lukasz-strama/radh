@@ -15,8 +15,9 @@ from uuid import uuid4
 
 from .coordinator_limits import Settings, reject
 from .multi_models import (
-    Created, Descriptor, Discovery, Event, Events, Heartbeat, Inbox, Interceptions,
-    NodePresence, Presence, SessionView,
+    AuthenticationState, Created, Descriptor, Discovery, Event, Events, Heartbeat,
+    Inbox, Interceptions, NodePresence, Presence, SessionView, Signature,
+    TrustedKey, Verification,
 )
 from .session_models import (
     CreateSession, Interception, MalloryDiagnostics, Message, SessionDiagnostics,
@@ -244,6 +245,9 @@ class Coordinator:
             view = SessionView(
                 **params, session_id=sid, backend_epoch=self.epoch,
                 created_at=date, expires_at=date + timedelta(seconds=ttl),
+                authentication=AuthenticationState(
+                    session_id=sid, backend_epoch=self.epoch,
+                ),
             )
             record = Record(view, digest(token), key_hash, ip_hash,
                             now + ttl, now + cfg.session_max_age_seconds, now)
@@ -369,7 +373,8 @@ class Coordinator:
                     descriptors.append(Descriptor(
                         **view.model_dump(include={
                             "session_id", "backend_epoch", "prime", "generator", "mode",
-                            "diagnostics_enabled", "status", "revision", "expires_at",
+                            "scenario", "diagnostics_enabled", "status", "revision",
+                            "expires_at",
                         }),
                         remaining_ttl_seconds=max(0, math.floor(deadline - self.clock())),
                         participant_status=None if role == "mallory" else getattr(view.participants, role),
@@ -387,6 +392,10 @@ class Coordinator:
         if role not in ROLES[:2]:
             reject(403, "ROLE_FORBIDDEN")
         view = record.view
+        if view.scenario == "authenticated" and not any(
+            key.owner == role for key in view.authentication.trusted_keys
+        ):
+            reject(409, "TRUSTED_KEY_REQUIRED")
         if request.message_id != role + "-public" or not 1 <= request.public_value < view.prime:
             reject(422, "INVALID_MESSAGE")
         for message in view.messages:
@@ -489,24 +498,164 @@ class Coordinator:
             reject(409, "INTERCEPTION_REQUIRED")
         if getattr(view.participants, role) == "waiting":
             reject(409, "PUBLIC_VALUE_REQUIRED")
+        if view.scenario == "authenticated" and not any(
+            verification.verifier == role and verification.verified
+            for verification in view.authentication.verifications
+        ):
+            reject(409, "VERIFICATION_REQUIRED")
         completing = all(m.message_id == mid or m.status == "processed" for m in view.messages)
-        self._reserve_events(record, 2)
+        authenticated = (
+            view.scenario == "authenticated"
+            and len(view.authentication.verifications) == 2
+            and all(item.verified for item in view.authentication.verifications)
+        )
+        terminal = completing and len(view.messages) == 2 and (
+            view.scenario == "classic" or authenticated
+        )
+        self._reserve_events(record, 2 if terminal or view.scenario == "authenticated" else 1)
         message.status = "processed"
         for interception in view.interceptions:
             if interception.message_id == mid:
                 interception.status = "processed"
-        setattr(view.participants, role, "received")
+        setattr(
+            view.participants,
+            role,
+            "verified" if view.scenario == "authenticated" else "received",
+        )
         self._event(record, "message_processed", **message.model_dump(exclude={"type", "status"}))
         record.progress_at = self.clock()
-        if completing and len(view.messages) == 2:
+        if terminal:
             self._terminal(record, "completed")
         return message.model_copy(deep=True)
+
+    @staticmethod
+    def _authentication(record, role):
+        if role not in ROLES[:2]:
+            reject(403, "ROLE_FORBIDDEN")
+        if record.view.scenario != "authenticated":
+            reject(409, "AUTHENTICATION_NOT_ENABLED")
+        return record.view.authentication
+
+    def authentication(self, record, role):
+        state = self._authentication(record, role)
+        return state.model_copy(deep=True)
+
+    def publish_trusted_key(self, record, role, request):
+        state = self._authentication(record, role)
+        existing = next((key for key in state.trusted_keys if key.owner == role), None)
+        proposed = request.model_dump()
+        if existing is not None:
+            if existing.model_dump(include=set(proposed)) != proposed:
+                reject(409, "TRUSTED_KEY_CONFLICT")
+            return existing.model_copy(deep=True)
+        self._protocol(record)
+        if record.view.status != "running":
+            reject(409, "INVALID_SESSION_STATE")
+        if not 255 < request.modulus <= 2**32 - 1:
+            reject(422, "INVALID_RSA_KEY")
+        if not 1 < request.public_exponent < request.modulus:
+            reject(422, "INVALID_RSA_KEY")
+        if len(state.trusted_keys) >= 2:
+            reject(409, "TRUSTED_KEY_LIMIT_REACHED")
+        self._reserve_events(record, 2)
+        key = TrustedKey(
+            **proposed,
+            session_id=record.view.session_id,
+            backend_epoch=self.epoch,
+            owner=role,
+        )
+        state.trusted_keys.append(key)
+        self._event(record, "trusted_key_published", sender=role)
+        record.progress_at = self.clock()
+        return key.model_copy(deep=True)
+
+    def publish_signature(self, record, role, request):
+        state = self._authentication(record, role)
+        existing = next((item for item in state.signatures if item.signer == role), None)
+        proposed = request.model_dump()
+        if existing is not None:
+            if existing.model_dump(include=set(proposed)) != proposed:
+                reject(409, "SIGNATURE_CONFLICT")
+            return existing.model_copy(deep=True)
+        self._protocol(record)
+        view = record.view
+        if view.status != "running":
+            reject(409, "INVALID_SESSION_STATE")
+        if len(state.trusted_keys) != 2:
+            reject(409, "TRUSTED_KEYS_REQUIRED")
+        if len(view.messages) != 2 or any(message.status == "intercepted" for message in view.messages):
+            reject(409, "PUBLIC_VALUES_REQUIRED")
+        key = next(item for item in state.trusted_keys if item.owner == role)
+        if request.signature >= key.modulus:
+            reject(422, "INVALID_SIGNATURE")
+        if len(state.signatures) >= 2:
+            reject(409, "SIGNATURE_LIMIT_REACHED")
+        self._reserve_events(record, 2)
+        signature = Signature(
+            **proposed,
+            session_id=view.session_id,
+            backend_epoch=self.epoch,
+            signer=role,
+        )
+        state.signatures.append(signature)
+        self._event(record, "signature_published", sender=role)
+        record.progress_at = self.clock()
+        return signature.model_copy(deep=True)
+
+    def verify_signature(self, record, role, request):
+        state = self._authentication(record, role)
+        peer = "bob" if role == "alice" else "alice"
+        if request.signer != peer:
+            reject(403, "ROLE_FORBIDDEN")
+        existing = next(
+            (item for item in state.verifications if item.verifier == role), None
+        )
+        proposed = request.model_dump()
+        if existing is not None:
+            comparable = existing.model_dump(include=set(proposed))
+            if comparable != proposed:
+                reject(409, "VERIFICATION_CONFLICT")
+            return existing.model_copy(deep=True)
+        self._protocol(record)
+        if record.view.status != "running":
+            reject(409, "INVALID_SESSION_STATE")
+        signature = next(
+            (item for item in state.signatures if item.signer == request.signer), None
+        )
+        if signature is None or len(state.signatures) != 2:
+            reject(409, "SIGNATURE_REQUIRED")
+        if request.verified and request.transcript_hash != signature.transcript_hash:
+            reject(422, "TRANSCRIPT_MISMATCH")
+        self._reserve_events(record, 2)
+        verification = Verification(
+            **proposed,
+            session_id=record.view.session_id,
+            backend_epoch=self.epoch,
+            verifier=role,
+            published_transcript_hash=signature.transcript_hash,
+        )
+        state.verifications.append(verification)
+        self._event(
+            record,
+            "signature_verified" if request.verified else "signature_rejected",
+            sender=role,
+            recipient=request.signer,
+            verified=request.verified,
+        )
+        record.progress_at = self.clock()
+        if request.verified:
+            setattr(record.view.participants, role, "verified")
+        else:
+            self._terminal(record, "failed", "SIGNATURE_VERIFICATION_FAILED")
+        return verification.model_copy(deep=True)
 
     def report(self, record, role, report):
         self._protocol(record)
         view = record.view
         if not view.diagnostics_enabled:
             reject(403, "DIAGNOSTICS_DISABLED")
+        if view.scenario == "authenticated" and view.status != "completed":
+            reject(409, "VERIFICATION_REQUIRED")
         if (record.terminal_time is not None
                 and self.clock() >= record.terminal_time + self.settings.diagnostics_retry_seconds):
             reject(409, "INVALID_SESSION_STATE")
@@ -517,7 +666,8 @@ class Coordinator:
             proposed = report.model_dump()
             target = record.mallory_diagnostics
         else:
-            if getattr(view.participants, role) != "received":
+            accepted = getattr(view.participants, role)
+            if accepted not in {"received", "verified"}:
                 reject(409, "ACK_REQUIRED")
             proposed = {role: report.shared_secret}
             target = record.diagnostics

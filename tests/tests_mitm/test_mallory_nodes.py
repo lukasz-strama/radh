@@ -132,17 +132,17 @@ def test_receive_c_failure(mallory, monkeypatch, source):
 
 
 def test_fresh_secrets(core, monkeypatch):
-    values = iter([6, 10, 0, 2**32 - 2])
+    values = iter([5, 9, 0, 19])
     def generate(bound):
-        assert bound == 2**32 - 1
+        assert bound == 20
         return next(values)
     monkeypatch.setattr("nodes.node.secrets.randbelow", generate)
     node = MalloryNode(CryptoCore(core.path))
     first = node.start_session("first", 23, 5)
     assert (first.substitute_to_alice, first.substitute_to_bob) == (17, 22)
     second = node.start_session("second", 23, 5)
-    assert second.substitute_to_alice == 5
-    assert second.substitute_to_bob == pow(5, 2**32 - 1, 23)
+    assert second.substitute_to_alice == pow(5, 2, 23)
+    assert second.substitute_to_bob == pow(5, 21, 23)
 
 
 @pytest.mark.parametrize("secret", [0, -1, 2**32, True, 7.0, "7"])

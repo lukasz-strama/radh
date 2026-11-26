@@ -94,6 +94,20 @@ Tryb zgodności zachowuje dotychczasowe ograniczenia bezpieczeństwa v1
 i jest przeznaczony do lokalnej migracji. Publiczne wdrożenie wymaga v2,
 wyłączonego legacy oraz bramek bezpieczeństwa opisanych w #73.
 
+## Uwierzytelniony DH — #103
+
+Scenariusz RSA + DH jest addytywnym rozszerzeniem tego samego rekordu, blokad,
+tokenów, epoch, TTL i API v2. `scenario=classic` zachowuje dotychczasowy przebieg;
+`scenario=authenticated` dodaje zaufane publiczne klucze RSA, podpisy transkryptu
+i dwa raporty weryfikacji. Kolekcje mają limit po dwa elementy, a limit historii
+pozostaje 32. Prywatne klucze RSA pozostają wyłącznie w procesach węzłów.
+
+Każdy deskryptor discovery zawiera wymagane `scenario: "classic" | "authenticated"`.
+Backend zwraca `classic` również dla żądań utworzenia bez tego pola. Węzeł
+rozpoznaje `verified` jako potwierdzenie raportu, a sesja przechodzi do
+`completed` po obu ACK. Diagnostyka w uwierzytelnionym DH jest wtedy dostępna
+przy podwójnym opt-in. [Kontrakt stanów, tras internal i transkryptu](AUTHENTICATED_DH.md)
+
 ## Informacje dla węzłów — #68 / PR #82
 
 Heartbeat pod `/internal/v1/dh/nodes/{role}/heartbeat` przyjmuje
@@ -112,10 +126,8 @@ Doprecyzowania dwóch punktów wskazanych w raporcie Łukasza:
   po forward. Backend porównuje request z zachowanym oryginałem przechwycenia.
 - Dla completed `remaining_ttl_seconds` deskryptora jest minimum czasu do
   końca sesji i pozostałego okna diagnostyki liczonego od terminalizacji.
-  Uwaga audytu #87: klient PR #82 wykorzystuje remaining_ttl_seconds dla running,
-  lecz dla completed nadal ustawia lokalne okno 30 s od pierwszej obserwacji.
-  Samo wysłanie skróconego TTL nie skraca więc retencji agenta. Dostosowanie
-  klienta pozostaje do uzgodnienia z właścicielem #68, bez dodawania pola API.
+  Klient ogranicza lokalne okno retry do tej wartości oraz maksymalnie 30 s
+  od pierwszej obserwacji completed.
   Po 30 s backend odrzuca raport diagnostyczny z INVALID_SESSION_STATE.
   Publiczna historia i już zapisane K pozostają dostępne do końca retencji.
 

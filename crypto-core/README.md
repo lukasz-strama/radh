@@ -1,7 +1,7 @@
 # CryptoCore
 
 Biblioteka współdzielona dla RADH wykonuje potęgowanie modularne, edukacyjne
-szyfrowanie i deszyfrowanie RSA, generowanie kluczy RSA oraz wymianę kluczy DH
+szyfrowanie, deszyfrowanie, generowanie kluczy i podpisy RSA oraz wymianę kluczy DH
 na liczbach `uint32_t`. Backend FastAPI może ładować ją przez Python `ctypes`.
 Biblioteka i testy C nie wymagają zależności
 zewnętrznych ani Pythona; implementacja nie alokuje pamięci dynamicznie.
@@ -112,6 +112,21 @@ radh_status_t radh_rsa_decrypt_u32(
     uint32_t *message
 );
 
+radh_status_t radh_rsa_sign_u32(
+    uint32_t representative,
+    uint32_t private_exponent,
+    uint32_t modulus,
+    uint32_t *signature
+);
+
+radh_status_t radh_rsa_verify_u32(
+    uint32_t representative,
+    uint32_t signature,
+    uint32_t public_exponent,
+    uint32_t modulus,
+    uint32_t *verified
+);
+
 typedef struct {
     uint32_t alice_public;
     uint32_t bob_public;
@@ -203,7 +218,7 @@ Publiczny enum `radh_status_t` ma jawne, stałe wartości:
 | `RADH_STATUS_INVALID_POINTER` | 1 | Wskaźnik wyjścia jest `NULL`. |
 | `RADH_STATUS_INVALID_MODULUS` | 2 | Moduł 0 dla modexp albo moduł mniejszy niż 2 dla RSA. |
 | `RADH_STATUS_INVALID_EXPONENT` | 3 | Wykładnik RSA jest równy 0. |
-| `RADH_STATUS_INVALID_MESSAGE` | 4 | Wartość wiadomości lub szyfrogramu RSA jest większa lub równa modułowi. |
+| `RADH_STATUS_INVALID_MESSAGE` | 4 | Wartość wiadomości, szyfrogramu, reprezentanta lub podpisu RSA jest większa lub równa modułowi. |
 | `RADH_STATUS_INVALID_PRIME` | 5 | Parametr DH `prime` nie jest liczbą pierwszą (także 0 i 1). |
 | `RADH_STATUS_INVALID_GENERATOR` | 6 | Generator DH jest poza zakresem albo kontrola pełnego rzędu wykazała mniejszy rząd. |
 | `RADH_STATUS_INVALID_SECRET` | 7 | Co najmniej jeden sekret DH jest równy 0. |
@@ -225,6 +240,44 @@ odpowiadają `ctypes.c_uint32`. Struktura DH odpowiada `ctypes.Structure` z czte
 polami `c_uint32` w kolejności z nagłówka, z naturalnym wyrównaniem (bez `_pack_`).
 W obsługiwanym ABI zajmuje 16 bajtów, a pola mają przesunięcia 0, 4, 8 i 12.
 Testy C sprawdzają rozmiar i przesunięcia pól przez `_Static_assert`.
+
+### Edukacyjne podpisy RSA
+
+`radh_rsa_sign_u32` zapisuje podpis `s = h^d mod n` dla podanego reprezentanta
+`h`, wykładnika prywatnego `d` i modułu `n`. `radh_rsa_verify_u32` oblicza
+`s^e mod n` przy użyciu wykładnika publicznego `e` i porównuje wynik z `h`.
+Dla błędnego podpisu mieszczącego się w zakresie funkcja zapisuje `0` pod
+`verified` i zwraca `RADH_STATUS_OK` (0). Dla zgodnego podpisu zapisuje `1`
+i zwraca ten sam status. Każdy błąd pozostawia bufor wyjściowy bez zmian.
+
+Obie funkcje zwracają status pierwszej niespełnionej reguły zgodnie z kolejnością
+w tabeli.
+
+| Podpisywanie | Weryfikacja | Status przy błędzie |
+| --- | --- | --- |
+| `signature != NULL` | `verified != NULL` | `RADH_STATUS_INVALID_POINTER` (1) |
+| `modulus >= 2` | `modulus >= 2` | `RADH_STATUS_INVALID_MODULUS` (2) |
+| `private_exponent > 0` | `public_exponent > 0` | `RADH_STATUS_INVALID_EXPONENT` (3) |
+| `representative < modulus` | `representative < modulus` | `RADH_STATUS_INVALID_MESSAGE` (4) |
+| — | `signature < modulus` | `RADH_STATUS_INVALID_MESSAGE` (4) |
+
+W `ctypes` podpisywanie przyjmuje trzy `c_uint32`, a weryfikacja cztery,
+w kolejności z publicznego nagłówka. Ostatnim argumentem obu funkcji jest
+`POINTER(c_uint32)`, a `restype` to `c_int`. Dotychczasowe sygnatury, struktury
+i statusy 0–13 zachowują zgodność ABI.
+
+Podpisywanie kosztuje O(log d), a weryfikacja O(log e) dla wykładników od 2
+(stały czas dla wykładnika 1). Obie operacje korzystają z istniejącego
+potęgowania modularnego i potrzebują O(1) pamięci dodatkowej.
+
+W uwierzytelnionym demo DH węzeł wyznacza reprezentant jako
+`int.from_bytes(SHA-256(transcript), "big") % signer_rsa_n` i przekazuje go
+do CryptoCore. Dwa różne skróty mogą dać ten sam reprezentant po redukcji
+modulo małe `n`, wtedy biblioteka daje ten sam wynik weryfikacji dla obu.
+To 32-bitowe textbook RSA bez schematu kodowania podpisu takiego jak RSA-PSS.
+Mały klucz i brak kodowania umożliwiają fałszowanie podpisów. Funkcje służą
+wyłącznie do demonstracji i nie wolno używać ich do uwierzytelniania HTTP,
+TLS, tokenów ani innych zabezpieczeń aplikacji.
 
 ### Walidacja pierwiastka pierwotnego DH
 
