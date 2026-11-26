@@ -792,8 +792,29 @@ details[open] > .dh-collapsible-header {
   white-space: pre;
 }
 
-/* Wynik generowania: nazwa i wartość w wierszu, wzór pod spodem */
-.rsa-keys div {
+/* Generowanie kluczy krok po kroku: ponumerowane kroki oddzielone linią.
+   W nagłówku kroku nazwa z plakietką i wynik, pod spodem wzór i krótki opis. */
+.rsa-keys {
+  gap: 0;
+  padding-block: var(--space-1);
+  list-style: none;
+  counter-reset: rsa-key-step;
+}
+
+.rsa-key-step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-block: var(--space-2);
+  counter-increment: rsa-key-step;
+}
+
+.rsa-key-step + .rsa-key-step {
+  border-top: var(--border-thin) solid var(--color-border);
+}
+
+.rsa-key-step-head,
+.rsa-key-pair div {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
@@ -801,25 +822,48 @@ details[open] > .dh-collapsible-header {
   gap: 0 var(--space-2);
 }
 
-.rsa-keys dt {
+.rsa-keys .rsa-key-step-title {
+  margin: 0;
   font-size: var(--text-sm);
+  color: var(--color-text);
 }
 
-.rsa-keys dt .badge {
+.rsa-key-step-title::before {
+  content: counter(rsa-key-step) '. ';
+  color: var(--color-muted);
+}
+
+.rsa-key-step-title .badge,
+.rsa-key-pair dt .badge {
   margin-left: var(--space-2);
 }
 
-.rsa-keys dd {
+.rsa-key-step-value,
+.rsa-key-pair dd {
   margin: 0;
   font-family: var(--font-mono);
   font-weight: bold;
   overflow-wrap: anywhere;
 }
 
-.rsa-keys .rsa-key-formula {
-  flex-basis: 100%;
+.rsa-key-step .formula {
+  font-size: var(--text-sm);
+}
+
+.rsa-key-pair {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.rsa-key-pair dt {
+  font-size: var(--text-sm);
+}
+
+.rsa-key-step-text,
+.rsa-key-step-source {
   font-size: var(--text-xs);
-  font-weight: normal;
   color: var(--color-muted);
 }
 
