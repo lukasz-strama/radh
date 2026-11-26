@@ -18,6 +18,7 @@ from .crypto_core import (
     CryptoCoreLoadError,
 )
 from .parameter_generation import ParameterGenerationExhausted
+from .rsa_text import RsaTextError
 
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,7 @@ async def crypto_core_call_error(
         "INVALID_MODULUS",
         "INVALID_EXPONENT",
         "MESSAGE_OUT_OF_RANGE",
+        "CIPHERTEXT_OUT_OF_RANGE",
         "INVALID_PRIME",
         "INVALID_GENERATOR",
         "INVALID_SECRET",
@@ -105,6 +107,11 @@ async def crypto_core_call_error(
         "INTERNAL_ERROR",
         "CryptoCore zwrócił nieoczekiwany błąd.",
     )
+
+
+@app.exception_handler(RsaTextError)
+async def rsa_text_error(_request: Request, exception: RsaTextError) -> JSONResponse:
+    return _error_response(422, exception.code, exception.message)
 
 
 @app.exception_handler(CryptoCoreLoadError)

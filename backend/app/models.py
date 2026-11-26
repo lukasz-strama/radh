@@ -40,6 +40,75 @@ class RsaEncryptResponse(BaseModel):
     ciphertext: Uint32
 
 
+class RsaDecryptRequest(BaseModel):
+    """Dane wejściowe demonstracyjnego deszyfrowania RSA."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [{
+            "ciphertext": 2790, "private_exponent": 2753, "modulus": 3233,
+        }]},
+    )
+
+    ciphertext: Uint32
+    private_exponent: Uint32
+    modulus: Uint32
+
+
+class RsaDecryptResponse(BaseModel):
+    """Odzyskana wiadomość liczbowa."""
+
+    message: Uint32
+
+
+class RsaTextEncryptRequest(BaseModel):
+    """Tekst UTF-8 i publiczna część edukacyjnego klucza RSA."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [{
+            "text": "HELLO", "public_exponent": 17, "modulus": 3233,
+        }]},
+    )
+
+    text: str = Field(strict=True, description="Od 1 do 128 bajtów UTF-8.")
+    public_exponent: Uint32
+    modulus: Uint32
+
+
+class RsaTextEncryptResponse(BaseModel):
+    """Każdy element jest szyfrogramem jednego bajtu UTF-8."""
+
+    ciphertexts: list[Uint32]
+
+
+class RsaTextDecryptRequest(BaseModel):
+    """Szyfrogramy bajtów UTF-8 i prywatna część klucza RSA."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [{
+            "ciphertexts": [3000, 28, 2726, 2726, 1307],
+            "private_exponent": 2753,
+            "modulus": 3233,
+        }]},
+    )
+
+    ciphertexts: list[Uint32] = Field(
+        min_length=1,
+        max_length=128,
+        description="Od 1 do 128 szyfrogramów, po jednym na bajt UTF-8.",
+    )
+    private_exponent: Uint32
+    modulus: Uint32
+
+
+class RsaTextDecryptResponse(BaseModel):
+    """Tekst odtworzony po deszyfrowaniu i walidacji UTF-8."""
+
+    text: str
+
+
 class RsaKeygenRequest(BaseModel):
     """Parametry generowania edukacyjnych kluczy RSA."""
 

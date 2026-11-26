@@ -50,6 +50,8 @@ class Settings:
     create_rate_burst: int = 2
     crypto_rate_per_minute: int = 20
     crypto_rate_burst: int = 5
+    rsa_text_rate_per_minute: int = 10
+    rsa_text_rate_burst: int = 2
     parameter_rate_per_minute: int = 10
     parameter_rate_burst: int = 2
     parameter_generation_max_attempts: int = 256

@@ -9,10 +9,14 @@ from .crypto_core import CryptoCore
 from .coordinator_http import runtime
 from .models import (
     DhExchangeRequest, DhExchangeResponse, DhParametersResponse,
-    ErrorResponse, RsaEncryptRequest, RsaEncryptResponse,
+    ErrorResponse, RsaDecryptRequest, RsaDecryptResponse,
+    RsaEncryptRequest, RsaEncryptResponse,
     RsaKeygenRequest, RsaKeygenResponse, RsaParametersResponse,
+    RsaTextDecryptRequest, RsaTextDecryptResponse,
+    RsaTextEncryptRequest, RsaTextEncryptResponse,
 )
 from .parameter_generation import generate_dh_parameters, generate_rsa_parameters
+from .rsa_text import decrypt_text, encrypt_text
 
 
 HTTP_ERROR_RESPONSES = {
@@ -40,6 +44,7 @@ def get_crypto_core() -> CryptoCore:
         "RSA z biblioteki CryptoCore napisanej w C. Nie używać do ochrony danych."
     ),
     responses={
+        429: {"model": ErrorResponse, "description": "Przekroczono limit żądań"},
         422: {"model": ErrorResponse, "description": "Niepoprawne dane wejściowe"},
         500: {"model": ErrorResponse, "description": "Błąd kontraktu CryptoCore"},
         503: {"model": ErrorResponse, "description": "CryptoCore jest niedostępny"},
@@ -54,6 +59,92 @@ def encrypt_rsa(
             request.message, request.public_exponent, request.modulus,
         )
     return RsaEncryptResponse(ciphertext=ciphertext)
+
+
+@router.post(
+    "/demo/decrypt",
+    response_model=RsaDecryptResponse,
+    summary="Edukacyjne deszyfrowanie RSA",
+    description=(
+        "Odzyskuje pojedynczą liczbę przez CryptoCore. Jest to textbook RSA "
+        "bez paddingu, wyłącznie do demonstracji edukacyjnej."
+    ),
+    responses={
+        429: {"model": ErrorResponse, "description": "Przekroczono limit żądań"},
+        422: {"model": ErrorResponse, "description": "Niepoprawne dane wejściowe"},
+        500: {"model": ErrorResponse, "description": "Błąd kontraktu CryptoCore"},
+        503: {"model": ErrorResponse, "description": "CryptoCore lub kolejka są niedostępne"},
+    },
+)
+def decrypt_rsa(
+    request: RsaDecryptRequest,
+    http_request: Request,
+    crypto_core: Annotated[CryptoCore, Depends(get_crypto_core)],
+) -> RsaDecryptResponse:
+    with runtime(http_request).new_crypto_slot():
+        message = crypto_core.decrypt(
+            request.ciphertext, request.private_exponent, request.modulus
+        )
+    return RsaDecryptResponse(message=message)
+
+
+@router.post(
+    "/demo/text/encrypt",
+    response_model=RsaTextEncryptResponse,
+    summary="Szyfrowanie tekstu UTF-8 przez RSA",
+    description=(
+        "Koduje maksymalnie 128 bajtów UTF-8 i szyfruje każdy bajt osobnym "
+        "wywołaniem CryptoCore. Wymaga modułu większego od 255. Textbook RSA "
+        "bez paddingu; nie używać do ochrony danych."
+    ),
+    responses={
+        429: {"model": ErrorResponse, "description": "Przekroczono limit żądań"},
+        422: {"model": ErrorResponse, "description": "Niepoprawny tekst lub klucz"},
+        500: {"model": ErrorResponse, "description": "Błąd kontraktu CryptoCore"},
+        503: {"model": ErrorResponse, "description": "CryptoCore lub kolejka są niedostępne"},
+    },
+)
+def encrypt_rsa_text(
+    request: RsaTextEncryptRequest,
+    http_request: Request,
+    crypto_core: Annotated[CryptoCore, Depends(get_crypto_core)],
+) -> RsaTextEncryptResponse:
+    with runtime(http_request).new_crypto_slot():
+        ciphertexts = encrypt_text(
+            crypto_core, request.text, request.public_exponent, request.modulus
+        )
+    return RsaTextEncryptResponse(ciphertexts=ciphertexts)
+
+
+@router.post(
+    "/demo/text/decrypt",
+    response_model=RsaTextDecryptResponse,
+    summary="Deszyfrowanie tekstu UTF-8 przez RSA",
+    description=(
+        "Deszyfruje od 1 do 128 szyfrogramów w CryptoCore, wymaga wyniku "
+        "bajtowego i odtwarza tekst przez ścisłe dekodowanie UTF-8. Textbook RSA "
+        "bez paddingu; nie używać do ochrony danych."
+    ),
+    responses={
+        429: {"model": ErrorResponse, "description": "Przekroczono limit żądań"},
+        422: {"model": ErrorResponse, "description": "Niepoprawny szyfrogram, klucz lub UTF-8"},
+        500: {"model": ErrorResponse, "description": "Błąd kontraktu CryptoCore"},
+        503: {"model": ErrorResponse, "description": "CryptoCore lub kolejka są niedostępne"},
+    },
+)
+def decrypt_rsa_text(
+    request: RsaTextDecryptRequest,
+    http_request: Request,
+    crypto_core: Annotated[CryptoCore, Depends(get_crypto_core)],
+) -> RsaTextDecryptResponse:
+    with runtime(http_request).new_crypto_slot():
+        text = decrypt_text(
+            crypto_core,
+            request.ciphertexts,
+            request.private_exponent,
+            request.modulus,
+        )
+    return RsaTextDecryptResponse(text=text)
 
 
 @router.post(
@@ -99,7 +190,7 @@ def random_rsa_parameters(
     crypto_core: Annotated[CryptoCore, Depends(get_crypto_core)],
 ) -> RsaParametersResponse:
     rt = runtime(http_request)
-    with rt.parameter_generation_slot():
+    with rt.new_crypto_slot():
         result = generate_rsa_parameters(
             crypto_core, rt.settings.parameter_generation_max_attempts
         )
@@ -157,7 +248,7 @@ def random_dh_parameters(
     crypto_core: Annotated[CryptoCore, Depends(get_crypto_core)],
 ) -> DhParametersResponse:
     rt = runtime(http_request)
-    with rt.parameter_generation_slot():
+    with rt.new_crypto_slot():
         result = generate_dh_parameters(
             crypto_core, rt.settings.parameter_generation_max_attempts
         )

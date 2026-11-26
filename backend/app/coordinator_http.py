@@ -18,6 +18,18 @@ from .coordinator_limits import CoordinatorError, CryptoAdmission, RateLimiter, 
 logger = logging.getLogger(__name__)
 
 BEARER = re.compile(r"Bearer ([A-Za-z0-9_-]{43})")
+LEGACY_V1_PATHS = frozenset({
+    "/api/v1/rsa/demo/encrypt",
+    "/api/v1/rsa/demo/keygen",
+    "/api/v1/dh/demo/exchange",
+    "/api/v1/dh/sessions",
+    "/api/v1/dh/nodes",
+})
+LEGACY_V1_PREFIXES = ("/api/v1/dh/sessions/", "/api/v1/dh/nodes/")
+RSA_TEXT_PATHS = frozenset({
+    "/api/v1/rsa/demo/text/encrypt",
+    "/api/v1/rsa/demo/text/decrypt",
+})
 PARAMETER_GENERATION_PATHS = frozenset({
     "/api/v1/rsa/demo/parameters",
     "/api/v1/dh/demo/parameters",
@@ -76,8 +88,8 @@ class Runtime:
         # Tryb migracji zachowuje dotychczasowe zachowanie demo v1.
         return nullcontext() if self.legacy_api_enabled else self.crypto.slot()
 
-    def parameter_generation_slot(self):
-        """Losowanie jest zawsze kolejkowane, również w trybie migracji v1."""
+    def new_crypto_slot(self):
+        """Losowanie parametrów i nowe operacje RSA zawsze zajmują slot kolejki."""
 
         return self.crypto.slot()
 
@@ -93,7 +105,7 @@ class Runtime:
         return role
 
     def admit(self, scope, headers):
-        path = scope["path"]
+        path = scope["path"].rstrip("/")
         cfg = self.settings
         origin = headers.get("origin")
         if origin is not None and origin not in self.origins:
@@ -119,6 +131,11 @@ class Runtime:
                 token = bearer(headers.get("authorization"))
                 self.limiter.check("read-token", digest(token),
                                    cfg.read_token_rate_per_minute, cfg.read_token_rate_per_minute)
+        elif path in RSA_TEXT_PATHS:
+            self.limiter.check(
+                "rsa-text", ip_hash,
+                cfg.rsa_text_rate_per_minute, cfg.rsa_text_rate_burst,
+            )
         elif path in PARAMETER_GENERATION_PATHS:
             self.limiter.check(
                 "parameters", ip_hash,
@@ -158,16 +175,13 @@ class CoordinatorMiddleware:
         self.app, self.app_state = app, app_state
 
     async def __call__(self, scope, receive, send):
-        path = scope.get("path", "")
+        path = scope.get("path", "").rstrip("/")
         if scope["type"] != "http" or not path.startswith(("/api/", "/internal/")):
             return await self.app(scope, receive, send)
         state = self.app_state() if callable(self.app_state) else self.app_state
         rt = state.runtime
-        if (
-            rt.legacy_api_enabled
-            and path.startswith("/api/v1/")
-            and path not in PARAMETER_GENERATION_PATHS
-        ):
+        # Tryb zgodności obejmuje historyczne demo i routery sesji/obecności v1.
+        if rt.legacy_api_enabled and (path in LEGACY_V1_PATHS or path.startswith(LEGACY_V1_PREFIXES)):
             return await self.app(scope, receive, send)
         headers = {k.decode("latin1").lower(): v.decode("latin1") for k, v in scope["headers"]}
         response_headers = {"Cache-Control": "no-store"}
