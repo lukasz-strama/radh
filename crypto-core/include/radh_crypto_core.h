@@ -50,6 +50,17 @@ radh_status_t radh_rsa_encrypt_u32(
     uint32_t *ciphertext
 );
 
+/* Waliduje parametry edukacyjnego DH wymagającego pierwiastka pierwotnego.
+ * Najpierw sprawdza pierwszość prime (RADH_STATUS_INVALID_PRIME), potem zakres
+ * 2 <= generator < prime i rząd prime - 1 (RADH_STATUS_INVALID_GENERATOR).
+ * Dla prime == 2 zakres jest pusty. Sukces zwraca RADH_STATUS_OK.
+ * Funkcja zwraca tylko status. Ręczna wymiana DH dopuszcza też niepełny rząd.
+ */
+radh_status_t radh_dh_validate_parameters_u32(
+    uint32_t prime,
+    uint32_t generator
+);
+
 typedef struct {
     uint32_t alice_public;
     uint32_t bob_public;
