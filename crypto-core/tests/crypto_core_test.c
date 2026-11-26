@@ -116,6 +116,22 @@ static const test_case_t rsa_decrypt_cases[] = {
     {3233, 0, 3233, RADH_STATUS_INVALID_EXPONENT, 0},
 };
 
+/* Wyniki podpisu i weryfikacji obliczono niezależnie przez Python pow(). */
+static const test_case_t rsa_sign_cases[] = {
+    {65, 2753, 3233, RADH_STATUS_OK, 588},
+    {0, 2753, 3233, RADH_STATUS_OK, 0},
+    {1, 2753, 3233, RADH_STATUS_OK, 1},
+    {3232, 2753, 3233, RADH_STATUS_OK, 3232},
+    {42, 1, 3233, RADH_STATUS_OK, 42},
+    {UINT32_MAX - 1, UINT32_MAX, UINT32_MAX, RADH_STATUS_OK, UINT32_MAX - 1},
+    {UINT32_MAX - 2, UINT32_MAX, UINT32_MAX, RADH_STATUS_OK, UINT32_C(2147483647)},
+    {UINT32_MAX, 0, 0, RADH_STATUS_INVALID_MODULUS, 0},
+    {UINT32_MAX, 0, 1, RADH_STATUS_INVALID_MODULUS, 0},
+    {3233, 0, 3233, RADH_STATUS_INVALID_EXPONENT, 0},
+    {3233, 2753, 3233, RADH_STATUS_INVALID_MESSAGE, 0},
+    {3234, 2753, 3233, RADH_STATUS_INVALID_MESSAGE, 0},
+};
+
 static unsigned int run_cases(
     const char *name,
     operation_t operation,
@@ -146,6 +162,58 @@ static unsigned int run_cases(
         }
     }
 
+    return failures;
+}
+
+static unsigned int check_rsa_verify_cases(void)
+{
+    static const struct {
+        uint32_t representative;
+        uint32_t signature;
+        uint32_t exponent;
+        uint32_t modulus;
+        radh_status_t status;
+        uint32_t expected;
+    } cases[] = {
+        {65, 588, 17, 3233, RADH_STATUS_OK, 1},
+        {66, 588, 17, 3233, RADH_STATUS_OK, 0},
+        {65, 589, 17, 3233, RADH_STATUS_OK, 0},
+        {65, 588, 7, 3233, RADH_STATUS_OK, 0},
+        {0, 0, 17, 3233, RADH_STATUS_OK, 1},
+        {1, 1, 17, 3233, RADH_STATUS_OK, 1},
+        {3232, 3232, 17, 3233, RADH_STATUS_OK, 1},
+        {42, 42, 1, 3233, RADH_STATUS_OK, 1},
+        {UINT32_MAX - 1, UINT32_MAX - 1, UINT32_MAX, UINT32_MAX, RADH_STATUS_OK, 1},
+        {UINT32_C(2147483647), UINT32_MAX - 2, UINT32_MAX, UINT32_MAX, RADH_STATUS_OK, 1},
+        {UINT32_MAX, UINT32_MAX, 0, 0, RADH_STATUS_INVALID_MODULUS, 0},
+        {UINT32_MAX, UINT32_MAX, 0, 1, RADH_STATUS_INVALID_MODULUS, 0},
+        {3233, 3233, 0, 3233, RADH_STATUS_INVALID_EXPONENT, 0},
+        {3233, 588, 17, 3233, RADH_STATUS_INVALID_MESSAGE, 0},
+        {3234, 588, 17, 3233, RADH_STATUS_INVALID_MESSAGE, 0},
+        {65, 3233, 17, 3233, RADH_STATUS_INVALID_MESSAGE, 0},
+        {65, 3234, 17, 3233, RADH_STATUS_INVALID_MESSAGE, 0},
+    };
+    unsigned int failures = 0;
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        const uint32_t sentinel = UINT32_C(0xA5A5A5A5);
+        uint32_t output = sentinel;
+        radh_status_t status = radh_rsa_verify_u32(cases[i].representative,
+            cases[i].signature, cases[i].exponent, cases[i].modulus, &output);
+        uint32_t expected = cases[i].status == RADH_STATUS_OK ? cases[i].expected : sentinel;
+
+        if (status != cases[i].status || output != expected) {
+            fprintf(stderr, "rsa verify[%zu]: status=%d, output=%" PRIu32
+                ", expected status=%d, output=%" PRIu32 "\n",
+                i, (int)status, output, (int)cases[i].status, expected);
+            ++failures;
+        }
+        if (radh_rsa_verify_u32(cases[i].representative, cases[i].signature,
+                cases[i].exponent, cases[i].modulus, NULL) != RADH_STATUS_INVALID_POINTER) {
+            fprintf(stderr, "rsa verify[%zu]: NULL output was not rejected first\n", i);
+            ++failures;
+        }
+    }
     return failures;
 }
 
@@ -395,6 +463,9 @@ int main(void)
         sizeof(rsa_cases) / sizeof(rsa_cases[0]));
     failures += run_cases("rsa decrypt", radh_rsa_decrypt_u32, rsa_decrypt_cases,
         sizeof(rsa_decrypt_cases) / sizeof(rsa_decrypt_cases[0]));
+    failures += run_cases("rsa sign", radh_rsa_sign_u32, rsa_sign_cases,
+        sizeof(rsa_sign_cases) / sizeof(rsa_sign_cases[0]));
+    failures += check_rsa_verify_cases();
     failures += check_small_domain();
     failures += check_dh_cases();
     failures += check_dh_small_domain();
