@@ -16,6 +16,10 @@ on:
       - "tests/requirements*.txt"
       - "pytest.ini"
       - ".github/workflows/e2e.yml"
+      # Same opisy i zrzuty ekranu nie zmieniają działania UI — nie odpalamy dla nich E2E.
+      # Wykluczenia muszą być NA KOŃCU listy (późniejszy wzorzec wygrywa).
+      - "!**/*.md"
+      - "!frontend/docs/**"
   push:
     branches: [main]
   workflow_dispatch:
