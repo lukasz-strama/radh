@@ -15,7 +15,14 @@ internal, a edukacyjne podpisy RSA uwierzytelniają wyłącznie transkrypt DH.
 `scenario` ma wartość `classic` (domyślna, dotychczasowy protokół) albo
 `authenticated`. Pole `mode` pozostaje niezależne: oba scenariusze obsługują
 `normal` i `mitm`. Stare żądania bez `scenario` zachowują dotychczasowe
-zachowanie i kształt discovery węzłów.
+zachowanie i otrzymują w discovery jawną wartość `scenario="classic"`.
+
+Każdy deskryptor zwracany przez
+`GET /internal/v1/dh/nodes/{role}/sessions` zawiera wymagane pole
+`scenario: "classic" | "authenticated"`. Proces węzła wybiera na tej podstawie
+klasyczny przebieg albo RSA + DH przed rozpoczęciem operacji sesji. Modele węzłów
+z #102 muszą przyjąć to pole przed równoległą integracją; nie należy wykrywać
+scenariusza przez dodatkowe zapytanie ani kod błędu endpointu authentication.
 
 Postęp uczestnika w scenariuszu uwierzytelnionym:
 

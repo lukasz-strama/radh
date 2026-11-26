@@ -150,6 +150,7 @@ class Descriptor(ProtocolModel):
     prime: Uint32
     generator: Uint32
     mode: Mode
+    scenario: Scenario
     diagnostics_enabled: Annotated[bool, Field(strict=True)]
     status: Status
     revision: int

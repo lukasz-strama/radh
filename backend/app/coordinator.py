@@ -373,7 +373,8 @@ class Coordinator:
                     descriptors.append(Descriptor(
                         **view.model_dump(include={
                             "session_id", "backend_epoch", "prime", "generator", "mode",
-                            "diagnostics_enabled", "status", "revision", "expires_at",
+                            "scenario", "diagnostics_enabled", "status", "revision",
+                            "expires_at",
                         }),
                         remaining_ttl_seconds=max(0, math.floor(deadline - self.clock())),
                         participant_status=None if role == "mallory" else getattr(view.participants, role),

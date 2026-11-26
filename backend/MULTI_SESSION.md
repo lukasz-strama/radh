@@ -103,10 +103,11 @@ i dwa raporty weryfikacji. Kolekcje mają limit po dwa elementy, a limit histori
 pozostaje 32. Prywatne klucze RSA pozostają wyłącznie w procesach węzłów.
 
 Pełny kontrakt stanów, internal API, idempotencji i kanonicznego transkryptu:
-[AUTHENTICATED_DH.md](AUTHENTICATED_DH.md). Istniejące discovery zachowuje kształt
-dla kompatybilności węzłów #68. Klient #102 rozpoznaje scenariusz przez
-`GET /internal/v1/dh/sessions/{id}/authentication`: `200` oznacza authenticated,
-a `409 AUTHENTICATION_NOT_ENABLED` klasyczny DH.
+[AUTHENTICATED_DH.md](AUTHENTICATED_DH.md). Każdy deskryptor discovery zawiera
+wymagane `scenario: "classic" | "authenticated"`; `classic` jest zwracane jawnie
+również dla żądań utworzenia bez tego pola. Modele węzłów #102 muszą zostać
+zaktualizowane przed integracją, ponieważ dotychczasowe ścisłe modele deskryptora
+nie przyjmą nowego pola.
 
 ## Informacje dla węzłów — #68 / PR #82
 
