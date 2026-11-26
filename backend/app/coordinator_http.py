@@ -18,6 +18,10 @@ from .coordinator_limits import CoordinatorError, CryptoAdmission, RateLimiter, 
 logger = logging.getLogger(__name__)
 
 BEARER = re.compile(r"Bearer ([A-Za-z0-9_-]{43})")
+PARAMETER_GENERATION_PATHS = frozenset({
+    "/api/v1/rsa/demo/parameters",
+    "/api/v1/dh/demo/parameters",
+})
 
 
 def bearer(value):
@@ -72,6 +76,11 @@ class Runtime:
         # Tryb migracji zachowuje dotychczasowe zachowanie demo v1.
         return nullcontext() if self.legacy_api_enabled else self.crypto.slot()
 
+    def parameter_generation_slot(self):
+        """Losowanie jest zawsze kolejkowane, również w trybie migracji v1."""
+
+        return self.crypto.slot()
+
     def authenticate_role(self, token):
         candidate = digest(token)
         role = None
@@ -110,6 +119,11 @@ class Runtime:
                 token = bearer(headers.get("authorization"))
                 self.limiter.check("read-token", digest(token),
                                    cfg.read_token_rate_per_minute, cfg.read_token_rate_per_minute)
+        elif path in PARAMETER_GENERATION_PATHS:
+            self.limiter.check(
+                "parameters", ip_hash,
+                cfg.parameter_rate_per_minute, cfg.parameter_rate_burst,
+            )
         elif path.startswith("/api/v1/"):
             self.limiter.check("crypto", ip_hash, cfg.crypto_rate_per_minute, cfg.crypto_rate_burst)
 
@@ -149,7 +163,11 @@ class CoordinatorMiddleware:
             return await self.app(scope, receive, send)
         state = self.app_state() if callable(self.app_state) else self.app_state
         rt = state.runtime
-        if rt.legacy_api_enabled and path.startswith("/api/v1/"):
+        if (
+            rt.legacy_api_enabled
+            and path.startswith("/api/v1/")
+            and path not in PARAMETER_GENERATION_PATHS
+        ):
             return await self.app(scope, receive, send)
         headers = {k.decode("latin1").lower(): v.decode("latin1") for k, v in scope["headers"]}
         response_headers = {"Cache-Control": "no-store"}

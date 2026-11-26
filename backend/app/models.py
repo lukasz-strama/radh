@@ -66,6 +66,18 @@ class RsaKeygenResponse(BaseModel):
     phi: Uint32 = Field(description="Wartość funkcji Eulera (p - 1) * (q - 1).")
 
 
+class RsaParametersResponse(BaseModel):
+    """Publiczne dane wejściowe gotowe do istniejącego RSA keygen."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [
+        {"p": 61_261, "q": 55_799, "e": 65_537}
+    ]})
+
+    p: Uint32 = Field(description="16-bitowa liczba pierwsza.")
+    q: Uint32 = Field(description="Inna 16-bitowa liczba pierwsza.")
+    e: Uint32 = Field(description="1 < e < phi oraz NWD(e, phi) = 1.")
+
+
 class ErrorDetail(BaseModel):
     """Stabilny kod błędu i komunikat dla użytkownika."""
 
@@ -106,3 +118,14 @@ class DhExchangeResponse(BaseModel):
     bob_public: Uint32 = Field(description="B = g^b mod p")
     alice_shared_key: Uint32 = Field(description="K_A = B^a mod p")
     bob_shared_key: Uint32 = Field(description="K_B = A^b mod p")
+
+
+class DhParametersResponse(BaseModel):
+    """Publiczne parametry gotowe do istniejącej wymiany DH."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [
+        {"prime": 65_521, "generator": 17}
+    ]})
+
+    prime: Uint32 = Field(description="16-bitowa liczba pierwsza p.")
+    generator: Uint32 = Field(description="Generator grupy o pełnym rzędzie p - 1.")

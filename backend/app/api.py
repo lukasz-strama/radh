@@ -8,10 +8,11 @@ from fastapi import APIRouter, Depends, Request
 from .crypto_core import CryptoCore
 from .coordinator_http import runtime
 from .models import (
-    DhExchangeRequest, DhExchangeResponse,
+    DhExchangeRequest, DhExchangeResponse, DhParametersResponse,
     ErrorResponse, RsaEncryptRequest, RsaEncryptResponse,
-    RsaKeygenRequest, RsaKeygenResponse,
+    RsaKeygenRequest, RsaKeygenResponse, RsaParametersResponse,
 )
+from .parameter_generation import generate_dh_parameters, generate_rsa_parameters
 
 
 HTTP_ERROR_RESPONSES = {
@@ -78,6 +79,33 @@ def generate_rsa_keys(request: RsaKeygenRequest, http_request: Request) -> RsaKe
     return RsaKeygenResponse(n=result.n, e=result.e, d=result.d, phi=result.phi)
 
 
+@router.post(
+    "/demo/parameters",
+    response_model=RsaParametersResponse,
+    summary="Losowanie parametrów RSA",
+    description=(
+        "Losuje przez secrets dwie różne, 16-bitowe liczby pierwsze oraz "
+        "wykładnik publiczny. Komplet jest zatwierdzany przez RSA keygen CryptoCore. "
+        "Odpowiedź nie zawiera prywatnego wykładnika ani phi."
+    ),
+    responses={
+        429: {"model": ErrorResponse, "description": "Przekroczono limit żądań"},
+        500: {"model": ErrorResponse, "description": "Błąd kontraktu CryptoCore"},
+        503: {"model": ErrorResponse, "description": "Brak zasobów, prób lub CryptoCore"},
+    },
+)
+def random_rsa_parameters(
+    http_request: Request,
+    crypto_core: Annotated[CryptoCore, Depends(get_crypto_core)],
+) -> RsaParametersResponse:
+    rt = runtime(http_request)
+    with rt.parameter_generation_slot():
+        result = generate_rsa_parameters(
+            crypto_core, rt.settings.parameter_generation_max_attempts
+        )
+    return RsaParametersResponse(p=result.p, q=result.q, e=result.e)
+
+
 @dh_router.post(
     "/demo/exchange",
     response_model=DhExchangeResponse,
@@ -108,3 +136,29 @@ def exchange_dh(
         alice_shared_key=result.alice_shared_key,
         bob_shared_key=result.bob_shared_key,
     )
+
+
+@dh_router.post(
+    "/demo/parameters",
+    response_model=DhParametersResponse,
+    summary="Losowanie parametrów Diffiego–Hellmana",
+    description=(
+        "Losuje przez secrets 16-bitową liczbę pierwszą p i generator g o "
+        "pełnym rzędzie p - 1. Komplet jest zatwierdzany przez CryptoCore."
+    ),
+    responses={
+        429: {"model": ErrorResponse, "description": "Przekroczono limit żądań"},
+        500: {"model": ErrorResponse, "description": "Błąd kontraktu CryptoCore"},
+        503: {"model": ErrorResponse, "description": "Brak zasobów, prób lub CryptoCore"},
+    },
+)
+def random_dh_parameters(
+    http_request: Request,
+    crypto_core: Annotated[CryptoCore, Depends(get_crypto_core)],
+) -> DhParametersResponse:
+    rt = runtime(http_request)
+    with rt.parameter_generation_slot():
+        result = generate_dh_parameters(
+            crypto_core, rt.settings.parameter_generation_max_attempts
+        )
+    return DhParametersResponse(prime=result.prime, generator=result.generator)
