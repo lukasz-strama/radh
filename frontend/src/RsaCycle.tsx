@@ -75,21 +75,51 @@ export function RsaCyclePanel({ ref }: { ref?: Ref<RsaCycleHandle> }) {
   const [decrypted, setDecrypted] = useState<DecryptResult | null>(null)
   const [isDecrypting, setIsDecrypting] = useState(false)
   const decryptId = useRef(0)
+  // Rośnie przy każdej ręcznej zmianie i próbie deszyfrowania – po nim widać, czy
+  // w trakcie szyfrowania ktoś pracował w panelu deszyfrowania.
+  const decryptTouched = useRef(0)
   const decryptBlock = useRetryBlock(() => setDecryptError(null))
 
-  // Każda z tych zmian unieważnia trwające żądanie i stary wynik danej strony cyklu.
-  function clearEncryption() {
+  // Unieważnia trwające żądanie danej strony cyklu, żeby spóźniona odpowiedź nie
+  // nadpisała nowszych danych. Komunikat blokady Retry-After zostaje do jej końca
+  // (jak przy losowaniu parametrów, #114) – wyjaśnia, czemu przycisk jest wyłączony.
+  function stopEncryption() {
     encryptId.current += 1
     setIsEncrypting(false)
+    if (!encryptBlock.blocked) setEncryptError(null)
+  }
+
+  function stopDecryption() {
+    decryptId.current += 1
+    setIsDecrypting(false)
+    if (!decryptBlock.blocked) setDecryptError(null)
+  }
+
+  // Jak wyżej, a do tego usuwa stary wynik (nowy klucz, zmiana trybu).
+  function clearEncryption() {
+    stopEncryption()
     setEncrypted(null)
-    setEncryptError(null)
   }
 
   function clearDecryption() {
-    decryptId.current += 1
-    setIsDecrypting(false)
+    stopDecryption()
     setDecrypted(null)
-    setDecryptError(null)
+  }
+
+  // Ręczna edycja pola ma pierwszeństwo przed trwającym żądaniem.
+  function editEncryption(set: (value: string) => void) {
+    return (value: string) => {
+      stopEncryption()
+      set(value)
+    }
+  }
+
+  function editDecryption(set: (value: string) => void) {
+    return (value: string) => {
+      decryptTouched.current += 1
+      stopDecryption()
+      set(value)
+    }
   }
 
   useImperativeHandle(ref, () => ({
@@ -119,6 +149,7 @@ export function RsaCyclePanel({ ref }: { ref?: Ref<RsaCycleHandle> }) {
     event.preventDefault()
     if (isEncrypting || encryptBlock.blocked) return
     const id = ++encryptId.current
+    const touched = decryptTouched.current
     setEncryptError(null)
     setEncrypted(null)
 
@@ -145,6 +176,9 @@ export function RsaCyclePanel({ ref }: { ref?: Ref<RsaCycleHandle> }) {
       if (id !== encryptId.current) return
       setEncrypted(result)
       // Szyfrogram od razu czeka w polu deszyfrowania – bez ręcznego przepisywania.
+      // Jeśli w trakcie szyfrowania ktoś pracował w panelu deszyfrowania, zostawiamy
+      // jego dane w spokoju.
+      if (decryptTouched.current !== touched) return
       clearDecryption()
       if (result.kind === 'number') {
         setCiphertext(String(result.ciphertext))
@@ -166,6 +200,7 @@ export function RsaCyclePanel({ ref }: { ref?: Ref<RsaCycleHandle> }) {
     event.preventDefault()
     if (isDecrypting || decryptBlock.blocked) return
     const id = ++decryptId.current
+    decryptTouched.current += 1
     setDecryptError(null)
     setDecrypted(null)
 
@@ -233,7 +268,7 @@ export function RsaCyclePanel({ ref }: { ref?: Ref<RsaCycleHandle> }) {
             label="Wiadomość (m)"
             error={encryptErrors.message}
             value={message}
-            onChange={setMessage}
+            onChange={editEncryption(setMessage)}
           />
         ) : (
           <TextArea
@@ -242,7 +277,7 @@ export function RsaCyclePanel({ ref }: { ref?: Ref<RsaCycleHandle> }) {
             error={encryptErrors.text}
             hint={`${textBytes} / ${RSA_TEXT_MAX_BYTES} bajtów UTF-8`}
             value={text}
-            onChange={setText}
+            onChange={editEncryption(setText)}
           />
         )}
         <Field
@@ -250,14 +285,14 @@ export function RsaCyclePanel({ ref }: { ref?: Ref<RsaCycleHandle> }) {
           label="Wykładnik publiczny (e)"
           error={encryptErrors.public_exponent}
           value={publicExponent}
-          onChange={setPublicExponent}
+          onChange={editEncryption(setPublicExponent)}
         />
         <Field
           name="modulus"
           label="Moduł (n)"
           error={encryptErrors.modulus}
           value={modulus}
-          onChange={setModulus}
+          onChange={editEncryption(setModulus)}
         />
 
         <Button type="submit" busy={isEncrypting} busyLabel="Szyfrowanie…" disabled={encryptBlock.blocked}>
@@ -276,7 +311,7 @@ export function RsaCyclePanel({ ref }: { ref?: Ref<RsaCycleHandle> }) {
             label="Szyfrogram (c)"
             error={decryptErrors.ciphertext}
             value={ciphertext}
-            onChange={setCiphertext}
+            onChange={editDecryption(setCiphertext)}
           />
         ) : (
           <TextArea
@@ -285,7 +320,7 @@ export function RsaCyclePanel({ ref }: { ref?: Ref<RsaCycleHandle> }) {
             error={decryptErrors.ciphertexts}
             hint="Liczby oddzielone przecinkami lub spacjami, po jednej na bajt."
             value={ciphertexts}
-            onChange={setCiphertexts}
+            onChange={editDecryption(setCiphertexts)}
           />
         )}
         <Field
@@ -293,14 +328,14 @@ export function RsaCyclePanel({ ref }: { ref?: Ref<RsaCycleHandle> }) {
           label="Wykładnik prywatny (d)"
           error={decryptErrors.private_exponent}
           value={privateExponent}
-          onChange={setPrivateExponent}
+          onChange={editDecryption(setPrivateExponent)}
         />
         <Field
           name="private_modulus"
           label="Moduł (n)"
           error={decryptErrors.private_modulus}
           value={privateModulus}
-          onChange={setPrivateModulus}
+          onChange={editDecryption(setPrivateModulus)}
         />
 
         <Button type="submit" busy={isDecrypting} busyLabel="Deszyfrowanie…" disabled={decryptBlock.blocked}>

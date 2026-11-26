@@ -332,3 +332,97 @@ describe('błędy i limity', () => {
     expect(inputValue(encrypt(), 'Wiadomość (m)')).toBe('65')
   })
 })
+
+describe('poprawki z review', () => {
+  // Odpowiedź zwalniana przez test – do sprawdzania spóźnionych odpowiedzi.
+  function hold(url: string) {
+    let release: (response: Response) => void = () => {}
+    handlers[url] = () => new Promise((resolve) => (release = resolve))
+    return (response: Response) => release(response)
+  }
+
+  it('ręczna edycja pola szyfrowania unieważnia trwające żądanie', async () => {
+    const user = userEvent.setup()
+    const release = hold(ENCRYPT)
+    render(<RsaView />)
+    await generateAndUseKeys(user)
+    await user.type(encrypt().getByLabelText('Wiadomość (m)'), '65')
+    await user.click(encrypt().getByRole('button', { name: 'Szyfruj' }))
+    await encrypt().findByRole('button', { name: 'Szyfrowanie…' })
+
+    await user.type(encrypt().getByLabelText('Wiadomość (m)'), '6')
+    encrypt().getByRole('button', { name: 'Szyfruj' })
+    await act(async () => release(json({ ciphertext: 2790 })))
+    expect(encrypt().queryByRole('status')).toBeNull()
+    expect(inputValue(decrypt(), 'Szyfrogram (c)')).toBe('')
+  })
+
+  it('ręczna edycja pola deszyfrowania unieważnia trwające żądanie', async () => {
+    const user = userEvent.setup()
+    const release = hold(DECRYPT)
+    render(<RsaView />)
+    await generateAndUseKeys(user)
+    await user.type(decrypt().getByLabelText('Szyfrogram (c)'), '2790')
+    await user.click(decrypt().getByRole('button', { name: 'Odszyfruj' }))
+    await decrypt().findByRole('button', { name: 'Deszyfrowanie…' })
+
+    await user.type(decrypt().getByLabelText('Wykładnik prywatny (d)'), '1')
+    await act(async () => release(json({ message: 65 })))
+    expect(decrypt().queryByRole('status')).toBeNull()
+  })
+
+  it('koniec szyfrowania nie nadpisuje szyfrogramu wpisanego ręcznie w trakcie', async () => {
+    const user = userEvent.setup()
+    const release = hold(ENCRYPT)
+    render(<RsaView />)
+    await generateAndUseKeys(user)
+    await user.type(encrypt().getByLabelText('Wiadomość (m)'), '65')
+    await user.click(encrypt().getByRole('button', { name: 'Szyfruj' }))
+    await encrypt().findByRole('button', { name: 'Szyfrowanie…' })
+
+    await user.type(decrypt().getByLabelText('Szyfrogram (c)'), '1234')
+    await act(async () => release(json({ ciphertext: 2790 })))
+    expect(await encrypt().findByText('2790', { selector: 'output' })).toBeTruthy()
+    expect(inputValue(decrypt(), 'Szyfrogram (c)')).toBe('1234')
+  })
+
+  it('komunikat Retry-After zostaje do końca blokady mimo zmiany klucza i edycji', async () => {
+    const user = userEvent.setup()
+    handlers[ENCRYPT] = () =>
+      Promise.resolve(apiError('RATE_LIMITED', 429, 'Nie można wykonać operacji.', { 'Retry-After': '1' }))
+    render(<RsaView />)
+    await generateAndUseKeys(user)
+    await user.type(encrypt().getByLabelText('Wiadomość (m)'), '65')
+    await user.click(encrypt().getByRole('button', { name: 'Szyfruj' }))
+    const message = 'Za dużo prób w krótkim czasie. Spróbuj ponownie za 1 s.'
+    expect((await encrypt().findByRole('alert')).textContent).toBe(message)
+
+    await user.click(keygen().getByRole('button', { name: 'Użyj klucza publicznego' }))
+    await user.type(encrypt().getByLabelText('Wiadomość (m)'), '6')
+    expect(encrypt().getByRole('alert').textContent).toBe(message)
+    await waitFor(() => expect(encrypt().queryByRole('alert')).toBeNull(), { timeout: 2500 })
+  })
+
+  it('wynik spoza zakresu modułu jest odrzucany', async () => {
+    const user = userEvent.setup()
+    handlers[ENCRYPT] = () => Promise.resolve(json({ ciphertext: 5000 }))
+    handlers[DECRYPT] = () => Promise.resolve(json({ message: 3233 }))
+    handlers[TEXT_ENCRYPT] = () => Promise.resolve(json({ ciphertexts: [3000, 28, 4000, 2726, 1307] }))
+    render(<RsaView />)
+    await generateAndUseKeys(user)
+
+    await user.type(encrypt().getByLabelText('Wiadomość (m)'), '65')
+    await user.click(encrypt().getByRole('button', { name: 'Szyfruj' }))
+    expect((await encrypt().findByRole('alert')).textContent).toMatch(/nieoczekiwanym formacie/)
+
+    await user.type(decrypt().getByLabelText('Szyfrogram (c)'), '2790')
+    await user.click(decrypt().getByRole('button', { name: 'Odszyfruj' }))
+    expect((await decrypt().findByRole('alert')).textContent).toMatch(/nieoczekiwanym formacie/)
+
+    await user.click(screen.getByRole('radio', { name: 'Tekst' }))
+    await user.type(encrypt().getByLabelText('Tekst'), 'HELLO')
+    await user.click(encrypt().getByRole('button', { name: 'Szyfruj' }))
+    expect((await encrypt().findByRole('alert')).textContent).toMatch(/nieoczekiwanym formacie/)
+    expect(encrypt().queryByRole('table')).toBeNull()
+  })
+})

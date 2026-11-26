@@ -44,7 +44,7 @@ export async function encryptRsa(data: RsaEncryptRequest): Promise<RsaEncryptRes
   const body = await rsaCycleRequest('/api/v1/rsa/demo/encrypt', data)
 
   const ciphertext = (body as { ciphertext?: unknown } | null)?.ciphertext
-  if (typeof ciphertext !== 'number') throw unexpectedFormat()
+  if (!belowModulus(ciphertext, data.modulus)) throw unexpectedFormat()
   return { ciphertext }
 }
 
@@ -60,7 +60,7 @@ export type RsaDecryptRequest = {
 export async function decryptRsa(data: RsaDecryptRequest): Promise<number> {
   const body = await rsaCycleRequest('/api/v1/rsa/demo/decrypt', data)
   const message = (body as { message?: unknown } | null)?.message
-  if (!uint32(message)) throw unexpectedFormat()
+  if (!belowModulus(message, data.modulus)) throw unexpectedFormat()
   return message
 }
 
@@ -75,7 +75,11 @@ export async function encryptRsaText(data: RsaTextEncryptRequest): Promise<numbe
   const body = await rsaCycleRequest('/api/v1/rsa/demo/text/encrypt', data)
   const ciphertexts = (body as { ciphertexts?: unknown } | null)?.ciphertexts
   const bytes = new TextEncoder().encode(data.text).length
-  if (!Array.isArray(ciphertexts) || ciphertexts.length !== bytes || !ciphertexts.every(uint32)) {
+  if (
+    !Array.isArray(ciphertexts) ||
+    ciphertexts.length !== bytes ||
+    !ciphertexts.every((value) => belowModulus(value, data.modulus))
+  ) {
     throw unexpectedFormat()
   }
   return ciphertexts
@@ -96,6 +100,11 @@ export async function decryptRsaText(data: RsaTextDecryptRequest): Promise<strin
     throw unexpectedFormat()
   }
   return text
+}
+
+// Wynik działania mod n jest liczbą całkowitą z zakresu 0 .. n − 1.
+function belowModulus(value: unknown, modulus: number): value is number {
+  return uint32(value) && value < modulus
 }
 
 // Przy limicie żądań i zajętej kolejce backend podaje tylko ogólne „Nie można wykonać
