@@ -8,9 +8,10 @@ FastAPI i wyświetla jego odpowiedź.
 
 ## Interfejs
 
-Aplikacja ma dwie zakładki: **RSA** (generowanie kluczy, szyfrowanie
-i deszyfrowanie liczby albo tekstu) oraz
-**Diffie–Hellman** (wymiana kluczy, także w scenariuszu ataku MITM).
+Aplikacja ma trzy zakładki: **RSA** (generowanie kluczy, szyfrowanie
+i deszyfrowanie liczby albo tekstu), **Diffie–Hellman** (wymiana kluczy, także
+w scenariuszu ataku MITM) oraz **RSA + DH** (wymiana DH uwierzytelniona
+podpisami RSA, bez ataku i z atakiem MITM).
 Zmiana zakładki nie usuwa wpisanych danych ani wyników.
 
 Interfejs działa na komputerach, tabletach i telefonach (sprawdzony przy
@@ -30,7 +31,9 @@ szerokościach 360, 390, 768 i 1440 px):
 
 ![Zakładka Diffie–Hellman: atak MITM i porównanie scenariuszy](docs/screenshots/dh-mitm.png)
 
-Wspólny wygląd obu widoków:
+![Zakładka RSA + DH: podmiana MITM wykryta przez weryfikację podpisu i porównanie scenariuszy](docs/screenshots/rsadh.png)
+
+Wspólny wygląd wszystkich widoków:
 
 - `src/index.css` – zmienne stylu: kolory (w tym uczestników i rodzajów danych),
   czcionki, rozmiary tekstu, odstępy, zaokrąglenia; jasny i ciemny motyw
@@ -142,6 +145,30 @@ Mallory jest wymagana tylko w MITM. K wymaga zgody użytkownika i flagi
 --allow-diagnostics danego węzła. Compose losuje wykładniki lokalnie; małe liczby
 edukacyjne mogą dać równe K nawet w MITM. Stałe wektory opisane w nodes/README.md
 służą testom pojedynczych agentów, nie konfiguracji sekretów runtime v2.
+
+### Zakładka RSA + DH
+
+Pokazuje, jak podpisy RSA chronią wymianę DH przed atakiem MITM. Korzysta z tych
+samych usług co zakładka Diffie–Hellman i tworzy sesję z polem
+`scenario: "authenticated"` – kontrakt opisuje
+[`backend/AUTHENTICATED_DH.md`](../backend/AUTHENTICATED_DH.md).
+
+- **Podpisana wymiana**: Alice i Bob publikują zaufane klucze publiczne RSA,
+  podpisują transkrypt sesji (p, g, A, B i oba klucze) i sprawdzają podpis
+  partnera. Po dwóch pozytywnych weryfikacjach sesja się kończy, a przy włączonej
+  diagnostyce oba K są zgodne.
+- **Podpisana wymiana + MITM**: Mallory podmienia A i B jak w zakładce DH, ale
+  skrót transkryptu z widoku ofiary różni się od skrótu podpisanego przez
+  partnera, więc weryfikacja się nie udaje. Sesja jest przerwana
+  (`SIGNATURE_VERIFICATION_FAILED`), K nie jest akceptowane ani pokazywane.
+- Panel „Podpisy RSA” pokazuje klucze publiczne, podpisy, pełne skróty SHA-256
+  i wynik weryfikacji obu stron, a po odrzuceniu – jego przyczynę.
+- Klucze prywatne RSA i DH zostają w procesach węzłów. Zaufanie do kluczy
+  publicznych przekazywanych przez koordynator jest założeniem demonstracji,
+  a 32-bitowe podpisy bez paddingu służą wyłącznie nauce.
+- Zakładka ma własną sesję i własne poświadczenie w `sessionStorage`
+  (`radh.dh.v2.authenticated.session`), więc może działać równocześnie z sesją
+  zakładki DH. Reset usuwa tylko sesję swojej zakładki.
 
 ## Kompilacja produkcyjna
 
