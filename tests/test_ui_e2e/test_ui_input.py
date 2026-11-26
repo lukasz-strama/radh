@@ -37,12 +37,12 @@ def test_keyboard_tabs_order_and_focus(page, width):
 
     # Tab: tylko aktywna zakładka, potem kontrolki widocznego panelu; każdy fokus widoczny.
     order = []
-    for _ in range(9):
+    for _ in range(10):
         press(page, Keys.TAB)
         assert focus_visible(page), f"niewidoczny fokus na {active(page)}"
         order.append(active(page))
-    assert order == ["p", "q", "e", "Generuj klucze", "message", "public_exponent", "modulus",
-                         "Szyfruj", "Repozytorium na GitHubie"]
+    assert order == ["p", "q", "e", "Losuj parametry", "Generuj klucze", "message", "public_exponent",
+                     "modulus", "Szyfruj", "Repozytorium na GitHubie"]
     assert "tab-dh" not in order and "prime" not in order, "ukryty panel i nieaktywna zakładka poza kolejnością"
     page.record("keyboard_order", {"order": order})
 
@@ -54,7 +54,7 @@ def test_keyboard_only_rsa_and_mitm(page, width):
     page.wait(lambda: "3233" in page.text("form[aria-labelledby=rsa-keygen-title] .rsa-keys"),
               message="Enter w polu generuje klucze")
     page.find("input[name=e]").click()
-    press(page, Keys.TAB, Keys.TAB)  # Generuj klucze → Użyj klucza publicznego
+    press(page, Keys.TAB, Keys.TAB, Keys.TAB)  # Losuj parametry → Generuj klucze → Użyj klucza publicznego
     assert active(page) == "Użyj klucza publicznego"
     press(page, Keys.ENTER)
     press(page, Keys.TAB)

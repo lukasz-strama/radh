@@ -226,3 +226,132 @@ describe('DH – losowanie p, g', () => {
     expect(value('Generator (g)')).toBe('5')
   })
 })
+describe('losowanie a operacje formularza', () => {
+  it('RSA: podczas losowania nie da się wygenerować kluczy, także Enterem', async () => {
+    const user = userEvent.setup()
+    const slow = deferred()
+    handlers[`POST ${RSA_PARAMETERS}`] = () => slow.promise
+    handlers[`POST ${KEYGEN}`] = () =>
+      Promise.resolve(json({ n: 3418302139, e: 65537, d: 1, phi: 3418185080 }))
+    render(<RsaView />)
+    const form = keygenForm()
+
+    await user.click(within(form).getByRole('button', { name: 'Losuj parametry' }))
+    await within(form).findByRole('button', { name: 'Losowanie…' })
+    const generate = within(form).getByRole('button', { name: 'Generuj klucze' }) as HTMLButtonElement
+    expect(generate.disabled).toBe(true)
+    // Enter w polu bez zmiany wartości nie przerywa losowania i nie wysyła formularza.
+    await user.type(within(form).getByLabelText('Liczba pierwsza (q)'), '{Enter}')
+    expect(requests('POST', KEYGEN)).toHaveLength(0)
+
+    await act(async () => {
+      slow.resolve(json({ p: 61261, q: 55799, e: 65537 }))
+    })
+    expect(generate.disabled).toBe(false)
+    await user.click(generate)
+    await waitFor(() => expect(requests('POST', KEYGEN)).toHaveLength(1))
+    expect(JSON.parse(requests('POST', KEYGEN)[0].body as string)).toEqual({ p: 61261, q: 55799, e: 65537 })
+  })
+
+  it('DH: podczas losowania nie da się rozpocząć sesji, także Enterem', async () => {
+    const user = userEvent.setup()
+    const slow = deferred()
+    handlers[`POST ${DH_PARAMETERS}`] = () => slow.promise
+    render(<DhExchange />)
+    const start = screen.getByRole('button', { name: 'Rozpocznij sesję' }) as HTMLButtonElement
+    await waitFor(() => expect(start.disabled).toBe(false))
+
+    await user.click(screen.getByRole('button', { name: 'Losuj parametry' }))
+    await screen.findByRole('button', { name: 'Losowanie…' })
+    expect(start.disabled).toBe(true)
+    await user.type(screen.getByLabelText('Generator (g)'), '{Enter}')
+    expect(requests('POST', DH_SESSIONS)).toHaveLength(0)
+
+    await act(async () => {
+      slow.resolve(json({ prime: 65521, generator: 17 }))
+    })
+    expect(value('Liczba pierwsza (p)')).toBe('65521')
+    expect(start.disabled).toBe(false)
+    expect(requests('POST', DH_SESSIONS)).toHaveLength(0)
+  })
+
+  it('RSA: wartości spoza zakresu nie trafiają do formularza', async () => {
+    const user = userEvent.setup()
+    handlers[`POST ${RSA_PARAMETERS}`] = () => Promise.resolve(json({ p: 257, q: 257, e: 65537 }))
+    render(<RsaView />)
+    const form = keygenForm()
+
+    await user.click(within(form).getByRole('button', { name: 'Losuj parametry' }))
+    await within(form).findByText('Backend zwrócił parametry spoza dozwolonego zakresu.')
+    expect(value('Liczba pierwsza (p)', form)).toBe('61')
+    expect(value('Liczba pierwsza (q)', form)).toBe('53')
+  })
+
+  it('DH: generator spoza zakresu nie trafia do formularza', async () => {
+    const user = userEvent.setup()
+    handlers[`POST ${DH_PARAMETERS}`] = () => Promise.resolve(json({ prime: 23, generator: 30 }))
+    render(<DhExchange />)
+
+    await user.click(screen.getByRole('button', { name: 'Losuj parametry' }))
+    await screen.findByText('Backend zwrócił parametry spoza dozwolonego zakresu.')
+    expect(value('Liczba pierwsza (p)')).toBe('23')
+    expect(value('Generator (g)')).toBe('5')
+  })
+
+  it('RSA: ręczna edycja czyści błąd losowania', async () => {
+    const user = userEvent.setup()
+    handlers[`POST ${RSA_PARAMETERS}`] = () =>
+      Promise.resolve(apiError('PARAMETER_GENERATION_EXHAUSTED', 503,
+        'Nie udało się wylosować parametrów w limicie prób.'))
+    render(<RsaView />)
+    const form = keygenForm()
+
+    await user.click(within(form).getByRole('button', { name: 'Losuj parametry' }))
+    await within(form).findByText('Nie udało się wylosować parametrów.')
+    await user.type(within(form).getByLabelText('Wykładnik publiczny (e)'), '1')
+    expect(within(form).queryByText('Nie udało się wylosować parametrów.')).toBeNull()
+  })
+
+  it('DH: Reset czyści błąd losowania', async () => {
+    const user = userEvent.setup()
+    handlers[`POST ${DH_PARAMETERS}`] = () =>
+      Promise.resolve(apiError('PARAMETER_GENERATION_EXHAUSTED', 503,
+        'Nie udało się wylosować parametrów w limicie prób.'))
+    render(<DhExchange />)
+
+    await user.click(screen.getByRole('button', { name: 'Losuj parametry' }))
+    await screen.findByText('Nie udało się wylosować parametrów.')
+    await user.click(screen.getByRole('button', { name: 'Reset' }))
+    expect(screen.queryByText('Nie udało się wylosować parametrów.')).toBeNull()
+  })
+
+  it('DH: Reset nie zdejmuje blokady Retry-After, a po jej końcu komunikat znika', async () => {
+    const user = userEvent.setup()
+    handlers[`POST ${DH_PARAMETERS}`] = () =>
+      Promise.resolve(apiError('RATE_LIMITED', 429, 'Nie można wykonać operacji.', { 'Retry-After': '1' }))
+    render(<DhExchange />)
+    const message = 'Za dużo prób w krótkim czasie. Spróbuj ponownie za 1 s.'
+
+    await user.click(screen.getByRole('button', { name: 'Losuj parametry' }))
+    await screen.findByText(message)
+    await user.click(screen.getByRole('button', { name: 'Reset' }))
+    const draw = screen.getByRole('button', { name: 'Losuj parametry' }) as HTMLButtonElement
+    expect(draw.disabled).toBe(true)
+    screen.getByText(message)
+
+    await waitFor(() => expect(draw.disabled).toBe(false), { timeout: 2500 })
+    expect(screen.queryByText(message)).toBeNull()
+  })
+
+  it('odmontowanie widoku przerywa trwające losowanie', async () => {
+    const user = userEvent.setup()
+    handlers[`POST ${RSA_PARAMETERS}`] = () => deferred().promise
+    const { unmount } = render(<RsaView />)
+
+    await user.click(within(keygenForm()).getByRole('button', { name: 'Losuj parametry' }))
+    const signal = requests('POST', RSA_PARAMETERS)[0].signal as AbortSignal
+    expect(signal.aborted).toBe(false)
+    unmount()
+    expect(signal.aborted).toBe(true)
+  })
+})

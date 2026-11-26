@@ -26,6 +26,7 @@ import type {
   DhMode,
   DhNode,
   DhSession,
+  DhSessionParams,
   EventType,
   MessageStatus,
   NodeAvailability,
@@ -197,25 +198,29 @@ function scrollToSceneIfBelow(scene: HTMLElement | null) {
   scene.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' })
 }
 
+// Liczby z backendu w postaci pól formularza (jak przy ręcznym wpisaniu).
+function dhFields(values: DhSessionParams): Record<DhField, string> {
+  return { prime: String(values.prime), generator: String(values.generator) }
+}
+
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof ApiError ? error.message : fallback
 }
 
 export function DhExchange() {
   const [fieldErrors, setFieldErrors] = useState<DhFieldErrors>({})
-  // Pola p i g trzymamy w stanie, żeby losowanie mogło je wypełnić. Losowanie zmienia
-  // tylko formularz: nie dotyka trwającej sesji i niczego nie uruchamia.
-  const [params, setParams] = useState<Record<DhField, string>>(DEFAULTS)
-  const parameters = useParameterDraw(drawDhParameters, (drawn) => {
-    setParams({ prime: String(drawn.prime), generator: String(drawn.generator) })
-    setFieldErrors({})
-  })
-
-  // Ręczna edycja ma pierwszeństwo: przerywa trwające losowanie, żeby go nie nadpisało.
-  function editParam(field: DhField, value: string) {
-    parameters.cancel()
-    setParams((previous) => ({ ...previous, [field]: value }))
-  }
+  // Losowanie zmienia tylko formularz: nie dotyka trwającej sesji i niczego nie
+  // uruchamia. Pola zostają niesterowane (wartości czyta FormData); losowanie wpisuje
+  // nowe wartości, montując pola od nowa (`key`) z nowym defaultValue – tak jak w RSA.
+  const [drawn, setDrawn] = useState({ values: DEFAULTS, version: 0 })
+  const parameters = useParameterDraw(
+    drawDhParameters,
+    (values) => validateDhParams(dhFields(values)).ok,
+    (values) => {
+      setDrawn((previous) => ({ values: dhFields(values), version: previous.version + 1 }))
+      setFieldErrors({})
+    },
+  )
   const [view, setView] = useState<ViewState>(() =>
     currentCredential() ? { status: 'loading' } : { status: 'empty' },
   )
@@ -450,7 +455,8 @@ export function DhExchange() {
 
   async function handleStart(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (isLoading || nodesOffline || activeId || startBlocked) return
+    // Podczas losowania pola mogą się jeszcze zmienić – sesję rozpoczynamy dopiero po nim.
+    if (isLoading || nodesOffline || activeId || startBlocked || parameters.isDrawing) return
     const id = ++requestId.current
     actionController.current?.abort()
     const controller = new AbortController()
@@ -532,7 +538,8 @@ export function DhExchange() {
   async function handleReset() {
     const id = ++requestId.current
     actionController.current?.abort()
-    // Reset unieważnia też trwające losowanie parametrów.
+    // Reset unieważnia też trwające losowanie parametrów i czyści jego błąd
+    // (blokada Retry-After zostaje). Wartości w polach zostają, jak dotąd.
     parameters.cancel()
     const controller = new AbortController()
     actionController.current = controller
@@ -628,19 +635,22 @@ export function DhExchange() {
               ))}
             </fieldset>
 
+            {/* Ręczna edycja ma pierwszeństwo: przerywa trwające losowanie, żeby go nie nadpisało. */}
             <Field
               name="prime"
               label="Liczba pierwsza (p)"
               error={fieldErrors.prime}
-              value={params.prime}
-              onChange={(value) => editParam('prime', value)}
+              key={`prime-${drawn.version}`}
+              defaultValue={drawn.values.prime}
+              onChange={parameters.cancel}
             />
             <Field
               name="generator"
               label="Generator (g)"
               error={fieldErrors.generator}
-              value={params.generator}
-              onChange={(value) => editParam('generator', value)}
+              key={`generator-${drawn.version}`}
+              defaultValue={drawn.values.generator}
+              onChange={parameters.cancel}
             />
             {/* Losowanie tylko wypełnia pola – sesję rozpoczyna się przyciskiem niżej. */}
             <Button
@@ -675,7 +685,7 @@ export function DhExchange() {
                 type="submit"
                 busy={isLoading}
                 busyLabel="Uruchamianie…"
-                disabled={nodesOffline || activeId !== null || startBlocked}
+                disabled={nodesOffline || activeId !== null || startBlocked || parameters.isDrawing}
                 aria-describedby={
                   nodesOffline || nodes.status === 'error' ? 'dh-nodes-hint' : undefined
                 }

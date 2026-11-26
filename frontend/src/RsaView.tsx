@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { ApiError, drawRsaParameters, encryptRsa, generateRsaKeys } from './api'
-import type { RsaEncryptRequest } from './api'
+import type { RsaEncryptRequest, RsaKeygenRequest } from './api'
 import { validateRsaInput, validateRsaKeyParams } from './validation'
 import type { FieldErrors, RsaKeyField, RsaKeyFieldErrors } from './validation'
 import { Field } from './Field'
@@ -150,22 +150,24 @@ function KeyGenPanel({ onUsePublicKey }: { onUsePublicKey: (keys: RsaKeys) => vo
   // Ostatnia wygenerowana para; null = brak (także po nowej próbie, zanim przyjdzie wynik).
   const [keys, setKeys] = useState<RsaKeys | null>(null)
   const [isLoading, setIsLoading] = useState(false)
-  // Pola trzymamy w stanie, żeby losowanie mogło je wypełnić; edycja ręczna działa jak dotąd.
-  const [values, setValues] = useState<Record<RsaKeyField, string>>(KEY_DEFAULTS)
-  const parameters = useParameterDraw(drawRsaParameters, (drawn) => {
-    setValues({ p: String(drawn.p), q: String(drawn.q), e: String(drawn.e) })
-    setFieldErrors({})
-  })
-
-  // Ręczna edycja ma pierwszeństwo: przerywa trwające losowanie, żeby go nie nadpisało.
-  function edit(field: RsaKeyField, value: string) {
-    parameters.cancel()
-    setValues((previous) => ({ ...previous, [field]: value }))
-  }
+  // Pola zostają niesterowane (wartości czyta FormData). Losowanie wpisuje nowe
+  // wartości, montując pola od nowa (`key`) z nowym defaultValue. Pola sterowane
+  // rozjeżdżały się z DOM, gdy wartość zmieniła się bez zdarzenia input (np. clear()
+  // w Selenium) – kolejny render przywracał wtedy starą wartość.
+  const [drawn, setDrawn] = useState({ values: KEY_DEFAULTS, version: 0 })
+  const parameters = useParameterDraw(
+    drawRsaParameters,
+    (values) => validateRsaKeyParams(keyFields(values)).ok,
+    (values) => {
+      setDrawn((previous) => ({ values: keyFields(values), version: previous.version + 1 }))
+      setFieldErrors({})
+    },
+  )
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (isLoading) return
+    // Podczas losowania pola mogą się jeszcze zmienić – generujemy dopiero po nim.
+    if (isLoading || parameters.isDrawing) return
     setApiError(null)
     setKeys(null)
 
@@ -200,26 +202,30 @@ function KeyGenPanel({ onUsePublicKey }: { onUsePublicKey: (keys: RsaKeys) => vo
     <form className="panel" onSubmit={handleSubmit} noValidate aria-labelledby="rsa-keygen-title">
       <h2 id="rsa-keygen-title">Generowanie kluczy</h2>
 
+      {/* Ręczna edycja ma pierwszeństwo: przerywa trwające losowanie, żeby go nie nadpisało. */}
       <Field
         name="p"
         label="Liczba pierwsza (p)"
         error={fieldErrors.p}
-        value={values.p}
-        onChange={(value) => edit('p', value)}
+        key={`p-${drawn.version}`}
+        defaultValue={drawn.values.p}
+        onChange={parameters.cancel}
       />
       <Field
         name="q"
         label="Liczba pierwsza (q)"
         error={fieldErrors.q}
-        value={values.q}
-        onChange={(value) => edit('q', value)}
+        key={`q-${drawn.version}`}
+        defaultValue={drawn.values.q}
+        onChange={parameters.cancel}
       />
       <Field
         name="e"
         label="Wykładnik publiczny (e)"
         error={fieldErrors.e}
-        value={values.e}
-        onChange={(value) => edit('e', value)}
+        key={`e-${drawn.version}`}
+        defaultValue={drawn.values.e}
+        onChange={parameters.cancel}
       />
 
       {/* Losowanie tylko wypełnia pola – klucze generuje się dopiero przyciskiem niżej. */}
@@ -227,14 +233,19 @@ function KeyGenPanel({ onUsePublicKey }: { onUsePublicKey: (keys: RsaKeys) => vo
         variant="secondary"
         busy={parameters.isDrawing}
         busyLabel="Losowanie…"
-        disabled={parameters.isBlocked}
+        disabled={parameters.isBlocked || isLoading}
         onClick={parameters.draw}
       >
         Losuj parametry
       </Button>
       {parameters.error && <Notice tone="error">{parameters.error}</Notice>}
 
-      <Button type="submit" busy={isLoading} busyLabel="Generowanie…">
+      <Button
+        type="submit"
+        busy={isLoading}
+        busyLabel="Generowanie…"
+        disabled={parameters.isDrawing}
+      >
         Generuj klucze
       </Button>
 
@@ -254,6 +265,11 @@ function KeyGenPanel({ onUsePublicKey }: { onUsePublicKey: (keys: RsaKeys) => vo
       {apiError && <Notice tone="error">{apiError}</Notice>}
     </form>
   )
+}
+
+// Liczby z backendu w postaci pól formularza (jak przy ręcznym wpisaniu).
+function keyFields(values: RsaKeygenRequest): Record<RsaKeyField, string> {
+  return { p: String(values.p), q: String(values.q), e: String(values.e) }
 }
 
 // Wynik generowania z oznaczeniami: nazwa i wartość w jednym wierszu, wzór pod spodem.
