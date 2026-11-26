@@ -50,6 +50,18 @@ radh_status_t radh_rsa_encrypt_u32(
     uint32_t *ciphertext
 );
 
+/* Edukacyjne textbook RSA bez paddingu. Oblicza ciphertext^private_exponent mod modulus.
+ * Kolejność walidacji: message != NULL, modulus >= 2,
+ * private_exponent > 0, ciphertext < modulus.
+ * Błąd nie zmienia *message. Niezerowy wskaźnik musi wskazywać zapisywalny uint32_t.
+ */
+radh_status_t radh_rsa_decrypt_u32(
+    uint32_t ciphertext,
+    uint32_t private_exponent,
+    uint32_t modulus,
+    uint32_t *message
+);
+
 /* Waliduje parametry edukacyjnego DH wymagającego pierwiastka pierwotnego.
  * Najpierw sprawdza pierwszość prime (RADH_STATUS_INVALID_PRIME), potem zakres
  * 2 <= generator < prime i rząd prime - 1 (RADH_STATUS_INVALID_GENERATOR).

@@ -24,3 +24,26 @@ radh_status_t radh_rsa_encrypt_u32(
 
     return radh_modexp_u32(message, public_exponent, modulus, ciphertext);
 }
+
+radh_status_t radh_rsa_decrypt_u32(
+    uint32_t ciphertext,
+    uint32_t private_exponent,
+    uint32_t modulus,
+    uint32_t *message
+)
+{
+    if (message == NULL) {
+        return RADH_STATUS_INVALID_POINTER;
+    }
+    if (modulus < 2) {
+        return RADH_STATUS_INVALID_MODULUS;
+    }
+    if (private_exponent == 0) {
+        return RADH_STATUS_INVALID_EXPONENT;
+    }
+    if (ciphertext >= modulus) {
+        return RADH_STATUS_INVALID_MESSAGE;
+    }
+
+    return radh_modexp_u32(ciphertext, private_exponent, modulus, message);
+}
