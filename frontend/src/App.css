@@ -41,7 +41,8 @@
 }
 
 /* Pola tekstowe; radio i checkbox mają własny wygląd niżej */
-.panel input:not([type='radio']):not([type='checkbox']) {
+.panel input:not([type='radio']):not([type='checkbox']),
+.panel textarea {
   box-sizing: border-box;
   min-height: var(--touch-target);
   padding: var(--space-2) var(--space-3);
@@ -53,7 +54,8 @@
 }
 
 /* Komunikaty błędów */
-.panel input[aria-invalid='true'] {
+.panel input[aria-invalid='true'],
+.panel textarea[aria-invalid='true'] {
   border: var(--border-thick) solid var(--color-error);
 }
 
@@ -184,7 +186,8 @@
 }
 
 .result h2,
-.result h3 {
+.result h3,
+.result h4 {
   margin: 0;
   font-size: var(--text-md);
   color: var(--result-color);
@@ -592,8 +595,9 @@ details[open] > .dh-collapsible-header {
   overflow-wrap: normal;
 }
 
-/* Wybór scenariusza: radio w ramce, na wąskim ekranie jedno pod drugim */
-.dh-mode {
+/* Wybór scenariusza DH i trybu RSA: radio w ramce, na wąskim ekranie jedno pod drugim */
+.dh-mode,
+.rsa-mode {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1) var(--space-4);
@@ -603,12 +607,14 @@ details[open] > .dh-collapsible-header {
   border-radius: var(--radius-sm);
 }
 
-.dh-mode legend {
+.dh-mode legend,
+.rsa-mode legend {
   padding: 0 var(--space-1);
 }
 
 /* .panel label to kolumna z polem pod etykietą; tu radio stoi obok tekstu */
-.panel .dh-mode label {
+.panel .dh-mode label,
+.panel .rsa-mode label {
   flex-direction: row;
   align-items: center;
   gap: var(--space-2);
@@ -635,7 +641,8 @@ details[open] > .dh-collapsible-header {
 }
 
 /* Większe radio, w kolorze akcentu */
-.dh-mode input {
+.dh-mode input,
+.rsa-mode input {
   width: 20px;
   height: 20px;
   margin: 0;
@@ -699,6 +706,90 @@ details[open] > .dh-collapsible-header {
 .rsa-layout .panel {
   flex: 1 1 320px;
   min-width: 0;
+}
+
+/* Przyciski „Użyj klucza publicznego/prywatnego” obok siebie, na wąskim ekranie pod sobą */
+.rsa-key-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.rsa-key-buttons .button {
+  flex: 1 1 12rem;
+}
+
+/* Panel cyklu: szyfrowanie i deszyfrowanie jako dwa kroki oddzielone linią */
+.rsa-step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.rsa-step + .rsa-step {
+  padding-top: var(--space-4);
+  border-top: var(--border-thin) solid var(--color-border);
+}
+
+.rsa-step h3 {
+  margin: 0;
+  font-size: var(--text-md);
+}
+
+.panel textarea {
+  resize: vertical;
+}
+
+/* „n = 3233” we wzorze łamie się tylko w całości */
+.rsa-nowrap {
+  white-space: nowrap;
+}
+
+/* Pole wieloliniowe z podpowiedzią i błędem pod spodem, blisko pola */
+.rsa-textarea {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* Tabela znak → bajty → szyfrogramy; długi tekst przewija się w ramce */
+.rsa-bytes {
+  max-height: 16rem;
+  overflow: auto;
+  border: var(--border-thin) solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.rsa-bytes table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.rsa-bytes th,
+.rsa-bytes td {
+  padding: var(--space-1) var(--space-2);
+  text-align: left;
+  vertical-align: top;
+  border-bottom: var(--border-thin) solid var(--color-border);
+}
+
+.rsa-bytes th {
+  position: sticky;
+  top: 0;
+  font-weight: normal;
+  color: var(--color-muted);
+  background: var(--color-bg);
+}
+
+.rsa-bytes td {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.rsa-bytes .rsa-char {
+  font-family: inherit;
+  white-space: pre;
 }
 
 /* Wynik generowania: nazwa i wartość w wierszu, wzór pod spodem */

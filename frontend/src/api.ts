@@ -41,11 +41,77 @@ export class ApiError extends Error {
 
 // Wysyła parametry do backendu i zwraca szyfrogram obliczony przez backend.
 export async function encryptRsa(data: RsaEncryptRequest): Promise<RsaEncryptResponse> {
-  const body = await requestJson('POST', '/api/v1/rsa/demo/encrypt', data)
+  const body = await rsaCycleRequest('/api/v1/rsa/demo/encrypt', data)
 
   const ciphertext = (body as { ciphertext?: unknown } | null)?.ciphertext
   if (typeof ciphertext !== 'number') throw unexpectedFormat()
   return { ciphertext }
+}
+
+// Deszyfrowanie i tekstowy cykl RSA (#99, backend/README.md). Każdą operację
+// modularną wykonuje CryptoCore; frontend koduje tekst tylko po to, żeby pokazać bajty.
+export type RsaDecryptRequest = {
+  ciphertext: number
+  private_exponent: number
+  modulus: number
+}
+
+// m = c^d mod n dla jednej liczby.
+export async function decryptRsa(data: RsaDecryptRequest): Promise<number> {
+  const body = await rsaCycleRequest('/api/v1/rsa/demo/decrypt', data)
+  const message = (body as { message?: unknown } | null)?.message
+  if (!uint32(message)) throw unexpectedFormat()
+  return message
+}
+
+export type RsaTextEncryptRequest = {
+  text: string
+  public_exponent: number
+  modulus: number
+}
+
+// Szyfrogramy kolejnych bajtów UTF-8 tekstu, po jednym na bajt.
+export async function encryptRsaText(data: RsaTextEncryptRequest): Promise<number[]> {
+  const body = await rsaCycleRequest('/api/v1/rsa/demo/text/encrypt', data)
+  const ciphertexts = (body as { ciphertexts?: unknown } | null)?.ciphertexts
+  const bytes = new TextEncoder().encode(data.text).length
+  if (!Array.isArray(ciphertexts) || ciphertexts.length !== bytes || !ciphertexts.every(uint32)) {
+    throw unexpectedFormat()
+  }
+  return ciphertexts
+}
+
+export type RsaTextDecryptRequest = {
+  ciphertexts: number[]
+  private_exponent: number
+  modulus: number
+}
+
+// Tekst odtworzony z szyfrogramów bajtów. Backend dekoduje UTF-8 ściśle, więc
+// odzyskany tekst ma dokładnie tyle bajtów, ile było szyfrogramów.
+export async function decryptRsaText(data: RsaTextDecryptRequest): Promise<string> {
+  const body = await rsaCycleRequest('/api/v1/rsa/demo/text/decrypt', data)
+  const text = (body as { text?: unknown } | null)?.text
+  if (typeof text !== 'string' || new TextEncoder().encode(text).length !== data.ciphertexts.length) {
+    throw unexpectedFormat()
+  }
+  return text
+}
+
+// Przy limicie żądań i zajętej kolejce backend podaje tylko ogólne „Nie można wykonać
+// operacji.”, więc dla tych kodów mówimy wprost, co się stało i kiedy spróbować ponownie.
+// Pozostałe błędy tras RSA mają pełne komunikaty z backendu.
+const RSA_LIMIT_CODES = new Set(['RATE_LIMITED', 'CRYPTO_BUSY'])
+
+async function rsaCycleRequest(url: string, data: unknown): Promise<unknown> {
+  try {
+    return await requestJson('POST', url, data)
+  } catch (error) {
+    if (!(error instanceof ApiError) || !error.code || !RSA_LIMIT_CODES.has(error.code)) throw error
+    let message = V2_ERROR_MESSAGES[error.code]
+    if (error.retryAfter > 0) message += ` Spróbuj ponownie za ${error.retryAfter} s.`
+    throw new ApiError(message, error.code, error.status, error.retryAfter)
+  }
 }
 
 // Generowanie edukacyjnej pary kluczy RSA (#56, backend/README.md).
@@ -61,36 +127,6 @@ export type RsaKeygenResponse = {
   e: number
   d: number
   phi: number
-}
-
-// Losowanie parametrów do formularzy (#96, #97, backend/README.md). Backend losuje
-// 16-bitowe liczby pierwsze i zatwierdza komplet w CryptoCore; frontend tylko
-// sprawdza format i wpisuje wartości do pól. Odpowiedź RSA celowo nie zawiera d ani φ.
-const RSA_PARAMETERS_URL = '/api/v1/rsa/demo/parameters'
-const DH_PARAMETERS_URL = '/api/v1/dh/demo/parameters'
-
-export async function drawRsaParameters(signal?: AbortSignal): Promise<RsaKeygenRequest> {
-  const body = (await requestJson('POST', RSA_PARAMETERS_URL, undefined, { signal })) as Record<
-    string,
-    unknown
-  > | null
-  const { p, q, e } = body ?? {}
-  if (!isUint32(p) || !isUint32(q) || !isUint32(e)) throw unexpectedFormat()
-  return { p, q, e }
-}
-
-export async function drawDhParameters(signal?: AbortSignal): Promise<DhSessionParams> {
-  const body = (await requestJson('POST', DH_PARAMETERS_URL, undefined, { signal })) as Record<
-    string,
-    unknown
-  > | null
-  const { prime, generator } = body ?? {}
-  if (!isUint32(prime) || !isUint32(generator)) throw unexpectedFormat()
-  return { prime, generator }
-}
-
-function isUint32(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 0xffffffff
 }
 
 export async function generateRsaKeys(data: RsaKeygenRequest): Promise<RsaKeygenResponse> {
@@ -586,7 +622,7 @@ async function requestJson(
           (response.status === 404 || response.status === 410 || error.code === 'BACKEND_EPOCH_MISMATCH')) {
         throw new ApiError('Niepotwierdzona odpowiedź pośrednika.', 'INVALID_RESPONSE', undefined, seconds)
       }
-      throw new ApiError(friendlyMessage(url, error, response.status, seconds), error.code, response.status, seconds)
+      throw new ApiError(v2Message(url, error, response.status, seconds), error.code, response.status, seconds)
     }
     return body
   } catch (error) {
@@ -625,16 +661,12 @@ const V2_ERROR_MESSAGES: Record<string, string> = {
   ORIGIN_NOT_ALLOWED: 'Serwer nie przyjmuje żądań z tej strony.',
   SERVICE_UNAVAILABLE: 'Usługa jest chwilowo niedostępna.',
   INTERNAL_ERROR: 'Wystąpił błąd serwera.',
-  PARAMETER_GENERATION_EXHAUSTED: 'Nie udało się wylosować parametrów.',
 }
 
-// Komunikat błędu API v2 i tras losowania parametrów: po kodzie, z czasem oczekiwania
-// przy 429/503. Ich limiter odpowiada tym samym ogólnym tekstem co API v2.
-// Pozostałe błędy API v1 (RSA, keygen) zostają bez zmian – tam backend podaje pełne komunikaty.
-function friendlyMessage(url: string, error: ApiError, status: number, retryAfter: number): string {
-  if (!url.startsWith('/api/v2/') && url !== RSA_PARAMETERS_URL && url !== DH_PARAMETERS_URL) {
-    return error.message
-  }
+// Komunikat błędu API v2: po kodzie, z czasem oczekiwania przy 429/503.
+// Błędy API v1 (RSA) zostają bez zmian – tam backend podaje pełne komunikaty.
+function v2Message(url: string, error: ApiError, status: number, retryAfter: number): string {
+  if (!url.startsWith('/api/v2/')) return error.message
   let message = (error.code && V2_ERROR_MESSAGES[error.code]) || error.message
   if (retryAfter > 0 && (status === 429 || status === 503)) {
     message += ` Spróbuj ponownie za ${retryAfter} s.`

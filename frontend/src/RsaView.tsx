@@ -1,19 +1,12 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { ApiError, drawRsaParameters, encryptRsa, generateRsaKeys } from './api'
-import type { RsaEncryptRequest, RsaKeygenRequest } from './api'
-import { validateRsaInput, validateRsaKeyParams } from './validation'
-import type { FieldErrors, RsaKeyField, RsaKeyFieldErrors } from './validation'
+import { ApiError, generateRsaKeys } from './api'
+import { validateRsaKeyParams } from './validation'
+import type { RsaKeyField, RsaKeyFieldErrors } from './validation'
 import { Field } from './Field'
 import { Button, DataBadge, Notice } from './ui'
-import { useParameterDraw } from './useParameterDraw'
-
-// Wynik szyfrowania razem z parametrami, które faktycznie zostały wysłane.
-// (Pola formularza mogą się zmienić po kliknięciu, więc nie bierzemy ich z pól.)
-type EncryptResult = {
-  request: RsaEncryptRequest
-  ciphertext: number
-}
+import { RsaCyclePanel } from './RsaCycle'
+import type { RsaCycleHandle } from './RsaCycle'
 
 // Para kluczy z backendu razem z parametrami, które faktycznie zostały wysłane.
 type RsaKeys = {
@@ -25,59 +18,10 @@ type RsaKeys = {
   d: number
 }
 
-// Zakładka RSA: generowanie kluczy i formularz szyfrowania.
+// Zakładka RSA: generowanie kluczy i pełny cykl – szyfrowanie oraz deszyfrowanie.
 export function RsaView() {
-  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
-  const [apiError, setApiError] = useState<string | null>(null)
-  const [result, setResult] = useState<EncryptResult | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-  // e i n trzymamy w stanie, żeby „Użyj klucza publicznego” mógł je wpisać.
-  const [publicExponent, setPublicExponent] = useState('')
-  const [modulus, setModulus] = useState('')
-
-  // Wpisuje klucz publiczny (n, e) do formularza szyfrowania. Stary szyfrogram
-  // dotyczył innego klucza, więc go usuwamy razem z błędami pól e i n.
-  function applyPublicKey(keys: RsaKeys) {
-    setPublicExponent(String(keys.e))
-    setModulus(String(keys.n))
-    setResult(null)
-    setApiError(null)
-    setFieldErrors(({ message }) => ({ message }))
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (isLoading) return
-    setApiError(null)
-    setResult(null)
-
-    // Zbieramy wartości z pól formularza (po atrybucie `name`).
-    const form = new FormData(event.currentTarget)
-    const validation = validateRsaInput({
-      message: String(form.get('message') ?? ''),
-      public_exponent: String(form.get('public_exponent') ?? ''),
-      modulus: String(form.get('modulus') ?? ''),
-    })
-
-    if (!validation.ok) {
-      setFieldErrors(validation.errors)
-      return
-    }
-    setFieldErrors({})
-
-    setIsLoading(true)
-    try {
-      // Szyfrogram pochodzi wyłącznie z odpowiedzi backendu.
-      const response = await encryptRsa(validation.data)
-      setResult({ request: validation.data, ciphertext: response.ciphertext })
-    } catch (error) {
-      setApiError(
-        error instanceof ApiError ? error.message : 'Wystąpił nieoczekiwany błąd.',
-      )
-    } finally {
-      setIsLoading(false)
-    }
-  }
+  // Przyciski „Użyj klucza…” wpisują klucze do pól panelu cyklu.
+  const cycle = useRef<RsaCycleHandle>(null)
 
   return (
     <>
@@ -85,52 +29,11 @@ export function RsaView() {
 
       {/* Dwa panele obok siebie; na wąskim ekranie jeden pod drugim. */}
       <div className="layout rsa-layout">
-        <KeyGenPanel onUsePublicKey={applyPublicKey} />
-
-        {/* Panel szyfrowania. noValidate: walidację robimy sami, z polskimi komunikatami. */}
-        <form
-          className="panel"
-          onSubmit={handleSubmit}
-          noValidate
-          aria-labelledby="rsa-encrypt-title"
-        >
-          <h2 id="rsa-encrypt-title">Szyfrowanie</h2>
-          <Field name="message" label="Wiadomość (m)" error={fieldErrors.message} />
-          <Field
-            name="public_exponent"
-            label="Wykładnik publiczny (e)"
-            error={fieldErrors.public_exponent}
-            value={publicExponent}
-            onChange={setPublicExponent}
-          />
-          <Field
-            name="modulus"
-            label="Moduł (n)"
-            error={fieldErrors.modulus}
-            value={modulus}
-            onChange={setModulus}
-          />
-
-          <Button type="submit" busy={isLoading} busyLabel="Szyfrowanie…">
-            Szyfruj
-          </Button>
-
-          {result && (
-            <div className="result result--ok" role="status">
-              <h3>Szyfrogram</h3>
-              <p className="formula">
-                c = m<sup>e</sup> mod n
-              </p>
-              <p className="formula">
-                c = {result.request.message}
-                <sup>{result.request.public_exponent}</sup> mod {result.request.modulus} ={' '}
-                <output>{result.ciphertext}</output>
-              </p>
-            </div>
-          )}
-
-          {apiError && <Notice tone="error">{apiError}</Notice>}
-        </form>
+        <KeyGenPanel
+          onUsePublicKey={(keys) => cycle.current?.applyPublicKey(keys)}
+          onUsePrivateKey={(keys) => cycle.current?.applyPrivateKey(keys)}
+        />
+        <RsaCyclePanel ref={cycle} />
       </div>
     </>
   )
@@ -144,30 +47,22 @@ const KEY_DEFAULTS: Record<RsaKeyField, string> = {
 
 // Panel generowania pary kluczy. Wszystkie wartości (n, φ(n), d) liczy backend;
 // tutaj tylko formularz, walidacja i czytelne oznaczenia wyniku.
-function KeyGenPanel({ onUsePublicKey }: { onUsePublicKey: (keys: RsaKeys) => void }) {
+function KeyGenPanel({
+  onUsePublicKey,
+  onUsePrivateKey,
+}: {
+  onUsePublicKey: (keys: RsaKeys) => void
+  onUsePrivateKey: (keys: RsaKeys) => void
+}) {
   const [fieldErrors, setFieldErrors] = useState<RsaKeyFieldErrors>({})
   const [apiError, setApiError] = useState<string | null>(null)
   // Ostatnia wygenerowana para; null = brak (także po nowej próbie, zanim przyjdzie wynik).
   const [keys, setKeys] = useState<RsaKeys | null>(null)
   const [isLoading, setIsLoading] = useState(false)
-  // Pola zostają niesterowane (wartości czyta FormData). Losowanie wpisuje nowe
-  // wartości, montując pola od nowa (`key`) z nowym defaultValue. Pola sterowane
-  // rozjeżdżały się z DOM, gdy wartość zmieniła się bez zdarzenia input (np. clear()
-  // w Selenium) – kolejny render przywracał wtedy starą wartość.
-  const [drawn, setDrawn] = useState({ values: KEY_DEFAULTS, version: 0 })
-  const parameters = useParameterDraw(
-    drawRsaParameters,
-    (values) => validateRsaKeyParams(keyFields(values)).ok,
-    (values) => {
-      setDrawn((previous) => ({ values: keyFields(values), version: previous.version + 1 }))
-      setFieldErrors({})
-    },
-  )
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    // Podczas losowania pola mogą się jeszcze zmienić – generujemy dopiero po nim.
-    if (isLoading || parameters.isDrawing) return
+    if (isLoading) return
     setApiError(null)
     setKeys(null)
 
@@ -202,58 +97,40 @@ function KeyGenPanel({ onUsePublicKey }: { onUsePublicKey: (keys: RsaKeys) => vo
     <form className="panel" onSubmit={handleSubmit} noValidate aria-labelledby="rsa-keygen-title">
       <h2 id="rsa-keygen-title">Generowanie kluczy</h2>
 
-      {/* Ręczna edycja ma pierwszeństwo: przerywa trwające losowanie, żeby go nie nadpisało. */}
       <Field
         name="p"
         label="Liczba pierwsza (p)"
         error={fieldErrors.p}
-        key={`p-${drawn.version}`}
-        defaultValue={drawn.values.p}
-        onChange={parameters.cancel}
+        defaultValue={KEY_DEFAULTS.p}
       />
       <Field
         name="q"
         label="Liczba pierwsza (q)"
         error={fieldErrors.q}
-        key={`q-${drawn.version}`}
-        defaultValue={drawn.values.q}
-        onChange={parameters.cancel}
+        defaultValue={KEY_DEFAULTS.q}
       />
       <Field
         name="e"
         label="Wykładnik publiczny (e)"
         error={fieldErrors.e}
-        key={`e-${drawn.version}`}
-        defaultValue={drawn.values.e}
-        onChange={parameters.cancel}
+        defaultValue={KEY_DEFAULTS.e}
       />
 
-      {/* Losowanie tylko wypełnia pola – klucze generuje się dopiero przyciskiem niżej. */}
-      <Button
-        variant="secondary"
-        busy={parameters.isDrawing}
-        busyLabel="Losowanie…"
-        disabled={parameters.isBlocked || isLoading}
-        onClick={parameters.draw}
-      >
-        Losuj parametry
-      </Button>
-      {parameters.error && <Notice tone="error">{parameters.error}</Notice>}
-
-      <Button
-        type="submit"
-        busy={isLoading}
-        busyLabel="Generowanie…"
-        disabled={parameters.isDrawing}
-      >
+      <Button type="submit" busy={isLoading} busyLabel="Generowanie…">
         Generuj klucze
       </Button>
 
       <KeyResult keys={keys} />
 
-      <Button variant="secondary" disabled={!keys} onClick={() => keys && onUsePublicKey(keys)}>
-        Użyj klucza publicznego
-      </Button>
+      {/* Klucz publiczny (n, e) trafia do szyfrowania, prywatny (n, d) do deszyfrowania. */}
+      <div className="rsa-key-buttons">
+        <Button variant="secondary" disabled={!keys} onClick={() => keys && onUsePublicKey(keys)}>
+          Użyj klucza publicznego
+        </Button>
+        <Button variant="secondary" disabled={!keys} onClick={() => keys && onUsePrivateKey(keys)}>
+          Użyj klucza prywatnego
+        </Button>
+      </div>
 
       {keys && (
         <Notice tone="warning">
@@ -265,11 +142,6 @@ function KeyGenPanel({ onUsePublicKey }: { onUsePublicKey: (keys: RsaKeys) => vo
       {apiError && <Notice tone="error">{apiError}</Notice>}
     </form>
   )
-}
-
-// Liczby z backendu w postaci pól formularza (jak przy ręcznym wpisaniu).
-function keyFields(values: RsaKeygenRequest): Record<RsaKeyField, string> {
-  return { p: String(values.p), q: String(values.q), e: String(values.e) }
 }
 
 // Wynik generowania z oznaczeniami: nazwa i wartość w jednym wierszu, wzór pod spodem.
