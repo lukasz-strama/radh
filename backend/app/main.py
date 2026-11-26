@@ -17,6 +17,7 @@ from .crypto_core import (
     CryptoCoreInputError,
     CryptoCoreLoadError,
 )
+from .parameter_generation import ParameterGenerationExhausted
 from .rsa_text import RsaTextError
 
 
@@ -123,6 +124,18 @@ async def crypto_core_load_error(
         "CRYPTO_CORE_UNAVAILABLE",
         "Biblioteka CryptoCore jest niedostępna.",
         headers={"Retry-After": "5"},
+    )
+
+
+@app.exception_handler(ParameterGenerationExhausted)
+async def parameter_generation_exhausted(
+    _request: Request, exception: ParameterGenerationExhausted
+) -> JSONResponse:
+    return _error_response(
+        503,
+        exception.code,
+        exception.message,
+        headers={"Retry-After": "1"},
     )
 
 

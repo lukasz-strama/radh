@@ -466,9 +466,10 @@ export function DhExchange() {
       if (id !== requestId.current) return
       blockStartIfAsked(error)
       const message = errorMessage(error, 'Wystąpił nieoczekiwany błąd.')
-      if (!(await showKeptSession(id, message, controller.signal))) {
-        setView({ status: 'error', message })
-      }
+      const kept = await showKeptSession(id, message, controller.signal)
+      // W trakcie odczytu mogła ruszyć nowsza akcja (Reset, nowy start) – wtedy nic nie zmieniamy.
+      if (id !== requestId.current) return
+      if (!kept) setView({ status: 'error', message })
     }
   }
 
@@ -491,7 +492,8 @@ export function DhExchange() {
 
   async function handleResume() {
     const own = currentCredential()
-    if (!own) return
+    // Po 429/503 czekamy tak samo jak przy nowym starcie.
+    if (!own || startBlocked) return
     const id = ++requestId.current
     actionController.current?.abort()
     const controller = new AbortController()
@@ -505,9 +507,10 @@ export function DhExchange() {
       if (id !== requestId.current) return
       blockStartIfAsked(error)
       const message = errorMessage(error, 'Nie udało się wznowić sesji.')
-      if (!(await showKeptSession(id, message, controller.signal))) {
-        setView({ status: 'error', message })
-      }
+      const kept = await showKeptSession(id, message, controller.signal)
+      // W trakcie odczytu mogła ruszyć nowsza akcja (Reset, nowy start) – wtedy nic nie zmieniamy.
+      if (id !== requestId.current) return
+      if (!kept) setView({ status: 'error', message })
     }
   }
 
@@ -655,10 +658,14 @@ export function DhExchange() {
             </div>
 
             {session?.status === 'created' && (
-              <Button variant="secondary" onClick={handleResume}>Uruchom własną sesję</Button>
+              <Button variant="secondary" onClick={handleResume} disabled={startBlocked}>
+                Uruchom własną sesję
+              </Button>
             )}
             {view.status === 'error' && currentCredential() && (
-              <Button variant="secondary" onClick={handleResume}>Ponów start własnej sesji</Button>
+              <Button variant="secondary" onClick={handleResume} disabled={startBlocked}>
+                Ponów start własnej sesji
+              </Button>
             )}
             <NodesHint nodes={nodes} mode={mode} />
             {notice && <Notice tone="warning">{notice}</Notice>}

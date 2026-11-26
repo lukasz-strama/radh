@@ -94,6 +94,28 @@ static const test_case_t rsa_cases[] = {
     {3233, 0, 3233, RADH_STATUS_INVALID_EXPONENT, 0}
 };
 
+/* Stałe wyniki zweryfikowano niezależnie przez Python pow(c, d, n). */
+static const test_case_t rsa_decrypt_cases[] = {
+    {2790, 2753, 3233, RADH_STATUS_OK, 65},
+    {0, 2753, 3233, RADH_STATUS_OK, 0},
+    {1, 2753, 3233, RADH_STATUS_OK, 1},
+    {3232, 2753, 3233, RADH_STATUS_OK, 3232},
+    {42, 1, 3233, RADH_STATUS_OK, 42},
+    {1, 1, 2, RADH_STATUS_OK, 1},
+    {UINT32_MAX - 1, UINT32_MAX, UINT32_MAX, RADH_STATUS_OK, UINT32_MAX - 1},
+    {UINT32_MAX - 2, UINT32_MAX - 1, UINT32_MAX, RADH_STATUS_OK, UINT32_C(1073741824)},
+    {0, 1, 0, RADH_STATUS_INVALID_MODULUS, 0},
+    {0, 1, 1, RADH_STATUS_INVALID_MODULUS, 0},
+    {2790, 0, 3233, RADH_STATUS_INVALID_EXPONENT, 0},
+    {3233, 2753, 3233, RADH_STATUS_INVALID_MESSAGE, 0},
+    {3234, 2753, 3233, RADH_STATUS_INVALID_MESSAGE, 0},
+    {UINT32_MAX, UINT32_MAX, UINT32_MAX, RADH_STATUS_INVALID_MESSAGE, 0},
+    /* Błędny moduł ma pierwszeństwo przed wykładnikiem, a wykładnik przed c. */
+    {UINT32_MAX, 0, 0, RADH_STATUS_INVALID_MODULUS, 0},
+    {UINT32_MAX, 0, 1, RADH_STATUS_INVALID_MODULUS, 0},
+    {3233, 0, 3233, RADH_STATUS_INVALID_EXPONENT, 0},
+};
+
 static unsigned int run_cases(
     const char *name,
     operation_t operation,
@@ -322,15 +344,61 @@ static unsigned int check_dh_small_domain(void)
     return 0;
 }
 
+static unsigned int check_dh_parameter_cases(void)
+{
+    static const struct {
+        uint32_t prime;
+        uint32_t generator;
+        radh_status_t expected;
+    } cases[] = {
+        {23, 5, RADH_STATUS_OK},
+        {23, 4, RADH_STATUS_INVALID_GENERATOR},
+        {23, 1, RADH_STATUS_INVALID_GENERATOR},
+        {23, 23, RADH_STATUS_INVALID_GENERATOR},
+        {21, 2, RADH_STATUS_INVALID_PRIME},
+        {21, UINT32_MAX, RADH_STATUS_INVALID_PRIME},
+        {2, 2, RADH_STATUS_INVALID_GENERATOR},
+        {3, 2, RADH_STATUS_OK},
+        {0, 0, RADH_STATUS_INVALID_PRIME},
+        {1, 2, RADH_STATUS_INVALID_PRIME},
+        {49, 2, RADH_STATUS_INVALID_PRIME},
+        {UINT32_C(4293001441), 2, RADH_STATUS_INVALID_PRIME}, /* 65521^2 */
+        {UINT32_MAX, 2, RADH_STATUS_INVALID_PRIME},
+        {UINT32_MAX - 1, 2, RADH_STATUS_INVALID_PRIME},
+        {UINT32_C(4294967291), UINT32_MAX, RADH_STATUS_INVALID_GENERATOR},
+        {UINT32_C(4294967291), 2, RADH_STATUS_OK},
+        {UINT32_C(4294967291), 4, RADH_STATUS_INVALID_GENERATOR},
+        {65521, 17, RADH_STATUS_OK}, /* Rząd 65520, obliczony przez kolejne mnożenia. */
+        {65537, 3, RADH_STATUS_OK}, /* p - 1 = 2^16 */
+        {109, 6, RADH_STATUS_OK}, /* p - 1 = 2^2 * 3^3 */
+        {UINT32_C(1000000007), 5, RADH_STATUS_OK},
+        /* Rząd 2 przechodzi test q=2, ale nie test ostatniego q=500000003. */
+        {UINT32_C(1000000007), UINT32_C(1000000006), RADH_STATUS_INVALID_GENERATOR},
+    };
+    unsigned int failures = 0;
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        radh_status_t status = radh_dh_validate_parameters_u32(cases[i].prime, cases[i].generator);
+        if (status != cases[i].expected) {
+            fprintf(stderr, "DH parameters (%" PRIu32 ", %" PRIu32 "): expected %d, got %d\n",
+                cases[i].prime, cases[i].generator, (int)cases[i].expected, (int)status);
+            ++failures;
+        }
+    }
+    return failures;
+}
+
 int main(void)
 {
     unsigned int failures = run_cases("modexp", radh_modexp_u32, modexp_cases,
         sizeof(modexp_cases) / sizeof(modexp_cases[0]));
     failures += run_cases("rsa", radh_rsa_encrypt_u32, rsa_cases,
         sizeof(rsa_cases) / sizeof(rsa_cases[0]));
+    failures += run_cases("rsa decrypt", radh_rsa_decrypt_u32, rsa_decrypt_cases,
+        sizeof(rsa_decrypt_cases) / sizeof(rsa_decrypt_cases[0]));
     failures += check_small_domain();
     failures += check_dh_cases();
     failures += check_dh_small_domain();
+    failures += check_dh_parameter_cases();
 
     if (failures != 0) {
         fprintf(stderr, "%u checks failed\n", failures);

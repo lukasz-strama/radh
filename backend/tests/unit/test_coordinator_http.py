@@ -307,6 +307,51 @@ def test_disabled_legacy_mode_enforces_demo_limits(monkeypatch):
     assert sent[0]["status"] == 413 and not calls
 
 
+@pytest.mark.parametrize("legacy", ["true", "false"])
+@pytest.mark.parametrize("path", [
+    "/api/v1/rsa/demo/parameters",
+    "/api/v1/dh/demo/parameters",
+    "/api/v1/rsa/demo/decrypt",
+    "/api/v1/rsa/demo/text/encrypt",
+    "/api/v1/rsa/demo/text/decrypt",
+])
+def test_parameter_and_new_rsa_routes_always_use_middleware(monkeypatch, legacy, path):
+    monkeypatch.setenv("RADH_LEGACY_API_ENABLED", legacy)
+    rt = Runtime(role_hashes={})
+    for suffix in ("", "/"):
+        sent, calls = asyncio.run(call_middleware(
+            rt, scope(path + suffix, "POST", [(b"origin", b"https://foreign.example")]), [],
+        ))
+        assert sent[0]["status"] == 403 and not calls
+        assert (b"cache-control", b"no-store") in sent[0]["headers"]
+        sent, calls = asyncio.run(call_middleware(
+            rt, scope(path + suffix, "POST"), [{"type": "http.request", "body": b"x" * 4097}],
+        ))
+        assert sent[0]["status"] == 413 and not calls
+
+
+def test_parameters_and_text_rsa_use_independent_rate_buckets_in_legacy(monkeypatch):
+    monkeypatch.setenv("RADH_LEGACY_API_ENABLED", "true")
+    monkeypatch.setenv("PARAMETER_RATE_BURST", "1")
+    monkeypatch.setenv("RSA_TEXT_RATE_BURST", "2")
+    rt = Runtime(clock=Clock(), role_hashes={})
+
+    def post(path):
+        sent, _ = asyncio.run(call_middleware(
+            rt, scope(path, "POST"), [{"type": "http.request", "body": b""}],
+        ))
+        if sent[0]["status"] == 429:
+            assert (b"retry-after", b"6") in sent[0]["headers"]
+        return sent[0]["status"]
+
+    assert post("/api/v1/rsa/demo/parameters") == 200
+    assert post("/api/v1/dh/demo/parameters") == 429
+    assert post("/api/v1/rsa/demo/text/encrypt") == 200
+    assert post("/api/v1/rsa/demo/text/decrypt") == 200
+    assert post("/api/v1/rsa/demo/text/encrypt/") == 429
+    assert post("/api/v1/rsa/demo/decrypt") == 200
+
+
 def test_legacy_setting_rejects_typo(monkeypatch):
     from app.coordinator_http import legacy_api_enabled
     monkeypatch.setenv("RADH_LEGACY_API_ENABLED", "maybe")

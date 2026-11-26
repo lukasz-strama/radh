@@ -234,6 +234,16 @@ class CryptoCore:
         exchange.restype = ctypes.c_int
         self._exchange = exchange
 
+        # Addytywny kontrakt dla #95/#96. Brak symbolu nie blokuje istniejącej
+        # wymiany DH, ale endpoint losowania parametrów zwróci kontrolowane 503.
+        dh_parameter_validation = getattr(
+            library, "radh_dh_validate_parameters_u32", None
+        )
+        if dh_parameter_validation is not None:
+            dh_parameter_validation.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+            dh_parameter_validation.restype = ctypes.c_int
+        self._dh_parameter_validation = dh_parameter_validation
+
         try:
             modexp = library.radh_modexp_u32
         except AttributeError as exc:
@@ -372,6 +382,24 @@ class CryptoCore:
             CryptoCoreStatus.INVALID_SECRET,
         })
         return result
+
+    def validate_dh_parameters(self, prime: int, generator: int) -> None:
+        """Potwierdź pierwszość p i pełny rząd g przez addytywne ABI C."""
+
+        _require_uint32("prime", prime)
+        _require_uint32("generator", generator)
+        if self._dh_parameter_validation is None:
+            raise CryptoCoreLoadError(
+                "Biblioteka CryptoCore nie eksportuje funkcji "
+                "radh_dh_validate_parameters_u32. Zbuduj ponownie bibliotekę C."
+            )
+        status = self._dh_parameter_validation(
+            ctypes.c_uint32(prime), ctypes.c_uint32(generator)
+        )
+        self._check_status(status, {
+            CryptoCoreStatus.INVALID_PRIME,
+            CryptoCoreStatus.INVALID_GENERATOR,
+        })
 
     @staticmethod
     def _check_status(raw_status: int, input_statuses: set[CryptoCoreStatus]) -> None:

@@ -105,12 +105,34 @@ Nowe trasy demonstracyjne:
 Tekst jest kodowany jako UTF-8 i każdy bajt jest przetwarzany osobnym wywołaniem
 CryptoCore. Moduł musi być większy od 255, a tekst i tablica szyfrogramów mają
 limit 128 elementów/bajtów. Całe żądanie zajmuje jeden slot ograniczonej
-kolejki. Trasy tekstowe mają osobny limit 10 żądań/min z burstem 2.
+kolejki. Trasy tekstowe mają osobny limit 10 żądań/min z burstem 2, a
+deszyfrowanie liczbowe korzysta z limitu `crypto` (20 żądań/min, burst 5).
+Limity i kolejka obowiązują również w trybie legacy.
 
 Wymagany symbol C i statusy opisuje
 [CRYPTOCORE_RSA_DECRYPT.md](CRYPTOCORE_RSA_DECRYPT.md). Bez symbolu nowe
 deszyfrowanie zwraca `503`; obecne szyfrowanie liczbowe działa bez zmian.
 Textbook RSA jest pozbawione paddingu, 32-bitowe i służy wyłącznie do edukacji.
+
+## Losowanie parametrów RSA i DH (#96)
+
+Backend udostępnia dwie trasy bez body żądania:
+
+- `POST /api/v1/rsa/demo/parameters` zwraca `{"p":...,"q":...,"e":...}`;
+- `POST /api/v1/dh/demo/parameters` zwraca `{"prime":...,"generator":...}`.
+
+Parametry są losowane przez `secrets` w zakresie 16-bitowych liczb pierwszych
+`257..65521`. RSA jest zatwierdzane przez istniejący keygen CryptoCore. DH wymaga
+addytywnego symbolu opisanego w
+[CRYPTOCORE_PARAMETER_VALIDATION.md](CRYPTOCORE_PARAMETER_VALIDATION.md). Brak
+symbolu daje kontrolowane `503` wyłącznie na trasie losowania DH.
+
+Każde żądanie ma wspólny limit 256 losowań, ograniczoną kolejkę obliczeń i
+osobny limit 10 żądań na minutę z burstem 2. Wyczerpanie prób zwraca
+`503 PARAMETER_GENERATION_EXHAUSTED`; nasycenie kolejki `503 CRYPTO_BUSY`, a
+nadmiar żądań `429 RATE_LIMITED`. Ograniczenia obowiązują również w trybie
+legacy i są niezależne od limitu tekstowego RSA. Odpowiedź RSA nie zawiera `d` ani
+`phi`, a bezpieczny format logów Nginx nie zapisuje treści odpowiedzi.
 
 
 ## Generowanie kluczy RSA (#56)

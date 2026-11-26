@@ -52,6 +52,9 @@ class Settings:
     crypto_rate_burst: int = 5
     rsa_text_rate_per_minute: int = 10
     rsa_text_rate_burst: int = 2
+    parameter_rate_per_minute: int = 10
+    parameter_rate_burst: int = 2
+    parameter_generation_max_attempts: int = 256
     read_token_rate_per_minute: int = 120
     read_ip_rate_per_minute: int = 240
     internal_rate_per_minute: int = 3000
@@ -69,6 +72,7 @@ class Settings:
             "max_events": 32, "max_messages": 2, "max_interceptions": 2,
             "max_request_bytes": 4096, "max_response_bytes": 131072,
             "session_max_age_seconds": 600,
+            "parameter_generation_max_attempts": 4096,
         }
         if any(getattr(self, key) > limit for key, limit in caps.items()):
             raise ValueError("Konfiguracja przekracza ograniczenia kontraktu.")
