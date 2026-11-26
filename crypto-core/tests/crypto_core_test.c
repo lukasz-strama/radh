@@ -322,6 +322,49 @@ static unsigned int check_dh_small_domain(void)
     return 0;
 }
 
+static unsigned int check_dh_parameter_cases(void)
+{
+    static const struct {
+        uint32_t prime;
+        uint32_t generator;
+        radh_status_t expected;
+    } cases[] = {
+        {23, 5, RADH_STATUS_OK},
+        {23, 4, RADH_STATUS_INVALID_GENERATOR},
+        {23, 1, RADH_STATUS_INVALID_GENERATOR},
+        {23, 23, RADH_STATUS_INVALID_GENERATOR},
+        {21, 2, RADH_STATUS_INVALID_PRIME},
+        {21, UINT32_MAX, RADH_STATUS_INVALID_PRIME},
+        {2, 2, RADH_STATUS_INVALID_GENERATOR},
+        {3, 2, RADH_STATUS_OK},
+        {0, 0, RADH_STATUS_INVALID_PRIME},
+        {1, 2, RADH_STATUS_INVALID_PRIME},
+        {49, 2, RADH_STATUS_INVALID_PRIME},
+        {UINT32_C(4293001441), 2, RADH_STATUS_INVALID_PRIME}, /* 65521^2 */
+        {UINT32_MAX, 2, RADH_STATUS_INVALID_PRIME},
+        {UINT32_MAX - 1, 2, RADH_STATUS_INVALID_PRIME},
+        {UINT32_C(4294967291), UINT32_MAX, RADH_STATUS_INVALID_GENERATOR},
+        {UINT32_C(4294967291), 2, RADH_STATUS_OK},
+        {UINT32_C(4294967291), 4, RADH_STATUS_INVALID_GENERATOR},
+        {65521, 17, RADH_STATUS_OK}, /* Rząd 65520, obliczony przez kolejne mnożenia. */
+        {65537, 3, RADH_STATUS_OK}, /* p - 1 = 2^16 */
+        {109, 6, RADH_STATUS_OK}, /* p - 1 = 2^2 * 3^3 */
+        {UINT32_C(1000000007), 5, RADH_STATUS_OK},
+        /* Rząd 2 przechodzi test q=2, ale nie test ostatniego q=500000003. */
+        {UINT32_C(1000000007), UINT32_C(1000000006), RADH_STATUS_INVALID_GENERATOR},
+    };
+    unsigned int failures = 0;
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        radh_status_t status = radh_dh_validate_parameters_u32(cases[i].prime, cases[i].generator);
+        if (status != cases[i].expected) {
+            fprintf(stderr, "DH parameters (%" PRIu32 ", %" PRIu32 "): expected %d, got %d\n",
+                cases[i].prime, cases[i].generator, (int)cases[i].expected, (int)status);
+            ++failures;
+        }
+    }
+    return failures;
+}
+
 int main(void)
 {
     unsigned int failures = run_cases("modexp", radh_modexp_u32, modexp_cases,
@@ -331,6 +374,7 @@ int main(void)
     failures += check_small_domain();
     failures += check_dh_cases();
     failures += check_dh_small_domain();
+    failures += check_dh_parameter_cases();
 
     if (failures != 0) {
         fprintf(stderr, "%u checks failed\n", failures);

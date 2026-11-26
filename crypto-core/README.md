@@ -59,7 +59,10 @@ generator niepierwotny, wynik 1, największą liczbę pierwszą `uint32_t`,
 sekrety `UINT32_MAX`, liczby złożone (w tym kwadraty i pseudopierwsze),
 `NULL`, kolejność błędów oraz niezmienność całej pamięci wyniku przy błędzie.
 Dla małych argumentów porównują wyniki z liniowym potęgowaniem i jawną listą
-liczb pierwszych. Testy RSA i modexp są uruchamiane w tym samym zestawie.
+liczb pierwszych. Osobne przypadki w tym zestawie sprawdzają pełny rząd
+generatora, kolejność walidacji i faktoryzację na granicach `uint32_t`.
+Testy ctypes porównują statusy z rzeczywistym rzędem wyliczonym w Pythonie
+przez kolejne mnożenia modularne (`tests/tests_dh/test_dh_parameter_validation.py`).
 
 Konfiguracja Release z `NDEBUG`:
 
@@ -115,6 +118,11 @@ radh_status_t radh_dh_exchange_u32(
     uint32_t bob_secret,
     radh_dh_exchange_result_t *result
 );
+
+radh_status_t radh_dh_validate_parameters_u32(
+    uint32_t prime,
+    uint32_t generator
+);
 ```
 
 `radh_modexp_u32` oblicza `base^exponent mod modulus`:
@@ -150,7 +158,7 @@ parametry to `prime = 3`, `generator = 2`. Największa obsługiwana liczba pierw
 to `4294967291`; `UINT32_MAX` jest złożona. Wartości publiczne i wspólny sekret
 równe 1 są dozwolone, np. gdy sekret jest wielokrotnością `prime - 1`.
 
-Wszystkie funkcje zapisują wynik tylko po sukcesie. **Każdy błąd pozostawia parametr
+Funkcje z buforem wyjściowym zapisują wynik tylko po sukcesie. **Każdy błąd pozostawia parametr
 wyjściowy bez zmian.** Wskaźnik `NULL` jest odrzucany; inny wskaźnik musi wskazywać
 żywy, poprawnie wyrównany, zapisywalny obiekt `uint32_t` dla modexp/RSA lub
 `radh_dh_exchange_result_t` dla DH. W DH niezmienność dotyczy całej struktury;
@@ -165,13 +173,13 @@ Publiczny enum `radh_status_t` ma jawne, stałe wartości:
 
 | Nazwa | Wartość | Znaczenie |
 | --- | ---: | --- |
-| `RADH_STATUS_OK` | 0 | Sukces; wynik został zapisany. |
+| `RADH_STATUS_OK` | 0 | Sukces. Funkcja z buforem wyjściowym zapisała wynik. |
 | `RADH_STATUS_INVALID_POINTER` | 1 | Wskaźnik wyjścia jest `NULL`. |
 | `RADH_STATUS_INVALID_MODULUS` | 2 | Moduł 0 dla modexp albo moduł mniejszy niż 2 dla RSA. |
 | `RADH_STATUS_INVALID_EXPONENT` | 3 | Wykładnik RSA jest równy 0. |
 | `RADH_STATUS_INVALID_MESSAGE` | 4 | Wiadomość RSA jest większa lub równa modułowi. |
 | `RADH_STATUS_INVALID_PRIME` | 5 | Parametr DH `prime` nie jest liczbą pierwszą (także 0 i 1). |
-| `RADH_STATUS_INVALID_GENERATOR` | 6 | Parametr DH `generator` jest mniejszy niż 2 lub nie jest mniejszy niż `prime`. |
+| `RADH_STATUS_INVALID_GENERATOR` | 6 | Generator DH jest poza zakresem albo kontrola pełnego rzędu wykazała mniejszy rząd. |
 | `RADH_STATUS_INVALID_SECRET` | 7 | Co najmniej jeden sekret DH jest równy 0. |
 
 Kolejność walidacji RSA to wskaźnik, moduł, wykładnik, wiadomość.
@@ -184,12 +192,41 @@ Kontrakt ABI dla Linux/macOS z GCC/Clang zakłada 32-bitowy `int` i enum wielko�
 `int`; `restype` w `ctypes` to `c_int`. Nagłówek sprawdza rozmiary przez
 `_Static_assert`, także w kodzie klienta C. C11 nie ustala sam rozmiaru enum,
 więc nie wolno używać `-fshort-enums` ani innych opcji zmieniających ABI.
-Wartości 0–4 nie będą przenumerowywane; klient powinien traktować każdy status
+Wartości statusów nie będą przenumerowywane, a klient powinien traktować każdy status
 inny niż 0 jako błąd. Argumenty liczbowe i poszczególne wartości wynikowe
 odpowiadają `ctypes.c_uint32`. Struktura DH odpowiada `ctypes.Structure` z czterema
 polami `c_uint32` w kolejności z nagłówka, z naturalnym wyrównaniem (bez `_pack_`).
 W obsługiwanym ABI zajmuje 16 bajtów, a pola mają przesunięcia 0, 4, 8 i 12.
 Testy C sprawdzają rozmiar i przesunięcia pól przez `_Static_assert`.
+
+### Walidacja pierwiastka pierwotnego DH
+
+`radh_dh_validate_parameters_u32` sprawdza kolejno pierwszość `p` (status 5),
+zakres `2 <= g < p` (status 6) oraz pełny rząd `g` (status 6 przy mniejszym
+rzędzie). Pełny rząd daje status 0. Dla `p = 2` zakres generatora jest pusty.
+
+Wymiana ręczna `radh_dh_exchange_u32` wymaga, by `g` mieściło się w zakresie,
+i dopuszcza elementy generujące tylko podgrupę. Dla `p = 23` wartość `4` ma rząd
+11, a `5` ma rząd 22. Pierwiastek pierwotny generuje wszystkie `p - 1` niezerowych
+reszt modulo `p`, więc tylko `5` z tej pary przechodzi kontrolę pełnego rzędu.
+
+Rząd `g` dzieli `p - 1`. Gdy jest mniejszy, iloraz `(p - 1) / rząd(g)` ma
+czynnik pierwszy `q`, dla którego `g^((p - 1) / q) mod p = 1`. Dlatego pełny
+rząd występuje dokładnie wtedy, gdy wynik różni się od 1 dla każdego unikalnego
+czynnika pierwszego `q` liczby `p - 1`.
+
+Faktoryzacja sprawdza 2 i kolejne nieparzyste dzielniki, usuwając wszystkie
+potęgi znalezionego czynnika. Warunek `factor <= remaining / factor` unika
+przepełnienia, a końcowa reszta większa od 1 jest czynnikiem pierwszym.
+Wykładniki mieszczą się w `uint32_t`, a istniejące `radh_modexp_u32` używa
+`uint64_t` dla iloczynów. Koszt to O(√p + k log p), gdzie `k` jest liczbą
+unikalnych czynników pierwszych `p - 1`, a pamięć dodatkowa to O(1).
+
+Symbol #95 jest rozszerzeniem ABI. W `ctypes` przyjmuje dwa `c_uint32` i zwraca
+`c_int`, bez bufora wyniku. Numery statusów, dotychczasowe sygnatury i reguły
+ręcznego DH pozostają zgodne. Walidację parametrów RSA nadal wykonuje
+`radh_rsa_keygen_u32`. Pełny rząd w edukacyjnej grupie 32-bitowej nie zapewnia
+bezpieczeństwa do zastosowań produkcyjnych.
 
 ### Algorytm
 
