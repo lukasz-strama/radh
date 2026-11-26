@@ -1,0 +1,18 @@
+# Opcjonalny nasłuch SSE. Port aplikacji i routing WWW pozostają bez zmian.
+services:
+  backend:
+    environment:
+      RADH_DEBUG_ENABLED: "true"
+      RADH_DEBUG_BIND: "0.0.0.0"
+      RADH_DEBUG_PORT: "8001"
+      RADH_DEBUG_TOKEN: ${RADH_DEBUG_TOKEN:?Wygeneruj osobny token dla RADH Inspector}
+    ports:
+      - "127.0.0.1:${RADH_INSPECTOR_HOST_PORT:-8001}:8001"
+    networks:
+      services: {}
+      inspector: {}
+
+# Docker publikuje porty tylko przez sieć, która nie ma flagi internal.
+networks:
+  inspector:
+    driver: bridge

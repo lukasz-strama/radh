@@ -23,6 +23,8 @@ from .session_models import (
     CreateSession, Interception, MalloryDiagnostics, Message, SessionDiagnostics,
 )
 
+from .telemetry import session_event
+
 ROLES = ("alice", "bob", "mallory")
 ACTIVE = {"created", "running"}
 PROTOCOL_STATES = {"running", "completed"}
@@ -104,6 +106,7 @@ class Coordinator:
             sequence=len(record.events) + 1, type=event_type, created_at=self.utc(), **fields,
         ))
         record.view.revision += 1
+        session_event("v2", record.view, event_type, **fields)
 
     def _terminal(self, record, status, code=None, *, at=None):
         record.view.status = status
@@ -315,6 +318,7 @@ class Coordinator:
             record = self._owner(sid, token)
             with record.lock:
                 self._remove(sid, record, self.clock())
+                session_event("v2", record.view, "session_deleted")
 
     def events(self, sid, token, after=0, limit=32):
         with self.access(sid, token=token) as record:
@@ -566,6 +570,8 @@ class Coordinator:
         )
         state.trusted_keys.append(key)
         self._event(record, "trusted_key_published", sender=role)
+        session_event("v2", record.view, "rsa_key_parameters", role=role,
+                      modulus=key.modulus, public_exponent=key.public_exponent)
         record.progress_at = self.clock()
         return key.model_copy(deep=True)
 
@@ -679,6 +685,7 @@ class Coordinator:
             for key, value in proposed.items():
                 setattr(target, key, value)
             view.revision += 1
+            session_event("v2", view, "secret_reported", role=role)
 
     def fail(self, record, code):
         if record.view.status == "failed" and record.view.failure_code == code:

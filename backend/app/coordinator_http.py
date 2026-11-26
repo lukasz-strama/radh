@@ -14,6 +14,7 @@ from starlette.responses import JSONResponse
 
 from .coordinator import Coordinator, ROLES, digest
 from .coordinator_limits import CoordinatorError, CryptoAdmission, RateLimiter, Settings, reject
+from .telemetry import serving
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +158,8 @@ async def lifespan(app):
 
     task = asyncio.create_task(cleanup_loop())
     try:
-        yield
+        async with serving(app.version):
+            yield
     finally:
         task.cancel()
         with suppress(asyncio.CancelledError):

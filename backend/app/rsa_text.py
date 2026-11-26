@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .crypto_core import CryptoCore
+from .telemetry import operation
 
 
 MAX_TEXT_BYTES = 128
@@ -25,6 +26,9 @@ def _require_text_modulus(modulus: int) -> None:
         )
 
 
+@operation("crypto.rsa", "rsa.text.encrypt", text=True,
+           public=lambda core, text, public_exponent, modulus:
+           {"public_exponent": public_exponent, "modulus": modulus})
 def encrypt_text(
     core: CryptoCore, text: str, public_exponent: int, modulus: int
 ) -> list[int]:
@@ -44,6 +48,8 @@ def encrypt_text(
     return [core.encrypt(byte, public_exponent, modulus) for byte in encoded]
 
 
+@operation("crypto.rsa", "rsa.text.decrypt", text=True,
+           public=lambda core, ciphertexts, private_exponent, modulus: {"modulus": modulus})
 def decrypt_text(
     core: CryptoCore, ciphertexts: list[int], private_exponent: int, modulus: int
 ) -> str:

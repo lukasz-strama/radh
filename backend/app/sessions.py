@@ -13,6 +13,8 @@ from .session_models import (
     Role, Session, SessionDiagnostics,
 )
 
+from .telemetry import session_event
+
 
 class SessionError(Exception):
     def __init__(self, status: int, code: str, message: str):
@@ -42,6 +44,7 @@ class SessionStore:
     @staticmethod
     def _event(session: Session, event_type, **fields):
         session.events.append(Event(sequence=len(session.events) + 1, type=event_type, **fields))
+        session_event("v1", session, event_type, **fields)
 
     def create(self, request: CreateSession) -> Session:
         with self.lock:
@@ -197,6 +200,8 @@ class SessionStore:
             result = MalloryDiagnostics(**report.model_dump())
             if self._mallory_diagnostics.shared_with_alice is not None and self._mallory_diagnostics != result:
                 conflict("DIAGNOSTIC_CONFLICT", "Mallory zgłosiła już inne wyniki diagnostyczne.")
+            if self._mallory_diagnostics != result:
+                session_event("v1", session, "secret_reported", role="mallory")
             self._mallory_diagnostics = result
 
     def diagnostics(self, session_id: str) -> SessionDiagnostics:
@@ -217,6 +222,8 @@ class SessionStore:
             if previous is not None and previous != report.shared_secret:
                 conflict("DIAGNOSTIC_CONFLICT", "Uczestnik zgłosił już inny wynik diagnostyczny.")
             setattr(self._diagnostics, report.participant, report.shared_secret)
+            if previous is None:
+                session_event("v1", session, "secret_reported", role=report.participant)
 
 
 def get_session_store(request: Request) -> SessionStore:

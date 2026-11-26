@@ -19,6 +19,7 @@ from .crypto_core import (
 )
 from .parameter_generation import ParameterGenerationExhausted
 from .rsa_text import RsaTextError
+from .telemetry import RequestTelemetry, publish
 
 
 logger = logging.getLogger(__name__)
@@ -45,11 +46,14 @@ if legacy_api_enabled():
     app.include_router(presence_router)
 # Odczyt bieżącego State zachowuje izolację aplikacji w istniejących fixture.
 app.add_middleware(CoordinatorMiddleware, app_state=lambda: app.state)
+app.add_middleware(RequestTelemetry)
 
 
 def _error_response(
     status_code: int, code: str, message: str, headers: dict[str, str] | None = None,
 ) -> JSONResponse:
+    publish("http.api", "http.error", level="DEBUG" if status_code < 500 else "WARN",
+            status=status_code, code=code)
     return JSONResponse(
         status_code=status_code,
         content={"error": {"code": code, "message": message}},
@@ -119,6 +123,7 @@ async def crypto_core_load_error(
     _request: Request, exception: CryptoCoreLoadError
 ) -> JSONResponse:
     logger.error("Cannot load CryptoCore: %s", exception)
+    publish("system.backend", "system.crypto_core.unavailable", level="ERROR")
     return _error_response(
         503,
         "CRYPTO_CORE_UNAVAILABLE",

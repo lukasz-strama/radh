@@ -2,6 +2,8 @@
 
 **RADH** to demonstrator kryptosystemu RSA oraz wymiany kluczy Diffiego–Hellmana, realizowany w ramach przedmiotu *Podstawy kryptografii i kodowania*.
 
+[RADH Inspector](inspector/README.md) to opcjonalne narzędzie do obserwacji backendu i CryptoCore na żywo.
+
 ## Cel projektu
 
 Celem jest stworzenie aplikacji edukacyjnej umożliwiającej poznanie zasad działania algorytmów RSA i Diffiego–Hellmana, wizualizację obliczeń kryptograficznych oraz przeprowadzanie eksperymentów związanych z bezpieczeństwem komunikacji.

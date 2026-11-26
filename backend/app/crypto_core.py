@@ -9,6 +9,8 @@ from collections.abc import Callable
 from enum import IntEnum
 from pathlib import Path
 
+from .telemetry import call_c, operation
+
 
 UINT32_MAX = 2**32 - 1
 LIBRARY_ENV_VAR = "RADH_CRYPTO_CORE_LIBRARY"
@@ -275,13 +277,15 @@ class CryptoCore:
             keygen.restype = ctypes.c_int
         self._keygen = keygen
 
+    @operation("crypto.python", "modexp")
     def modexp(self, base: int, exponent: int, modulus: int) -> int:
         """Wywołaj C: base^exponent mod modulus, także dla wykładnika 0."""
 
         for name, value in (("base", base), ("exponent", exponent), ("modulus", modulus)):
             _require_uint32(name, value)
         result = ctypes.c_uint32()
-        status = self._modexp(
+        status = call_c(
+            "radh_modexp_u32", self._modexp,
             ctypes.c_uint32(base), ctypes.c_uint32(exponent),
             ctypes.c_uint32(modulus), ctypes.byref(result),
         )
@@ -291,6 +295,9 @@ class CryptoCore:
         self._check_status(status, {CryptoCoreStatus.INVALID_MODULUS})
         return result.value
 
+    @operation("crypto.rsa", "rsa.encrypt",
+               public=lambda self, message, public_exponent, modulus:
+               {"public_exponent": public_exponent, "modulus": modulus})
     def encrypt(self, message: int, public_exponent: int, modulus: int) -> int:
         """Wywołaj C: message^public_exponent mod modulus."""
 
@@ -299,7 +306,8 @@ class CryptoCore:
         _require_uint32("modulus", modulus)
 
         ciphertext = ctypes.c_uint32()
-        raw_status = self._encrypt(
+        raw_status = call_c(
+            "radh_rsa_encrypt_u32", self._encrypt,
             ctypes.c_uint32(message),
             ctypes.c_uint32(public_exponent),
             ctypes.c_uint32(modulus),
@@ -312,6 +320,8 @@ class CryptoCore:
         })
         return ciphertext.value
 
+    @operation("crypto.rsa", "rsa.decrypt",
+               public=lambda self, ciphertext, private_exponent, modulus: {"modulus": modulus})
     def decrypt(self, ciphertext: int, private_exponent: int, modulus: int) -> int:
         """Wywołaj C: ciphertext^private_exponent mod modulus."""
 
@@ -325,7 +335,8 @@ class CryptoCore:
             )
 
         message = ctypes.c_uint32()
-        raw_status = self._decrypt(
+        raw_status = call_c(
+            "radh_rsa_decrypt_u32", self._decrypt,
             ctypes.c_uint32(ciphertext),
             ctypes.c_uint32(private_exponent),
             ctypes.c_uint32(modulus),
@@ -350,7 +361,7 @@ class CryptoCore:
         if function is None:
             raise CryptoCoreLoadError(f"Biblioteka CryptoCore nie eksportuje funkcji {symbol}.")
         output = ctypes.c_uint32()
-        status = function(*inputs.values(), ctypes.byref(output))
+        status = call_c(symbol, function, *inputs.values(), ctypes.byref(output))
         CryptoCore._check_status(status, {
             CryptoCoreStatus.INVALID_MODULUS,
             CryptoCoreStatus.INVALID_EXPONENT,
@@ -358,6 +369,8 @@ class CryptoCore:
         })
         return output.value
 
+    @operation("crypto.rsa", "rsa.sign",
+               public=lambda self, representative, private_exponent, modulus: {"modulus": modulus})
     def sign(self, representative: int, private_exponent: int, modulus: int) -> int:
         """Podpisz gotowy reprezentant przez CryptoCore."""
 
@@ -366,6 +379,9 @@ class CryptoCore:
             private_exponent=private_exponent, modulus=modulus,
         )
 
+    @operation("crypto.rsa", "rsa.verify",
+               public=lambda self, representative, signature, public_exponent, modulus:
+               {"public_exponent": public_exponent, "modulus": modulus})
     def verify(self, representative: int, signature: int, public_exponent: int, modulus: int) -> bool:
         """Sprawdź gotowy reprezentant. Niezgodność podpisu daje False."""
 
@@ -377,6 +393,8 @@ class CryptoCore:
             raise CryptoCoreCallError(-1, "INTERNAL_ERROR", "Niepoprawny wynik weryfikacji CryptoCore.")
         return bool(result)
 
+    @operation("crypto.rsa", "rsa.keygen",
+               result=lambda keys: {"modulus": keys.n, "public_exponent": keys.e})
     def generate_rsa_keys(self, p: int, q: int, e: int) -> RsaKeygenResult:
         """Wygeneruj edukacyjną parę kluczy przez CryptoCore."""
 
@@ -388,7 +406,8 @@ class CryptoCore:
                 "Zbuduj ponownie bibliotekę C."
             )
         result = RsaKeygenResult()
-        status = self._keygen(
+        status = call_c(
+            "radh_rsa_keygen_u32", self._keygen,
             ctypes.c_uint32(p), ctypes.c_uint32(q), ctypes.c_uint32(e),
             ctypes.byref(result),
         )
@@ -402,6 +421,11 @@ class CryptoCore:
         })
         return result
 
+    @operation("crypto.dh", "dh.exchange",
+               public=lambda self, prime, generator, alice_secret, bob_secret:
+               {"prime": prime, "generator": generator},
+               result=lambda exchange: {"alice_public": exchange.alice_public,
+                                        "bob_public": exchange.bob_public})
     def exchange(
         self, prime: int, generator: int, alice_secret: int, bob_secret: int
     ) -> DhExchangeResult:
@@ -413,7 +437,8 @@ class CryptoCore:
         ):
             _require_uint32(name, value)
         result = DhExchangeResult()
-        raw_status = self._exchange(
+        raw_status = call_c(
+            "radh_dh_exchange_u32", self._exchange,
             ctypes.c_uint32(prime), ctypes.c_uint32(generator),
             ctypes.c_uint32(alice_secret), ctypes.c_uint32(bob_secret),
             ctypes.byref(result),
@@ -425,6 +450,8 @@ class CryptoCore:
         })
         return result
 
+    @operation("crypto.dh", "dh.validate_parameters",
+               public=lambda self, prime, generator: {"prime": prime, "generator": generator})
     def validate_dh_parameters(self, prime: int, generator: int) -> None:
         """Potwierdź pierwszość p i pełny rząd g przez addytywne ABI C."""
 
@@ -435,7 +462,8 @@ class CryptoCore:
                 "Biblioteka CryptoCore nie eksportuje funkcji "
                 "radh_dh_validate_parameters_u32. Zbuduj ponownie bibliotekę C."
             )
-        status = self._dh_parameter_validation(
+        status = call_c(
+            "radh_dh_validate_parameters_u32", self._dh_parameter_validation,
             ctypes.c_uint32(prime), ctypes.c_uint32(generator)
         )
         self._check_status(status, {
