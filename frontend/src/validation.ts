@@ -133,3 +133,129 @@ export function validateRsaKeyParams(raw: Record<RsaKeyField, string>): RsaKeyVa
 
   return { ok: true, data: { p: p as number, q: q as number, e: e as number } }
 }
+// Walidacja deszyfrowania i tekstowego cyklu RSA (#100). Zakresy jak w backendzie (#99):
+//   ciphertext:       0 .. modulus - 1
+//   private_exponent: 1 .. 4 294 967 295
+//   tekst:            1 .. 128 bajtów UTF-8; każdy bajt to osobna wiadomość m < n,
+//                     więc moduł musi być większy od 255
+//   szyfrogramy:      1 .. 128 liczb, każda mniejsza od n
+// Pola deszyfrowania mają własne nazwy (`private_*`), bo panel szyfrowania używa już `modulus`.
+
+export const RSA_TEXT_MAX_BYTES = 128
+const TEXT_MIN_MODULUS = 256
+
+export type RsaDecryptField = 'ciphertext' | 'private_exponent' | 'private_modulus'
+export type RsaTextField = 'text' | 'public_exponent' | 'modulus'
+export type RsaTextDecryptField = 'ciphertexts' | 'private_exponent' | 'private_modulus'
+
+type Result<Field extends string, Data> =
+  | { ok: true; data: Data }
+  | { ok: false; errors: Partial<Record<Field, string>> }
+
+function finish<Field extends string, Data>(
+  errors: Partial<Record<Field, string>>,
+  data: () => Data,
+): Result<Field, Data> {
+  return Object.keys(errors).length > 0 ? { ok: false, errors } : { ok: true, data: data() }
+}
+
+// Wspólna część dla kluczy: wykładnik ≥ 1, moduł ≥ minimum.
+function exponent(raw: string, name: 'e' | 'd'): number | string {
+  const value = parseUint32(raw)
+  if (typeof value === 'number' && value < 1) return `Wykładnik ${name} musi być co najmniej równy 1.`
+  return value
+}
+
+function modulus(raw: string, minimum: number, tooSmall: string): number | string {
+  const value = parseUint32(raw)
+  if (typeof value === 'number' && value < minimum) return tooSmall
+  return value
+}
+
+const MODULUS_TOO_SMALL = 'Moduł n musi być co najmniej równy 2.'
+const TEXT_MODULUS_TOO_SMALL = 'W trybie tekstowym moduł n musi być większy od 255 (każdy bajt to osobne m < n).'
+
+export function validateRsaDecryptInput(
+  raw: Record<RsaDecryptField, string>,
+): Result<RsaDecryptField, { ciphertext: number; private_exponent: number; modulus: number }> {
+  const errors: Partial<Record<RsaDecryptField, string>> = {}
+  const ciphertext = parseUint32(raw.ciphertext)
+  const privateExponent = exponent(raw.private_exponent, 'd')
+  const n = modulus(raw.private_modulus, 2, MODULUS_TOO_SMALL)
+
+  if (typeof ciphertext === 'string') errors.ciphertext = ciphertext
+  if (typeof privateExponent === 'string') errors.private_exponent = privateExponent
+  if (typeof n === 'string') errors.private_modulus = n
+  if (typeof ciphertext === 'number' && typeof n === 'number' && ciphertext >= n) {
+    errors.ciphertext = 'Szyfrogram c musi być mniejszy od modułu n.'
+  }
+
+  return finish(errors, () => ({
+    ciphertext: ciphertext as number,
+    private_exponent: privateExponent as number,
+    modulus: n as number,
+  }))
+}
+
+// Pojedynczy surogat (np. ucięta para z wklejenia) nie jest poprawnym tekstem Unicode
+// i nie da się go zakodować w UTF-8 bez utraty danych.
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+
+export function utf8Length(text: string): number {
+  return new TextEncoder().encode(text).length
+}
+
+export function validateRsaTextInput(
+  raw: Record<RsaTextField, string>,
+): Result<RsaTextField, { text: string; public_exponent: number; modulus: number }> {
+  const errors: Partial<Record<RsaTextField, string>> = {}
+  const publicExponent = exponent(raw.public_exponent, 'e')
+  const n = modulus(raw.modulus, TEXT_MIN_MODULUS, TEXT_MODULUS_TOO_SMALL)
+
+  // Tekst zostaje bez obcinania spacji – szyfrujemy dokładnie to, co wpisano.
+  if (raw.text === '') errors.text = 'To pole jest wymagane.'
+  else if (LONE_SURROGATE.test(raw.text)) errors.text = 'Tekst zawiera niepoprawny znak Unicode.'
+  else if (utf8Length(raw.text) > RSA_TEXT_MAX_BYTES) {
+    errors.text = `Tekst może mieć najwyżej ${RSA_TEXT_MAX_BYTES} bajtów UTF-8.`
+  }
+  if (typeof publicExponent === 'string') errors.public_exponent = publicExponent
+  if (typeof n === 'string') errors.modulus = n
+
+  return finish(errors, () => ({
+    text: raw.text,
+    public_exponent: publicExponent as number,
+    modulus: n as number,
+  }))
+}
+
+export function validateRsaTextDecryptInput(
+  raw: Record<RsaTextDecryptField, string>,
+): Result<RsaTextDecryptField, { ciphertexts: number[]; private_exponent: number; modulus: number }> {
+  const errors: Partial<Record<RsaTextDecryptField, string>> = {}
+  const privateExponent = exponent(raw.private_exponent, 'd')
+  const n = modulus(raw.private_modulus, TEXT_MIN_MODULUS, TEXT_MODULUS_TOO_SMALL)
+
+  // Liczby rozdzielone przecinkami, średnikami lub białymi znakami.
+  const parts = raw.ciphertexts.split(/[\s,;]+/).filter((part) => part !== '')
+  const ciphertexts: number[] = []
+  if (parts.length === 0) errors.ciphertexts = 'To pole jest wymagane.'
+  else if (parts.length > RSA_TEXT_MAX_BYTES) {
+    errors.ciphertexts = `Można odszyfrować najwyżej ${RSA_TEXT_MAX_BYTES} szyfrogramów.`
+  }
+  for (const [index, part] of parts.entries()) {
+    if (errors.ciphertexts) break
+    const value = parseUint32(part)
+    if (typeof value === 'string') errors.ciphertexts = `Szyfrogram nr ${index + 1}: ${value}`
+    else if (typeof n === 'number' && value >= n) {
+      errors.ciphertexts = `Szyfrogram nr ${index + 1} musi być mniejszy od modułu n.`
+    } else ciphertexts.push(value)
+  }
+  if (typeof privateExponent === 'string') errors.private_exponent = privateExponent
+  if (typeof n === 'string') errors.private_modulus = n
+
+  return finish(errors, () => ({
+    ciphertexts,
+    private_exponent: privateExponent as number,
+    modulus: n as number,
+  }))
+}

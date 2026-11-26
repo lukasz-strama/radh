@@ -41,11 +41,86 @@ export class ApiError extends Error {
 
 // Wysyła parametry do backendu i zwraca szyfrogram obliczony przez backend.
 export async function encryptRsa(data: RsaEncryptRequest): Promise<RsaEncryptResponse> {
-  const body = await requestJson('POST', '/api/v1/rsa/demo/encrypt', data)
+  const body = await rsaCycleRequest('/api/v1/rsa/demo/encrypt', data)
 
   const ciphertext = (body as { ciphertext?: unknown } | null)?.ciphertext
-  if (typeof ciphertext !== 'number') throw unexpectedFormat()
+  if (!belowModulus(ciphertext, data.modulus)) throw unexpectedFormat()
   return { ciphertext }
+}
+
+// Deszyfrowanie i tekstowy cykl RSA (#99, backend/README.md). Każdą operację
+// modularną wykonuje CryptoCore; frontend koduje tekst tylko po to, żeby pokazać bajty.
+export type RsaDecryptRequest = {
+  ciphertext: number
+  private_exponent: number
+  modulus: number
+}
+
+// m = c^d mod n dla jednej liczby.
+export async function decryptRsa(data: RsaDecryptRequest): Promise<number> {
+  const body = await rsaCycleRequest('/api/v1/rsa/demo/decrypt', data)
+  const message = (body as { message?: unknown } | null)?.message
+  if (!belowModulus(message, data.modulus)) throw unexpectedFormat()
+  return message
+}
+
+export type RsaTextEncryptRequest = {
+  text: string
+  public_exponent: number
+  modulus: number
+}
+
+// Szyfrogramy kolejnych bajtów UTF-8 tekstu, po jednym na bajt.
+export async function encryptRsaText(data: RsaTextEncryptRequest): Promise<number[]> {
+  const body = await rsaCycleRequest('/api/v1/rsa/demo/text/encrypt', data)
+  const ciphertexts = (body as { ciphertexts?: unknown } | null)?.ciphertexts
+  const bytes = new TextEncoder().encode(data.text).length
+  if (
+    !Array.isArray(ciphertexts) ||
+    ciphertexts.length !== bytes ||
+    !ciphertexts.every((value) => belowModulus(value, data.modulus))
+  ) {
+    throw unexpectedFormat()
+  }
+  return ciphertexts
+}
+
+export type RsaTextDecryptRequest = {
+  ciphertexts: number[]
+  private_exponent: number
+  modulus: number
+}
+
+// Tekst odtworzony z szyfrogramów bajtów. Backend dekoduje UTF-8 ściśle, więc
+// odzyskany tekst ma dokładnie tyle bajtów, ile było szyfrogramów.
+export async function decryptRsaText(data: RsaTextDecryptRequest): Promise<string> {
+  const body = await rsaCycleRequest('/api/v1/rsa/demo/text/decrypt', data)
+  const text = (body as { text?: unknown } | null)?.text
+  if (typeof text !== 'string' || new TextEncoder().encode(text).length !== data.ciphertexts.length) {
+    throw unexpectedFormat()
+  }
+  return text
+}
+
+// Wynik działania mod n jest liczbą całkowitą z zakresu 0 .. n − 1.
+function belowModulus(value: unknown, modulus: number): value is number {
+  return uint32(value) && value < modulus
+}
+
+// Przy limicie żądań i zajętej kolejce backend podaje tylko ogólne „Nie można wykonać
+// operacji.”, więc dla tych kodów mówimy wprost, co się stało i kiedy spróbować ponownie.
+// Pozostałe błędy tras RSA mają pełne komunikaty z backendu.
+const RSA_LIMIT_CODES = new Set(['RATE_LIMITED', 'CRYPTO_BUSY'])
+
+async function rsaCycleRequest(url: string, data: unknown): Promise<unknown> {
+  try {
+    return await requestJson('POST', url, data)
+  } catch (error) {
+    if (!(error instanceof ApiError) || !error.code || !RSA_LIMIT_CODES.has(error.code)) throw error
+    let message = V2_ERROR_MESSAGES[error.code]
+    if (error.retryAfter > 0) message += ` Spróbuj ponownie za ${error.retryAfter} s.`
+    throw new ApiError(message, error.code, error.status, error.retryAfter)
+  }
 }
 
 // Generowanie edukacyjnej pary kluczy RSA (#56, backend/README.md).

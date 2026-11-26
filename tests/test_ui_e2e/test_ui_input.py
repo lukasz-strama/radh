@@ -37,12 +37,14 @@ def test_keyboard_tabs_order_and_focus(page, width):
 
     # Tab: tylko aktywna zakładka, potem kontrolki widocznego panelu; każdy fokus widoczny.
     order = []
-    for _ in range(10):
+    for _ in range(15):
         press(page, Keys.TAB)
         assert focus_visible(page), f"niewidoczny fokus na {active(page)}"
         order.append(active(page))
-    assert order == ["p", "q", "e", "Losuj parametry", "Generuj klucze", "message", "public_exponent",
-                     "modulus", "Szyfruj", "Repozytorium na GitHubie"]
+    # Przyciski „Użyj klucza…” są nieaktywne przed wygenerowaniem kluczy, więc ich nie ma.
+    assert order == ["p", "q", "e", "Losuj parametry", "Generuj klucze", "rsa-mode", "message",
+                     "public_exponent", "modulus", "Szyfruj", "ciphertext", "private_exponent",
+                     "private_modulus", "Odszyfruj", "Repozytorium na GitHubie"]
     assert "tab-dh" not in order and "prime" not in order, "ukryty panel i nieaktywna zakładka poza kolejnością"
     page.record("keyboard_order", {"order": order})
 
@@ -58,8 +60,15 @@ def test_keyboard_only_rsa_and_mitm(page, width):
     assert active(page) == "Użyj klucza publicznego"
     press(page, Keys.ENTER)
     press(page, Keys.TAB)
+    assert active(page) == "Użyj klucza prywatnego"
+    press(page, Keys.ENTER)
+    press(page, Keys.TAB, Keys.TAB)  # tryb (Liczba) → wiadomość
+    assert active(page) == "message"
     press(page, "65", Keys.ENTER)
     page.wait(lambda: "2790" in page.text("form[aria-labelledby=rsa-encrypt-title]"), message="szyfrogram")
+    page.js("arguments[0].focus()", page.find("input[name=ciphertext]"))
+    press(page, Keys.ENTER)
+    page.wait(lambda: "= 65" in page.text("form[aria-labelledby=rsa-decrypt-title]"), message="odzyskane m")
 
     page.find("#tab-rsa").click()
     press(page, Keys.ARROW_RIGHT)
