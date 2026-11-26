@@ -9,10 +9,13 @@ type FieldProps = {
   defaultValue?: string
   value?: string
   onChange?: (value: string) => void
+  // Prefiks identyfikatora komunikatu błędu, gdy ten sam formularz jest na stronie
+  // dwa razy (zakładki DH i RSA + DH).
+  idPrefix?: string
 }
 
-export function Field({ name, label, error, defaultValue, value, onChange }: FieldProps) {
-  const errorId = `${name}-error`
+export function Field({ name, label, error, defaultValue, value, onChange, idPrefix = '' }: FieldProps) {
+  const errorId = `${idPrefix}${name}-error`
   return (
     <label>
       {label}

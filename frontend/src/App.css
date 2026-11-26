@@ -682,6 +682,77 @@ details[open] > .dh-collapsible-header {
   color: var(--color-mallory);
 }
 
+/* RSA + DH: wyjaśnienie w kolorze akcentu zamiast koloru Mallory */
+.dh-explain--trust {
+  border-left-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 6%, transparent);
+}
+
+.dh-explain--trust h2 {
+  color: var(--color-accent);
+}
+
+/* RSA + DH: podpisy obu stron obok siebie, na wąskim ekranie jeden pod drugim */
+.dh-auth {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.dh-auth-parties {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--space-3);
+}
+
+.dh-auth-party {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3);
+  border: var(--border-thin) solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.dh-auth-party h3,
+.dh-auth .result h3 {
+  margin: 0;
+  font-size: var(--text-md);
+}
+
+.dh-auth-party dl {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.dh-auth-party dt {
+  font-size: var(--text-sm);
+  color: var(--color-muted);
+}
+
+.dh-auth-party dt .badge {
+  margin-left: var(--space-2);
+}
+
+.dh-auth-party dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Pełny skrót SHA-256: 64 znaki hex łamią się w dowolnym miejscu */
+.dh-hash {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.dh-auth code {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
 /* Porównanie scenariuszy: nagłówki wierszy zwykłą czcionką, różnice wyróżnione */
 .dh-compare tbody th {
   font-weight: normal;

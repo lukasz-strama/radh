@@ -31,6 +31,8 @@ def test_keyboard_tabs_order_and_focus(page, width):
     press(page, Keys.HOME)
     assert active(page) == "tab-rsa" and page.find("#view-rsa").is_displayed()
     press(page, Keys.END)
+    assert active(page) == "tab-rsadh" and page.find("#view-rsadh").is_displayed()
+    press(page, Keys.ARROW_LEFT)
     assert active(page) == "tab-dh"
     press(page, Keys.ARROW_LEFT)
     assert active(page) == "tab-rsa"

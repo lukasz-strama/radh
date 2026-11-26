@@ -4,11 +4,13 @@ import { DhExchange } from './DhExchange'
 import { RsaView } from './RsaView'
 import './App.css'
 
-type Tab = 'rsa' | 'dh'
+type Tab = 'rsa' | 'dh' | 'rsadh'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'rsa', label: 'RSA' },
   { id: 'dh', label: 'Diffie–Hellman' },
+  // Wymiana DH uwierzytelniona podpisami RSA (#104); własna sesja, niezależna od zakładki DH.
+  { id: 'rsadh', label: 'RSA + DH' },
 ]
 
 const REPOSITORY_URL = 'https://github.com/lukasz-strama/radh'
@@ -74,7 +76,9 @@ function App() {
             aria-labelledby={`tab-${id}`}
             hidden={tab !== id}
           >
-            {id === 'rsa' ? <RsaView /> : <DhExchange />}
+            {id === 'rsa' && <RsaView />}
+            {id === 'dh' && <DhExchange />}
+            {id === 'rsadh' && <DhExchange scenario="authenticated" />}
           </div>
         ))}
       </main>

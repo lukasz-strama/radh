@@ -1,11 +1,12 @@
 // Komunikacja z FastAPI. Sesje v2 używają poświadczeń własnej karty.
 import {
-  currentCredential, forgetCredential, forgetPendingCreation, isSessionId,
+  credentialById, currentCredential, forgetCredential, forgetPendingCreation, isSessionId,
   newCreationKey, pendingCreation, saveCredential, savePendingCreation,
 } from './dhCredentials'
-import type { SessionCredential } from './dhCredentials'
+import type { DhScenario, SessionCredential } from './dhCredentials'
 
 export { currentCredential } from './dhCredentials'
+export type { DhScenario } from './dhCredentials'
 
 type RequestOptions = {
   signal?: AbortSignal
@@ -206,7 +207,9 @@ export type NodeRole = Role | 'mallory'
 // Postęp uczestnika potwierdzony przez koordynatora: waiting → published → received.
 // published: koordynator przyjął jego wartość publiczną;
 // received: węzeł potwierdził przetworzenie otrzymanej wartości.
-export type ParticipantStatus = 'waiting' | 'published' | 'received'
+// W RSA + DH (#104) zamiast received jest verified: węzeł pozytywnie zweryfikował
+// podpis partnera (backend/AUTHENTICATED_DH.md).
+export type ParticipantStatus = 'waiting' | 'published' | 'received' | 'verified'
 
 export type SessionStatus = 'created' | 'running' | 'completed' | 'cancelled' | 'expired' | 'failed'
 
@@ -221,6 +224,10 @@ export type EventType =
   | 'session_cancelled'
   | 'session_failed'
   | 'session_expired'
+  | 'trusted_key_published'
+  | 'signature_published'
+  | 'signature_verified'
+  | 'signature_rejected'
 
 // intercepted: oryginał zatrzymany u Mallory, nigdy nie trafia do kolejki ofiary.
 export type MessageStatus = 'intercepted' | 'queued' | 'processed'
@@ -240,9 +247,14 @@ export type DhInterception = {
 }
 
 // Stan jednego uczestnika. Brak wartości = jeszcze jej nie ma.
+// deliveredValue: wartość dostarczona do kolejki węzła (w MITM – podmiana Mallory);
+// receivedValue: ta sama wartość po przyjęciu, czyli po ACK węzła. W RSA + DH węzeł
+// potwierdza dopiero po pozytywnej weryfikacji podpisu, więc po odrzuceniu wartość
+// zostaje dostarczona, ale nieprzyjęta.
 export type DhNode = {
   status: ParticipantStatus
   publicValue?: number
+  deliveredValue?: number
   receivedValue?: number
   // K z diagnostyki węzła (fetchDhDiagnostics); nie jest częścią wiadomości protokołu.
   sharedKey?: number
@@ -270,6 +282,29 @@ export type DhEvent = {
   value: number | null
   messageId: string | null
   status: MessageStatus
+  // Wynik weryfikacji podpisu (signature_verified/rejected); w pozostałych null.
+  verified: boolean | null
+}
+
+// Uwierzytelnienie wymiany podpisami RSA (#104, backend/AUTHENTICATED_DH.md).
+// Wszystko jest jawne: klucze publiczne, podpisy i skróty transkryptu. Klucze
+// prywatne zostają w węzłach i nigdy nie są polem API.
+export type DhTrustedKey = { modulus: number; publicExponent: number }
+export type DhSignature = { transcriptHash: string; signature: number }
+// Wynik weryfikacji podpisu partnera przez danego uczestnika. transcriptHash to skrót
+// zbudowany przez weryfikatora z jego widoku, publishedTranscriptHash – skrót
+// opublikowany przez podpisującego. Po podmianie MITM się różnią.
+export type DhVerification = {
+  signer: Role
+  verified: boolean
+  transcriptHash: string
+  publishedTranscriptHash: string
+}
+export type DhAuthentication = {
+  keys: Partial<Record<Role, DhTrustedKey>>
+  signatures: Partial<Record<Role, DhSignature>>
+  // Klucz: weryfikujący uczestnik.
+  verifications: Partial<Record<Role, DhVerification>>
 }
 
 export type DhSession = {
@@ -281,6 +316,9 @@ export type DhSession = {
   diagnosticsEnabled: boolean
   failureCode: string | null
   mode: DhMode
+  scenario: DhScenario
+  // W zwykłej wymianie puste kolekcje.
+  authentication: DhAuthentication
   p: number
   g: number
   status: SessionStatus
@@ -296,13 +334,18 @@ export async function startDhSession(
   mode: DhMode,
   diagnosticsEnabled = false,
   signal?: AbortSignal,
+  scenario: DhScenario = 'classic',
 ): Promise<DhSession> {
-  if (currentCredential()) {
+  if (currentCredential(scenario)) {
     throw new ApiError('Najpierw usuń własną poprzednią sesję przyciskiem Reset.', 'SESSION_ACTIVE')
   }
   const nodes = await fetchDhNodes(signal)
-  const body = { ...params, mode, diagnostics_enabled: diagnosticsEnabled }
-  let pending = pendingCreation()
+  // Zwykła wymiana wysyła żądanie bez pola scenario, tak jak przed #104.
+  const body = {
+    ...params, mode, diagnostics_enabled: diagnosticsEnabled,
+    ...(scenario === 'authenticated' ? { scenario } : {}),
+  }
+  let pending = pendingCreation(scenario)
   if (pending && (pending.epoch !== nodes.backendEpoch || Date.now() - pending.createdAt >= 60_000 ||
       Date.now() < pending.createdAt || JSON.stringify(pending.params) !== JSON.stringify(body))) {
     throw new ApiError(
@@ -312,7 +355,7 @@ export async function startDhSession(
   }
   if (!pending) {
     pending = { key: newCreationKey(), epoch: nodes.backendEpoch, createdAt: Date.now(), params: body }
-    savePendingCreation(pending)
+    savePendingCreation(pending, scenario)
   }
   const result = await requestJson('POST', DH_SESSIONS_URL, body, {
     signal, epoch: pending.epoch,
@@ -320,17 +363,17 @@ export async function startDhSession(
   }) as { session?: unknown; session_token?: unknown } | null
   const session = toDhSession({ ...(result?.session as object), events: [] })
   if (typeof result?.session_token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(result.session_token) ||
-      session.epoch !== pending.epoch) throw unexpectedFormat()
+      session.epoch !== pending.epoch || session.scenario !== scenario) throw unexpectedFormat()
   signal?.throwIfAborted()
-  saveCredential({ id: session.id, token: result.session_token, epoch: session.epoch })
-  forgetPendingCreation(pending.key)
+  saveCredential({ id: session.id, token: result.session_token, epoch: session.epoch }, scenario)
+  forgetPendingCreation(pending.key, scenario)
   // Przy błędzie startu zachowujemy ID/token do wznowienia albo usunięcia.
   return resumeDhSession(session.id, signal)
 }
 
 function credentialFor(id: string): SessionCredential {
-  const own = currentCredential()
-  if (!own || own.id !== id) throw new ApiError('Brak poświadczenia własnej sesji.', 'UNAUTHORIZED', 401)
+  const own = credentialById(id)
+  if (!own) throw new ApiError('Brak poświadczenia własnej sesji.', 'UNAUTHORIZED', 401)
   return own
 }
 
@@ -379,9 +422,10 @@ export async function deleteDhSession(id: string, signal?: AbortSignal): Promise
   forgetCredential(own)
 }
 
-// Reset dotyczy wyłącznie sesji i próby tworzenia zapisanych w tej karcie.
-export async function resetOwnDhSession(signal?: AbortSignal): Promise<void> {
-  const own = currentCredential()
+// Reset dotyczy wyłącznie sesji i próby tworzenia zapisanych w tej karcie, w danej
+// zakładce – sesja drugiej zakładki zostaje.
+export async function resetOwnDhSession(signal?: AbortSignal, scenario: DhScenario = 'classic'): Promise<void> {
+  const own = currentCredential(scenario)
   if (own) {
     try {
       await deleteDhSession(own.id, signal)
@@ -389,7 +433,7 @@ export async function resetOwnDhSession(signal?: AbortSignal): Promise<void> {
       if (!(error instanceof ApiError && (error.status === 404 || error.status === 410))) throw error
     }
   }
-  forgetPendingCreation()
+  forgetPendingCreation(undefined, scenario)
 }
 
 export type NodeAvailability = { online: boolean }
@@ -435,7 +479,13 @@ const ROLES: readonly Role[] = ['alice', 'bob']
 const NODE_ROLES: readonly NodeRole[] = ['alice', 'bob', 'mallory']
 const MODES: readonly DhMode[] = ['normal', 'mitm']
 const SESSION_STATUSES: readonly SessionStatus[] = ['created', 'running', 'completed', 'cancelled', 'expired', 'failed']
-const PARTICIPANT_STATUSES: readonly ParticipantStatus[] = ['waiting', 'published', 'received']
+// Postęp uczestnika zależy od scenariusza: received jest tylko w zwykłej wymianie,
+// verified tylko w RSA + DH (backend/AUTHENTICATED_DH.md).
+const PARTICIPANT_STATUSES: Record<DhScenario, readonly ParticipantStatus[]> = {
+  classic: ['waiting', 'published', 'received'],
+  authenticated: ['waiting', 'published', 'verified'],
+}
+const SCENARIOS: readonly DhScenario[] = ['classic', 'authenticated']
 const MESSAGE_STATUSES: readonly MessageStatus[] = ['intercepted', 'queued', 'processed']
 const INTERCEPTION_STATUSES: readonly InterceptionStatus[] = ['pending', 'forwarded', 'processed']
 const EVENT_TYPES: readonly EventType[] = [
@@ -449,6 +499,10 @@ const EVENT_TYPES: readonly EventType[] = [
   'session_cancelled',
   'session_failed',
   'session_expired',
+  'trusted_key_published',
+  'signature_published',
+  'signature_verified',
+  'signature_rejected',
 ]
 
 type RawMessage = {
@@ -473,6 +527,8 @@ function toDhSession(body: unknown): DhSession {
   const participants = raw?.participants as Record<string, unknown> | undefined
   // Starszy backend (#37 bez #41) nie zwraca interceptions – wtedy brak przechwyceń.
   const rawInterceptions = raw?.interceptions ?? []
+  // Backend sprzed #104 nie zwraca scenario ani authentication – to zwykła wymiana.
+  const scenario = raw?.scenario ?? 'classic'
   if (
     !raw ||
     !isSessionId(raw.session_id) ||
@@ -483,11 +539,12 @@ function toDhSession(body: unknown): DhSession {
     typeof raw.diagnostics_enabled !== 'boolean' ||
     (raw.failure_code !== null && typeof raw.failure_code !== 'string') ||
     !isOneOf(MODES, raw.mode) ||
+    !isOneOf(SCENARIOS, scenario) ||
     !uint32(raw.prime) ||
     !uint32(raw.generator) ||
     !isOneOf(SESSION_STATUSES, raw.status) ||
     !participants ||
-    !ROLES.every((role) => isOneOf(PARTICIPANT_STATUSES, participants[role])) ||
+    !ROLES.every((role) => isOneOf(PARTICIPANT_STATUSES[scenario as DhScenario], participants[role])) ||
     !Array.isArray(raw.messages) || raw.messages.length > 2 ||
     !Array.isArray(raw.events) || raw.events.length > 32 ||
     !Array.isArray(rawInterceptions) || rawInterceptions.length > 2
@@ -550,7 +607,8 @@ function toDhSession(body: unknown): DhSession {
       !isOneOfOrNull(ROLES, event.recipient) ||
       (value !== null && !uint32(value)) ||
       (messageId !== null && messageId !== undefined && typeof messageId !== 'string') ||
-      !isOneOf(MESSAGE_STATUSES, event.status)
+      !isOneOf(MESSAGE_STATUSES, event.status) ||
+      (event.verified !== null && event.verified !== undefined && typeof event.verified !== 'boolean')
     ) {
       throw unexpectedFormat()
     }
@@ -562,8 +620,11 @@ function toDhSession(body: unknown): DhSession {
       value: value as number | null,
       messageId: (messageId as string | null | undefined) ?? null,
       status: event.status,
+      verified: (event.verified as boolean | null | undefined) ?? null,
     }
   })
+
+  const authentication = toAuthentication(raw.authentication, scenario, raw.session_id, raw.backend_epoch)
 
   const mitm = raw.mode === 'mitm'
 
@@ -576,18 +637,22 @@ function toDhSession(body: unknown): DhSession {
     const status = participants![role] as ParticipantStatus
     if (mitm) {
       const own = interceptions.find((i) => i.originalSender === role)
-      const received = interceptions.find((i) => i.recipient === role && i.status === 'processed')
+      // Podmiana jest dostarczona od forwarded, przyjęta dopiero po ACK (processed).
+      const delivered = interceptions.find((i) => i.recipient === role && i.status !== 'pending')
       return {
         status,
         publicValue: own?.originalValue,
-        receivedValue: received?.deliveredValue ?? undefined,
+        deliveredValue: delivered?.deliveredValue ?? undefined,
+        receivedValue: delivered?.status === 'processed' ? (delivered.deliveredValue ?? undefined) : undefined,
       }
     }
+    // Wiadomość do uczestnika jest dostarczona w kolejce (queued), przyjęta po ACK (processed).
+    const incoming = messages.find((m) => m.recipient === role && m.status !== 'intercepted')
     return {
       status,
       publicValue: messages.find((m) => m.sender === role)?.public_value,
-      receivedValue: messages.find((m) => m.recipient === role && m.status === 'processed')
-        ?.public_value,
+      deliveredValue: incoming?.public_value,
+      receivedValue: incoming?.status === 'processed' ? incoming.public_value : undefined,
     }
   }
 
@@ -613,6 +678,8 @@ function toDhSession(body: unknown): DhSession {
     diagnosticsEnabled: raw.diagnostics_enabled,
     failureCode: raw.failure_code as string | null,
     mode: raw.mode,
+    scenario,
+    authentication,
     p: raw.prime,
     g: raw.generator,
     status: raw.status,
@@ -620,6 +687,90 @@ function toDhSession(body: unknown): DhSession {
     mallory: mitm ? mallory() : null,
     events: [...events].sort((x, y) => x.seq - y.seq),
   }
+}
+
+const TRANSCRIPT_HASH = /^[0-9a-f]{64}$/
+
+// Stan uwierzytelnienia (#104), sprawdzany według backend/AUTHENTICATED_DH.md:
+// najwyżej po jednym kluczu, podpisie i weryfikacji na uczestnika, wszystkie z tej
+// samej sesji. RSA + DH musi go mieć; zwykła wymiana – pusty albo brak pola
+// (backend sprzed #104).
+function toAuthentication(
+  body: unknown,
+  scenario: DhScenario,
+  sessionId: string,
+  epoch: string,
+): DhAuthentication {
+  const result: DhAuthentication = { keys: {}, signatures: {}, verifications: {} }
+  if (body === undefined) {
+    if (scenario === 'authenticated') throw unexpectedFormat()
+    return result
+  }
+  const raw = body as Record<string, unknown> | null
+  if (
+    !raw || raw.session_id !== sessionId || raw.backend_epoch !== epoch ||
+    !Array.isArray(raw.trusted_keys) || raw.trusted_keys.length > 2 ||
+    !Array.isArray(raw.signatures) || raw.signatures.length > 2 ||
+    !Array.isArray(raw.verifications) || raw.verifications.length > 2
+  ) {
+    throw unexpectedFormat()
+  }
+  // Każdy rekord należy do tej sesji, a jedna rola ma najwyżej jeden rekord danego typu.
+  function owned(item: unknown, roleField: string, into: Partial<Record<Role, unknown>>) {
+    const record = item as Record<string, unknown> | null
+    const role = record?.[roleField]
+    if (!record || record.session_id !== sessionId || record.backend_epoch !== epoch ||
+        !isOneOf(ROLES, role) || into[role] !== undefined) {
+      throw unexpectedFormat()
+    }
+    return { record, role }
+  }
+  if (scenario === 'classic' &&
+      (raw.trusted_keys.length > 0 || raw.signatures.length > 0 || raw.verifications.length > 0)) {
+    throw unexpectedFormat()
+  }
+  // Klucz: 255 < n ≤ 2^32 − 1 i 1 < e < n.
+  for (const item of raw.trusted_keys) {
+    const { record, role } = owned(item, 'owner', result.keys)
+    const { modulus, public_exponent: exponent } = record
+    if (!uint32(modulus) || modulus <= 255 || !uint32(exponent) || exponent <= 1 || exponent >= modulus) {
+      throw unexpectedFormat()
+    }
+    result.keys[role] = { modulus, publicExponent: exponent }
+  }
+  // Podpis wymaga obu kluczy i jest mniejszy od modułu klucza podpisującego.
+  const bothKeys = result.keys.alice !== undefined && result.keys.bob !== undefined
+  for (const item of raw.signatures) {
+    const { record, role } = owned(item, 'signer', result.signatures)
+    const key = result.keys[role]
+    if (!bothKeys || !key ||
+        typeof record.transcript_hash !== 'string' || !TRANSCRIPT_HASH.test(record.transcript_hash) ||
+        !uint32(record.signature) || record.signature >= key.modulus) {
+      throw unexpectedFormat()
+    }
+    result.signatures[role] = { transcriptHash: record.transcript_hash, signature: record.signature }
+  }
+  // Weryfikacja wymaga obu podpisów; opublikowany skrót to skrót z podpisu partnera,
+  // a verified=true wymaga zgodności pełnych skrótów.
+  const bothSignatures = result.signatures.alice !== undefined && result.signatures.bob !== undefined
+  for (const item of raw.verifications) {
+    const { record, role } = owned(item, 'verifier', result.verifications)
+    if (!bothSignatures || !isOneOf(ROLES, record.signer) || record.signer === role ||
+        typeof record.verified !== 'boolean' ||
+        typeof record.transcript_hash !== 'string' || !TRANSCRIPT_HASH.test(record.transcript_hash) ||
+        typeof record.published_transcript_hash !== 'string' ||
+        record.published_transcript_hash !== result.signatures[record.signer]?.transcriptHash ||
+        (record.verified && record.transcript_hash !== record.published_transcript_hash)) {
+      throw unexpectedFormat()
+    }
+    result.verifications[role] = {
+      signer: record.signer,
+      verified: record.verified,
+      transcriptHash: record.transcript_hash,
+      publishedTranscriptHash: record.published_transcript_hash,
+    }
+  }
+  return result
 }
 
 // Wysyła żądanie (z JSON-em, jeśli jest treść) i zwraca treść odpowiedzi;
