@@ -625,6 +625,7 @@ function DhExchangeView({ scenario }: { scenario: DhScenario }) {
               mode={shownMode}
               node={session?.nodes.alice}
               nodes={nodes}
+              completed={session?.status === 'completed'}
               rejected={session ? signatureRejected(session) : false}
             />
 
@@ -647,6 +648,7 @@ function DhExchangeView({ scenario }: { scenario: DhScenario }) {
               mode={shownMode}
               node={session?.nodes.bob}
               nodes={nodes}
+              completed={session?.status === 'completed'}
               rejected={session ? signatureRejected(session) : false}
             />
           </div>
@@ -885,19 +887,31 @@ type NodePanelProps = {
   // Stan uczestnika w sesji; bez sesji undefined.
   node: DhNode | undefined
   nodes: NodesState
+  // Sesja zakończona – w RSA + DH dopiero wtedy K jest zaakceptowane.
+  completed?: boolean
   // RSA + DH: weryfikacja podpisu się nie powiodła, więc K nie zostało zaakceptowane.
   rejected?: boolean
 }
 
-function NodePanel({ role, mode, node, nodes, rejected = false }: NodePanelProps) {
-  const { id } = useScenario()
+function NodePanel({ role, mode, node, nodes, completed = false, rejected = false }: NodePanelProps) {
+  const { id, authenticated } = useScenario()
   const { name, nameOf, priv, pub, fake, other } = ROLES[role]
   const status = nodeBadge(role, node, nodes)
   // W MITM ofiara dostaje wartość Mallory, choć myśli, że to wartość partnera.
   const received = mode === 'mitm' ? fake : ROLES[other].pub
   const titleId = id(`dh-${role}-title`)
-  // W RSA + DH węzeł po weryfikacji podpisu ma status verified zamiast received.
-  const computed = node?.status === 'received' || node?.status === 'verified'
+  // Wartość dostarczona do węzła, ale jeszcze nieprzyjęta (bez ACK): w RSA + DH węzeł
+  // przyjmuje ją dopiero po pozytywnej weryfikacji podpisu partnera.
+  const pendingNote =
+    node?.deliveredValue !== undefined && node.receivedValue === undefined
+      ? rejected
+        ? 'dostarczona, nieprzyjęta – podpis partnera się nie zgadza'
+        : authenticated
+          ? node.status === 'verified'
+            ? 'dostarczona, podpis zweryfikowany – czeka na potwierdzenie'
+            : 'dostarczona, czeka na weryfikację podpisu partnera'
+          : 'dostarczona, czeka na przetworzenie'
+      : undefined
 
   return (
     <section className={`dh-party dh-party--${role}`} aria-labelledby={titleId}>
@@ -917,7 +931,8 @@ function NodePanel({ role, mode, node, nodes, rejected = false }: NodePanelProps
       <DhValue
         kind="public"
         label={mode === 'mitm' ? `Otrzymana „od ${ROLES[other].nameOf}”` : 'Otrzymana wartość'}
-        value={node?.receivedValue}
+        value={node?.receivedValue ?? node?.deliveredValue}
+        note={pendingNote}
       >
         {received}
       </DhValue>
@@ -925,11 +940,22 @@ function NodePanel({ role, mode, node, nodes, rejected = false }: NodePanelProps
       {/* Bez diagnostyki K zostaje w procesie: po przetworzeniu wartości partnera
           wiemy tylko, że węzeł je obliczył, więc zamiast „?” mówimy to wprost.
           Gdy diagnostyka przyjdzie (także po zakończeniu sesji), pokazujemy liczbę. */}
+      {/* RSA + DH: status verified nie oznacza jeszcze K ani ACK – zaakceptowane K
+          pokazujemy dopiero po zakończeniu sesji. */}
       {rejected ? (
         <DhValue kind="private" label="Wspólny sekret" withValue={false}>
           <span className="formula">K</span> – niezaakceptowany: podpis partnera się nie zgadza
         </DhValue>
-      ) : computed && node?.sharedKey === undefined ? (
+      ) : authenticated && !completed && node !== undefined ? (
+        <DhValue kind="private" label="Wspólny sekret" withValue={false}>
+          <span className="formula">K</span> – zostanie zaakceptowany po weryfikacji obu podpisów
+          i zakończeniu sesji
+        </DhValue>
+      ) : authenticated && completed && node?.sharedKey === undefined ? (
+        <DhValue kind="private" label="Wspólny sekret" withValue={false}>
+          <span className="formula">K</span> – zaakceptowany, zna go tylko proces {nameOf}
+        </DhValue>
+      ) : !authenticated && node?.status === 'received' && node.sharedKey === undefined ? (
         <DhValue kind="private" label="Wspólny sekret" withValue={false}>
           <span className="formula">K</span> – obliczony, zna go tylko proces {nameOf}
         </DhValue>
@@ -1218,11 +1244,13 @@ type DhValueProps = {
   value?: number
   // false: pole bez wartości liczbowej (klucz prywatny).
   withValue?: boolean
+  // Krótki dopisek pod wartością, np. że jest dostarczona, ale nieprzyjęta.
+  note?: string
   children: ReactNode
 }
 
 // Jedna wartość z oznaczeniem, czy jest tajna, czy jawna.
-function DhValue({ kind, label, value, withValue = true, children }: DhValueProps) {
+function DhValue({ kind, label, value, withValue = true, note, children }: DhValueProps) {
   const pending = withValue && value === undefined
   return (
     <div className={`dh-value dh-value--${kind}${pending ? ' dh-value--pending' : ''}`}>
@@ -1239,6 +1267,7 @@ function DhValue({ kind, label, value, withValue = true, children }: DhValueProp
           </>
         )}
       </p>
+      {note && <p className="hint">{note}</p>}
     </div>
   )
 }
@@ -1246,7 +1275,9 @@ function DhValue({ kind, label, value, withValue = true, children }: DhValueProp
 // Porównanie sekretów obu stron. Pokazujemy dopiero, gdy oba węzły zgłosiły K
 // w diagnostyce (węzły uruchomione z --allow-diagnostics).
 function SessionResult({ session }: { session: DhSession }) {
-  const { id } = useScenario()
+  const { id, authenticated } = useScenario()
+  // RSA + DH: K jest zaakceptowane dopiero po zakończeniu sesji.
+  if (authenticated && session.status !== 'completed') return null
   const kA = session.nodes.alice.sharedKey
   const kB = session.nodes.bob.sharedKey
   if (kA === undefined || kB === undefined) return null
@@ -1327,8 +1358,9 @@ const COMPARE_ROWS: {
 }[] = [
   { label: 'A – wysłała Alice', value: (s) => s.nodes.alice.publicValue },
   { label: 'B – wysłał Bob', value: (s) => s.nodes.bob.publicValue },
-  { label: 'Alice otrzymała', value: (s) => s.nodes.alice.receivedValue },
-  { label: 'Bob otrzymał', value: (s) => s.nodes.bob.receivedValue },
+  // Dostarczona wystarczy: w RSA + DH po odrzuceniu podpisu wartość nie zostaje przyjęta.
+  { label: 'Alice otrzymała', value: (s) => s.nodes.alice.receivedValue ?? s.nodes.alice.deliveredValue },
+  { label: 'Bob otrzymał', value: (s) => s.nodes.bob.receivedValue ?? s.nodes.bob.deliveredValue },
   {
     label: (
       <>

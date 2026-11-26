@@ -247,9 +247,14 @@ export type DhInterception = {
 }
 
 // Stan jednego uczestnika. Brak wartości = jeszcze jej nie ma.
+// deliveredValue: wartość dostarczona do kolejki węzła (w MITM – podmiana Mallory);
+// receivedValue: ta sama wartość po przyjęciu, czyli po ACK węzła. W RSA + DH węzeł
+// potwierdza dopiero po pozytywnej weryfikacji podpisu, więc po odrzuceniu wartość
+// zostaje dostarczona, ale nieprzyjęta.
 export type DhNode = {
   status: ParticipantStatus
   publicValue?: number
+  deliveredValue?: number
   receivedValue?: number
   // K z diagnostyki węzła (fetchDhDiagnostics); nie jest częścią wiadomości protokołu.
   sharedKey?: number
@@ -474,7 +479,12 @@ const ROLES: readonly Role[] = ['alice', 'bob']
 const NODE_ROLES: readonly NodeRole[] = ['alice', 'bob', 'mallory']
 const MODES: readonly DhMode[] = ['normal', 'mitm']
 const SESSION_STATUSES: readonly SessionStatus[] = ['created', 'running', 'completed', 'cancelled', 'expired', 'failed']
-const PARTICIPANT_STATUSES: readonly ParticipantStatus[] = ['waiting', 'published', 'received', 'verified']
+// Postęp uczestnika zależy od scenariusza: received jest tylko w zwykłej wymianie,
+// verified tylko w RSA + DH (backend/AUTHENTICATED_DH.md).
+const PARTICIPANT_STATUSES: Record<DhScenario, readonly ParticipantStatus[]> = {
+  classic: ['waiting', 'published', 'received'],
+  authenticated: ['waiting', 'published', 'verified'],
+}
 const SCENARIOS: readonly DhScenario[] = ['classic', 'authenticated']
 const MESSAGE_STATUSES: readonly MessageStatus[] = ['intercepted', 'queued', 'processed']
 const INTERCEPTION_STATUSES: readonly InterceptionStatus[] = ['pending', 'forwarded', 'processed']
@@ -534,7 +544,7 @@ function toDhSession(body: unknown): DhSession {
     !uint32(raw.generator) ||
     !isOneOf(SESSION_STATUSES, raw.status) ||
     !participants ||
-    !ROLES.every((role) => isOneOf(PARTICIPANT_STATUSES, participants[role])) ||
+    !ROLES.every((role) => isOneOf(PARTICIPANT_STATUSES[scenario as DhScenario], participants[role])) ||
     !Array.isArray(raw.messages) || raw.messages.length > 2 ||
     !Array.isArray(raw.events) || raw.events.length > 32 ||
     !Array.isArray(rawInterceptions) || rawInterceptions.length > 2
@@ -614,7 +624,7 @@ function toDhSession(body: unknown): DhSession {
     }
   })
 
-  const authentication = toAuthentication(raw.authentication, raw.session_id, raw.backend_epoch)
+  const authentication = toAuthentication(raw.authentication, scenario, raw.session_id, raw.backend_epoch)
 
   const mitm = raw.mode === 'mitm'
 
@@ -627,18 +637,22 @@ function toDhSession(body: unknown): DhSession {
     const status = participants![role] as ParticipantStatus
     if (mitm) {
       const own = interceptions.find((i) => i.originalSender === role)
-      const received = interceptions.find((i) => i.recipient === role && i.status === 'processed')
+      // Podmiana jest dostarczona od forwarded, przyjęta dopiero po ACK (processed).
+      const delivered = interceptions.find((i) => i.recipient === role && i.status !== 'pending')
       return {
         status,
         publicValue: own?.originalValue,
-        receivedValue: received?.deliveredValue ?? undefined,
+        deliveredValue: delivered?.deliveredValue ?? undefined,
+        receivedValue: delivered?.status === 'processed' ? (delivered.deliveredValue ?? undefined) : undefined,
       }
     }
+    // Wiadomość do uczestnika jest dostarczona w kolejce (queued), przyjęta po ACK (processed).
+    const incoming = messages.find((m) => m.recipient === role && m.status !== 'intercepted')
     return {
       status,
       publicValue: messages.find((m) => m.sender === role)?.public_value,
-      receivedValue: messages.find((m) => m.recipient === role && m.status === 'processed')
-        ?.public_value,
+      deliveredValue: incoming?.public_value,
+      receivedValue: incoming?.status === 'processed' ? incoming.public_value : undefined,
     }
   }
 
@@ -677,11 +691,21 @@ function toDhSession(body: unknown): DhSession {
 
 const TRANSCRIPT_HASH = /^[0-9a-f]{64}$/
 
-// Stan uwierzytelnienia (#104): najwyżej po jednym kluczu, podpisie i weryfikacji na
-// uczestnika, wszystkie z tej samej sesji. Brak pola (backend sprzed #104) = pusto.
-function toAuthentication(body: unknown, sessionId: string, epoch: string): DhAuthentication {
+// Stan uwierzytelnienia (#104), sprawdzany według backend/AUTHENTICATED_DH.md:
+// najwyżej po jednym kluczu, podpisie i weryfikacji na uczestnika, wszystkie z tej
+// samej sesji. RSA + DH musi go mieć; zwykła wymiana – pusty albo brak pola
+// (backend sprzed #104).
+function toAuthentication(
+  body: unknown,
+  scenario: DhScenario,
+  sessionId: string,
+  epoch: string,
+): DhAuthentication {
   const result: DhAuthentication = { keys: {}, signatures: {}, verifications: {} }
-  if (body === undefined) return result
+  if (body === undefined) {
+    if (scenario === 'authenticated') throw unexpectedFormat()
+    return result
+  }
   const raw = body as Record<string, unknown> | null
   if (
     !raw || raw.session_id !== sessionId || raw.backend_epoch !== epoch ||
@@ -701,26 +725,42 @@ function toAuthentication(body: unknown, sessionId: string, epoch: string): DhAu
     }
     return { record, role }
   }
+  if (scenario === 'classic' &&
+      (raw.trusted_keys.length > 0 || raw.signatures.length > 0 || raw.verifications.length > 0)) {
+    throw unexpectedFormat()
+  }
+  // Klucz: 255 < n ≤ 2^32 − 1 i 1 < e < n.
   for (const item of raw.trusted_keys) {
     const { record, role } = owned(item, 'owner', result.keys)
-    if (!uint32(record.modulus) || !uint32(record.public_exponent)) throw unexpectedFormat()
-    result.keys[role] = { modulus: record.modulus, publicExponent: record.public_exponent }
+    const { modulus, public_exponent: exponent } = record
+    if (!uint32(modulus) || modulus <= 255 || !uint32(exponent) || exponent <= 1 || exponent >= modulus) {
+      throw unexpectedFormat()
+    }
+    result.keys[role] = { modulus, publicExponent: exponent }
   }
+  // Podpis wymaga obu kluczy i jest mniejszy od modułu klucza podpisującego.
+  const bothKeys = result.keys.alice !== undefined && result.keys.bob !== undefined
   for (const item of raw.signatures) {
     const { record, role } = owned(item, 'signer', result.signatures)
-    if (typeof record.transcript_hash !== 'string' || !TRANSCRIPT_HASH.test(record.transcript_hash) ||
-        !uint32(record.signature)) {
+    const key = result.keys[role]
+    if (!bothKeys || !key ||
+        typeof record.transcript_hash !== 'string' || !TRANSCRIPT_HASH.test(record.transcript_hash) ||
+        !uint32(record.signature) || record.signature >= key.modulus) {
       throw unexpectedFormat()
     }
     result.signatures[role] = { transcriptHash: record.transcript_hash, signature: record.signature }
   }
+  // Weryfikacja wymaga obu podpisów; opublikowany skrót to skrót z podpisu partnera,
+  // a verified=true wymaga zgodności pełnych skrótów.
+  const bothSignatures = result.signatures.alice !== undefined && result.signatures.bob !== undefined
   for (const item of raw.verifications) {
     const { record, role } = owned(item, 'verifier', result.verifications)
-    if (!isOneOf(ROLES, record.signer) || record.signer === role ||
+    if (!bothSignatures || !isOneOf(ROLES, record.signer) || record.signer === role ||
         typeof record.verified !== 'boolean' ||
         typeof record.transcript_hash !== 'string' || !TRANSCRIPT_HASH.test(record.transcript_hash) ||
         typeof record.published_transcript_hash !== 'string' ||
-        !TRANSCRIPT_HASH.test(record.published_transcript_hash)) {
+        record.published_transcript_hash !== result.signatures[record.signer]?.transcriptHash ||
+        (record.verified && record.transcript_hash !== record.published_transcript_hash)) {
       throw unexpectedFormat()
     }
     result.verifications[role] = {
