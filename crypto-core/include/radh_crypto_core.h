@@ -62,6 +62,33 @@ radh_status_t radh_rsa_decrypt_u32(
     uint32_t *message
 );
 
+/* Edukacyjny podpis RSA bez kodowania. Oblicza representative^private_exponent mod modulus.
+ * Kolejność walidacji: signature != NULL, modulus >= 2,
+ * private_exponent > 0, representative < modulus.
+ * RADH_STATUS_OK zapisuje podpis. Błąd nie zmienia *signature.
+ */
+radh_status_t radh_rsa_sign_u32(
+    uint32_t representative,
+    uint32_t private_exponent,
+    uint32_t modulus,
+    uint32_t *signature
+);
+
+/* Porównuje signature^public_exponent mod modulus z representative.
+ * Kolejność walidacji: verified != NULL, modulus >= 2, public_exponent > 0,
+ * representative < modulus, signature < modulus.
+ * RADH_STATUS_OK zapisuje do *verified 1 dla zgodności albo 0 dla niezgodności.
+ * Błąd nie zmienia *verified. Nieprawidłowy zakres reprezentanta lub podpisu
+ * daje RADH_STATUS_INVALID_MESSAGE.
+ */
+radh_status_t radh_rsa_verify_u32(
+    uint32_t representative,
+    uint32_t signature,
+    uint32_t public_exponent,
+    uint32_t modulus,
+    uint32_t *verified
+);
+
 /* Waliduje parametry edukacyjnego DH wymagającego pierwiastka pierwotnego.
  * Najpierw sprawdza pierwszość prime (RADH_STATUS_INVALID_PRIME), potem zakres
  * 2 <= generator < prime i rząd prime - 1 (RADH_STATUS_INVALID_GENERATOR).
