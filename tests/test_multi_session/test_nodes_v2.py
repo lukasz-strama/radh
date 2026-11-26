@@ -15,7 +15,7 @@ SID = '1' * 32
 
 def descriptor(sid=SID, mode='normal', **changes):
     result = dict(session_id=sid, backend_epoch=EPOCH, prime=23, generator=5,
-                  mode=mode, diagnostics_enabled=True, status='running', revision=1,
+                  mode=mode, scenario='classic', diagnostics_enabled=True, status='running', revision=1,
                   expires_at='2030-01-01T00:00:00Z', remaining_ttl_seconds=600,
                   participant_status='waiting', diagnostics_received=False)
     result.update(changes)
@@ -55,11 +55,14 @@ class Coordinator:
             self.diagnostics[(self.role, sid)] = deepcopy(body)
             result = None
         elif path.endswith('/fail'):
-            result = dict(**base, prime=23, generator=5, mode='normal',
+            session = next(d for d in self.sessions if d['session_id'] == sid)
+            result = dict(**base, prime=23, generator=5, mode=session['mode'], scenario=session['scenario'],
                           diagnostics_enabled=True, status='failed', failure_code=body['code'],
                           created_at='2030-01-01T00:00:00Z', expires_at='2030-01-01T00:00:00Z',
                           terminal_at='2030-01-01T00:00:01Z', participants={'alice':'waiting','bob':'waiting'},
-                          messages=[], interceptions=[])
+                          messages=[], interceptions=[], authentication=dict(
+                              session_id=sid, backend_epoch=self.epoch,
+                              trusted_keys=[], signatures=[], verifications=[]))
         elif '/interceptions' in path:
             def item(sender):
                 mid = sender + '-public'

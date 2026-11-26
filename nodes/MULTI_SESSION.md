@@ -1,16 +1,17 @@
-# Wielosesyjne procesy DH — #68
+# Wielosesyjne procesy DH
 
-Źródło prawdy: [kontrakt #73](../docs/architecture/multi-session.md).
-Ta implementacja jest klientem przyszłego koordynatora #69. Nie dodaje serwera,
-nie zmienia v1, Compose, CryptoCore ani frontendu. Weryfikacja z mockiem nie
-stanowi pełnego end-to-end z backendem Daniela ani testów systemowych #71.
+Procesy łączą się z koordynatorem v2 przez istniejący transport HTTP.
+Scenariusze `classic` i `authenticated` korzystają z tych samych procesów,
+puli zadań i mechanizmów izolacji. [Kontrakt wielosesyjny](../docs/architecture/multi-session.md) ·
+[Kontrakt podpisanego DH](../backend/AUTHENTICATED_DH.md)
 
 ## Architektura i synchronizacja
 
 Jeden proces każdej roli, wewnątrz niego `MultiSessionTransport`:
 
 - `internal_models.py`: ścisłe modele discovery, wiadomości, przechwyceń,
-  heartbeat i odpowiedzi fail; dodatkowe pola i niewłaściwe typy są odrzucane.
+  heartbeat, uwierzytelniania i odpowiedzi fail. Dodatkowe pola i niewłaściwe
+  typy są odrzucane.
 - `internal_http.py`: synchroniczny klient HTTP(S), bez redirectów i proxy z env.
   Maks. 4 operacje HTTP, connect 3 s, całe żądanie 5 s, body 4096 B,
   odczyt odpowiedzi maks. 131072 B przed JSON. Ograniczony do liczby żądań timer
@@ -36,7 +37,7 @@ Metadane odmowy/terminalizacji pozostają ograniczone pełnym snapshotem (128),
 aby nie regenerować agentów po błędzie. NODE_CAPACITY wysyłany jest przez /fail;
 nie nadpisuje istniejącego agenta. Nie ma rosnącego used_ids.
 
-## Uruchomienie dopiero z #69
+## Uruchomienie
 
 Zbuduj C zgodnie z README i zainstaluj `backend/requirements.txt` (Pydantic).
 Operator generuje oddzielny losowy token 256-bitowy base64url dla każdej roli,
@@ -96,43 +97,53 @@ To zachowanie zachowawcze; nadzorca może uruchomić proces z nowym instance_id.
 Zniknięcie ze snapshotu usuwa wpis; cancelled/expired/failed usuwa agenta.
 Lokalny deadline bieżącej sesji nie jest wydłużany odczytem. Completed nie
 uruchamia nowego agenta. Istniejący agent pozostaje na diagnostykę maks. 30 s
-od pierwszej obserwacji completed, bez przedłużania okna kolejnym discovery;
-przy braku opt-in / potwierdzonym raporcie jest usuwany od razu.
+od pierwszej obserwacji completed, w granicach okna koordynatora raportowanego
+w discovery. Przy braku opt-in lub potwierdzonym raporcie jest usuwany od razu.
 
-## Uzgodnienie i wspólna integracja z Danielem
+## Przebieg scenariusza uwierzytelnionego
 
-1. Potwierdzić dokładne modele i nagłówki internal z multi-session.md. W #69
-   Discovery jest pełnym, maks. 128-elementowym snapshotem przypisań instancji,
-   nie stroną/paginacją i nie listą globalnie widoczną wszystkim rolom.
-2. Koordynator musi przypinać instance_id przy starcie, odrzucać stare epoch
-   i instancje, kończyć sesje po utracie lease oraz nie przypisywać starych
-   running do nowego procesu. Sam klient nie może dowieść, że świeży deskryptor
-   po restarcie dotyczy sekretów utraconej instancji.
-3. Zapewnić idempotentny POST messages/ACK/forward/diagnostics i /fail, oraz
-   participant_status=received po ACK, także przy utracie jego odpowiedzi.
-4. Niejednoznaczność kontraktu: Descriptor nie zawiera terminal_at, więc ścisły
-   czas 30 s od terminalizacji serwera nie jest wyznaczalny. Implementacja
-   ogranicza retencję do 30 s od pierwszej obserwacji. Nie dodano pola API;
-   przed integracją uzgodnić z #69 sposób skrócenia okna o opóźnienie discovery.
-5. Uzgodnić odpowiedź publikacji w MITM po retry już podmienionej wiadomości:
-   obecny Message z v1 może zawierać wartość doręczoną. Klient nie porównuje
-   jej z oryginalną A/B w MITM; forward jest weryfikowany z oryginałem osobno.
-6. Po scaleniu #69 połączyć rzeczywiste trzy procesy z API, wykonać równoległe
-   normal/MITM, test restartów/fencing/obcych ról i pełną macierz #71. Dopiero
-   wspólnie z #70 przełączyć uruchomienie/Compose na v2. Bez fallbacku do v1.
+Przy `scenario=authenticated` Alice i Bob generują osobne klucze RSA i DH dla
+każdej sesji. Najpierw publikują `n,e`, potem własną wartość DH.
+W kolejnych iteracjach odczytują zaufane klucze oraz faktycznie doręczoną
+wartość partnera. Wartość czeka w lokalnym stanie do zakończenia weryfikacji.
+Węzeł podpisuje reprezentant lokalnego transkryptu przez CryptoCore, zapisuje
+podpis do ponowień i zwalnia prywatny wykładnik RSA.
 
-## Testy komponentowe
+Po otrzymaniu podpisu partnera węzeł buduje transkrypt dla jego roli z
+własnego widoku DH. Weryfikacja wymaga poprawnego podpisu RSA i zgodności
+pełnych skrótów SHA-256, również gdy same reprezentanty są identyczne.
+Po negatywnym raporcie koordynator oznacza sesję jako
+`SIGNATURE_VERIFICATION_FAILED`, a węzły zwalniają stan bez obliczania K
+na podstawie odrzuconej wartości. Po zaakceptowaniu pozytywnego raportu
+węzeł oblicza K i wysyła ACK. Odpowiedź discovery z `verified` potwierdza
+raport weryfikacji. Powtórzenie ACK używa zachowanego identyfikatora
+wiadomości, nawet po globalnym `completed`.
+
+Brak danych partnera kończy bieżącą iterację. Odpowiedź
+`PUBLIC_VALUES_REQUIRED` po próbie publikacji podpisu podlega ograniczonemu
+retry, gdy jeszcze trwa doręczanie wartości DH. Powtórzenia wysyłają
+identyczne klucze, podpisy i raporty. Mallory przetwarza dotychczasowe
+przechwycenia DH. W scenariuszu podpisanym diagnostyka każdej roli jest
+dozwolona dopiero po `completed` i podwójnym opt-in.
+
+Zaufanie do publicznych kluczy przekazywanych przez koordynator jest założeniem
+demonstracji. Dostęp do API nadal opiera się na tokenach. Edukacyjne podpisy
+RSA służą wyłącznie transkryptowi DH.
+
+## Testy komponentowe i procesowe
 
 ```sh
 cmake -S crypto-core -B crypto-core/build
 cmake --build crypto-core/build
 ctest --test-dir crypto-core/build --output-on-failure
 python -m pytest tests/test_multi_session -v
-python -m pytest tests/test_dh_nodes/test_nodes.py tests/tests_mitm/test_mallory_nodes.py -v
+python -m pytest tests/test_dh_nodes/test_nodes.py tests/test_dh_nodes/test_secret_range.py tests/tests_mitm/test_mallory_nodes.py -v
+python -m pytest tests/test_multi_session_live/test_ms_authenticated.py -v
 python -m pytest
 ```
 
-Testowy koordynator jest w test_nodes_v2.py, granica HTTP w test_internal_http.py.
+Testy komponentowe sprawdzają klienta i rzeczywiste CryptoCore bez sieci.
+Testy procesowe uruchamiają Uvicorn i trzy węzły, wymagają więc lokalnych gniazd TCP.
 To kontrolowane mocki, bez socketów. Wektory DH i MITM wylicza rzeczywisty C;
 transportowe odpowiedzi mocka nie wpisują kluczy do agentów. Nie dowodzi to
 jeszcze współpracy HTTP z niezaimplementowanym #69.

@@ -10,7 +10,9 @@ from pydantic import ValidationError
 
 from app.coordinator import Coordinator
 from app.coordinator_limits import CoordinatorError, Settings
-from app.multi_models import Create, Publish, Report, MalloryReport
+from app.multi_models import (
+    Create, MalloryReport, Publish, Report, SignatureRequest, TrustedKeyRequest, VerificationRequest,
+)
 
 
 class Clock:
@@ -30,9 +32,9 @@ def system():
     return Coordinator(clock=clock, utc=clock.utc), clock
 
 
-def create(c, mode="normal", diagnostics=True, key=None, ip="127.0.0.1"):
+def create(c, mode="normal", diagnostics=True, key=None, ip="127.0.0.1", scenario="classic"):
     return c.create(Create(prime=23, generator=5, mode=mode,
-                           diagnostics_enabled=diagnostics),
+                           scenario=scenario, diagnostics_enabled=diagnostics),
                     key or secrets.token_urlsafe(32), c.epoch, ip)
 
 
@@ -66,6 +68,106 @@ def error(code, fn, *args, status=None):
     if status:
         assert caught.value.status == status
     return caught.value
+
+
+def test_authenticated_transitions_require_two_signatures_verifications_and_acks(system):
+    c, _ = system
+    instances = register(c)
+    owned = create(c, scenario="authenticated")
+    sid, token = owned.session.session_id, owned.session_token
+    start(c, owned)
+
+    def call(role, method, *args):
+        return node(c, owned, instances, role, method, *args)
+
+    key = TrustedKeyRequest(modulus=3233, public_exponent=17)
+    signature = SignatureRequest(transcript_hash="a" * 64, signature=588)
+    error("TRUSTED_KEY_REQUIRED", publish, c, owned, instances, "alice", 8)
+    assert call("alice", "publish_trusted_key", key) == call("alice", "publish_trusted_key", key)
+    error("TRUSTED_KEY_CONFLICT", call, "alice", "publish_trusted_key",
+          TrustedKeyRequest(modulus=3233, public_exponent=7))
+    error("TRUSTED_KEYS_REQUIRED", call, "alice", "publish_signature", signature)
+    call("bob", "publish_trusted_key", key)
+    error("PUBLIC_VALUES_REQUIRED", call, "alice", "publish_signature", signature)
+    publish(c, owned, instances, "alice", 8)
+    publish(c, owned, instances, "bob", 19)
+    error("VERIFICATION_REQUIRED", call, "alice", "acknowledge", "bob-public")
+    error("INVALID_SIGNATURE", call, "alice", "publish_signature",
+          SignatureRequest(transcript_hash="a" * 64, signature=3233))
+    assert call("alice", "publish_signature", signature) == call("alice", "publish_signature", signature)
+    error("SIGNATURE_CONFLICT", call, "alice", "publish_signature",
+          SignatureRequest(transcript_hash="a" * 64, signature=589))
+    bob_report = VerificationRequest(signer="alice", transcript_hash="a" * 64, verified=True)
+    error("SIGNATURE_REQUIRED", call, "bob", "verify_signature", bob_report)
+    call("bob", "publish_signature", signature)
+    error("ROLE_FORBIDDEN", call, "alice", "verify_signature", bob_report)
+    error("TRANSCRIPT_MISMATCH", call, "bob", "verify_signature",
+          bob_report.model_copy(update={"transcript_hash": "b" * 64}))
+    assert call("bob", "verify_signature", bob_report) == call("bob", "verify_signature", bob_report)
+    error("VERIFICATION_CONFLICT", call, "bob", "verify_signature",
+          bob_report.model_copy(update={"verified": False}))
+    call("bob", "acknowledge", "alice-public")
+    call("alice", "verify_signature", bob_report.model_copy(update={"signer": "bob"}))
+    view = c.get(sid, token)
+    assert view.status == "running" and view.participants.alice == view.participants.bob == "verified"
+    error("VERIFICATION_REQUIRED", call, "alice", "report", Report(shared_secret=2))
+    assert call("alice", "acknowledge", "bob-public") == call("alice", "acknowledge", "bob-public")
+    assert c.get(sid, token).status == "completed"
+    call("alice", "report", Report(shared_secret=2))
+    assert c.diagnostics(sid, token).alice == 2
+    counts = [event.type for event in c.events(sid, token).events]
+    for event in ("trusted_key_published", "signature_published", "signature_verified", "message_processed"):
+        assert counts.count(event) == 2
+    assert counts.count("session_completed") == 1
+
+
+def test_failed_authentication_is_idempotent_and_diagnostics_cannot_reappear(system):
+    c, _ = system
+    instances = register(c)
+    owned = create(c, "mitm", scenario="authenticated")
+    sid, token = owned.session.session_id, owned.session_token
+    start(c, owned)
+
+    def call(role, method, *args):
+        return node(c, owned, instances, role, method, *args)
+
+    key = TrustedKeyRequest(modulus=3233, public_exponent=17)
+    signature = SignatureRequest(transcript_hash="a" * 64, signature=588)
+    report = VerificationRequest(signer="bob", transcript_hash="b" * 64, verified=False)
+    for method, args in (("authentication", ()), ("publish_trusted_key", (key,)),
+                         ("publish_signature", (signature,)), ("verify_signature", (report,))):
+        error("ROLE_FORBIDDEN", call, "mallory", method, *args, status=403)
+    for role, value in (("alice", 8), ("bob", 19)):
+        call(role, "publish_trusted_key", key)
+        publish(c, owned, instances, role, value)
+    call("mallory", "forward", "alice-public", 22)
+    call("mallory", "forward", "bob-public", 17)
+    for role in ("alice", "bob"):
+        call(role, "publish_signature", signature)
+    k = MalloryReport(shared_with_alice=12, shared_with_bob=22)
+    error("VERIFICATION_REQUIRED", call, "mallory", "report", k)
+    assert call("alice", "verify_signature", report) == call("alice", "verify_signature", report)
+    assert c.get(sid, token).failure_code == "SIGNATURE_VERIFICATION_FAILED"
+    error("INVALID_SESSION_STATE", call, "alice", "acknowledge", "bob-public")
+    error("INVALID_SESSION_STATE", call, "alice", "report", Report(shared_secret=2))
+    error("INVALID_SESSION_STATE", call, "mallory", "report", k)
+    assert c.diagnostics(sid, token).alice is None
+    assert c.diagnostics(sid, token, mallory=True).shared_with_alice is None
+    events = [event.type for event in c.events(sid, token).events]
+    assert events.count("signature_rejected") == events.count("session_failed") == 1
+
+
+def test_authenticated_events_keep_a_terminal_slot():
+    c = Coordinator(Settings(max_events=4))
+    instances = register(c)
+    owned = create(c, scenario="authenticated")
+    start(c, owned)
+    key = TrustedKeyRequest(modulus=3233, public_exponent=17)
+    node(c, owned, instances, "alice", "publish_trusted_key", key)
+    error("EVENT_LIMIT_REACHED", node, c, owned, instances, "bob", "publish_trusted_key", key)
+    result = c.transition(owned.session.session_id, owned.session_token, "cancel")
+    assert result.status == "cancelled"
+    assert len(c.events(owned.session.session_id, owned.session_token).events) == 4
 
 
 @pytest.mark.parametrize("field", ["prime", "generator", "diagnostics_enabled"])

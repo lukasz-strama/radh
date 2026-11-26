@@ -13,7 +13,7 @@ class DeterministicDhNode(DhNode):
         super().__init__(participant, core)
         self._test_secret = secret
 
-    def _new_secret(self) -> int:
+    def _new_secret(self, prime: int) -> int:
         return self._test_secret
 
 

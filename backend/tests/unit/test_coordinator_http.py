@@ -34,6 +34,22 @@ def test_owner_and_role_credentials_cannot_be_interchanged():
         assert result.headers == {"WWW-Authenticate": "Bearer"}
 
 
+@pytest.mark.parametrize(("method", "suffix"), [
+    ("GET", "authentication"), ("POST", "trusted-keys"), ("POST", "signatures"),
+    ("POST", "verifications"),
+])
+def test_owner_credential_cannot_access_authentication_routes(method, suffix):
+    token = secrets.token_urlsafe(32)
+    rt = Runtime(role_hashes={"alice": digest(token)})
+    owned = create(rt.coordinator, scenario="authenticated")
+    path = f"/internal/v1/dh/sessions/{owned.session.session_id}/{suffix}"
+    headers = [(b"authorization", ("Bearer " + owned.session_token).encode("ascii"))]
+    sent, calls = asyncio.run(call_middleware(rt, scope(path, method, headers), []))
+    assert sent[0]["status"] == 401
+    assert json.loads(sent[-1]["body"])["error"]["code"] == "UNAUTHORIZED"
+    assert not calls
+
+
 def test_role_files_are_bounded_validated_and_distinct(tmp_path, monkeypatch):
     for role in ("ALICE", "BOB", "MALLORY"):
         monkeypatch.delenv("RADH_" + role + "_TOKEN_FILE", raising=False)

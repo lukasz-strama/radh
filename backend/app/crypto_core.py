@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import os
 import sys
+from collections.abc import Callable
 from enum import IntEnum
 from pathlib import Path
 
@@ -217,6 +218,13 @@ class CryptoCore:
             decrypt.restype = ctypes.c_int
         self._decrypt = decrypt
 
+        self._sign = getattr(library, "radh_rsa_sign_u32", None)
+        self._verify = getattr(library, "radh_rsa_verify_u32", None)
+        for function, inputs in ((self._sign, 3), (self._verify, 4)):
+            if function is not None:
+                function.argtypes = [ctypes.c_uint32] * inputs + [ctypes.POINTER(ctypes.c_uint32)]
+                function.restype = ctypes.c_int
+
         try:
             exchange = library.radh_dh_exchange_u32
         except AttributeError as exc:
@@ -334,6 +342,40 @@ class CryptoCore:
             CryptoCoreStatus.INVALID_EXPONENT,
         })
         return message.value
+
+    @staticmethod
+    def _signature_operation(function: Callable[..., int] | None, symbol: str, **inputs: int) -> int:
+        for name, value in inputs.items():
+            _require_uint32(name, value)
+        if function is None:
+            raise CryptoCoreLoadError(f"Biblioteka CryptoCore nie eksportuje funkcji {symbol}.")
+        output = ctypes.c_uint32()
+        status = function(*inputs.values(), ctypes.byref(output))
+        CryptoCore._check_status(status, {
+            CryptoCoreStatus.INVALID_MODULUS,
+            CryptoCoreStatus.INVALID_EXPONENT,
+            CryptoCoreStatus.INVALID_MESSAGE,
+        })
+        return output.value
+
+    def sign(self, representative: int, private_exponent: int, modulus: int) -> int:
+        """Podpisz gotowy reprezentant przez CryptoCore."""
+
+        return self._signature_operation(
+            self._sign, "radh_rsa_sign_u32", representative=representative,
+            private_exponent=private_exponent, modulus=modulus,
+        )
+
+    def verify(self, representative: int, signature: int, public_exponent: int, modulus: int) -> bool:
+        """Sprawdź gotowy reprezentant. Niezgodność podpisu daje False."""
+
+        result = self._signature_operation(
+            self._verify, "radh_rsa_verify_u32", representative=representative,
+            signature=signature, public_exponent=public_exponent, modulus=modulus,
+        )
+        if result not in (0, 1):
+            raise CryptoCoreCallError(-1, "INTERNAL_ERROR", "Niepoprawny wynik weryfikacji CryptoCore.")
+        return bool(result)
 
     def generate_rsa_keys(self, p: int, q: int, e: int) -> RsaKeygenResult:
         """Wygeneruj edukacyjną parę kluczy przez CryptoCore."""

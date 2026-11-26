@@ -58,7 +58,7 @@ Właściciel oznacza obszar realizacji, nie zdalne przypisanie issue.
 | T04 | Tampering | Stara odpowiedź HTTP zapisuje dane innej sesji w UI/agencie | Izolacja i interfejs | 4 | 3 | 12 wysokie | ID+epoch+requestId, cancellation, rewalidacja przy commit; osobne instancje per sesja | #68/#70 | częściowo: requestId w UI i kontrola ID w DhNode; blokuje |
 | T05 | Tampering | Modyfikacja zależności lub obrazu w łańcuchu dostaw | Kod runtime, host | 3 | 5 | 15 wysokie | npm ci, snapshot pip, digesty, hashe artefaktów, SBOM i przegląd aktualizacji, brak sekretów builda | Operator + QA | częściowo: npm lock; reszta gate |
 | R01 | Repudiation | Brak śladu kto anulował/zapisał/podmienił | Rozliczalność incydentu | 4 | 3 | 12 wysokie | Oddzielne operacyjne logi roli/operacji/request_id i pseudonimu sesji, retencja 7 dni; auth | #69 + operator | częściowo: log edukacyjny istnieje, nie dowodzi tożsamości; blokuje |
-| R02 | Repudiation | Użytkownik traktuje completed jako dowód zgodności kluczy | Rzetelność demonstracji | 3 | 2 | 6 średnie | UI i dokumentacja: completed=2 ACK; K są deklaracją procesów, nie dowodem serwera | Szymon #70 | istnieje opis v1; utrzymać |
+| R02 | Repudiation | Użytkownik traktuje completed jako dowód zgodności kluczy | Rzetelność demonstracji | 3 | 2 | 6 średnie | Classic: completed=2 ACK; authenticated: dodatkowo 2 pozytywne weryfikacje podpisu. K nadal jest deklaracją procesów, nie dowodem serwera | Szymon #70/#104 | kontrakt backendu istnieje; komunikat UI otwarty |
 | I01 | Information Disclosure | Globalna sesja i publiczne GET ujawniają dane obcych użytkowników | Wiadomości, diagnostyka | 5 | 4 | 20 krytyczne | Wielosesyjny rejestr + token przy każdym GET, v1 router odcięty, no-store | #69/#70 | planowane; blokuje |
 | I02 | Information Disclosure | Prywatne wykładniki/klucze/tokeny w logach, błędach, APM | Sekrety | 3 | 5 | 15 wysokie | Redakcja nagłówków/body/query, brak traceback do klienta, osobne opt-in K, testy wycieku | #68/#69/#71 + operator | częściowo: wyjątki kontrolowane i prywatne wykładniki lokalne; blokuje |
 | I03 | Information Disclosure | Poświadczenia usług w env dump, obrazie, repo lub współdzielonym pliku | Tokeny ról, TLS | 3 | 5 | 15 wysokie | Oddzielne pliki _FILE, poprawne UID/tryby, bez ARG/ENV w buildzie, rotacja i skan sekretów | Operator + #68/#69 | planowane; blokuje |
@@ -76,6 +76,9 @@ Właściciel oznacza obszar realizacji, nie zdalne przypisanie issue.
 | E05 | Elevation of Privilege | Błędne proxy wystawia backend/internal, ufa dowolnemu XFF | Role, limity i host | 4 | 5 | 20 krytyczne | Allowlista tras/metod, prywatny listener, firewall, test zewnętrzny portów, zaufane konkretne proxy | Operator + #69 | częściowo lokalny Compose; publiczne gate |
 | E06 | Elevation of Privilege | Zależność z CVE lub kontener root/docker.sock daje przejęcie hosta | Host i wszystkie sesje | 3 | 5 | 15 wysokie | Skan CVE/SBOM, non-root, cap_drop, no-new-privileges, brak docker.sock/mount kodu | Operator + QA | częściowo Compose #73; bez wykonanego skanu; blokuje |
 | T06 | Tampering | Przyszłe zgłoszenia zawierają HTML/linki/załączniki/webhook SSRF | Moderator, sieć wewnętrzna | 3 | 4 | 12 wysokie | Na start tekst ograniczony do 4 KiB; brak załączników i fetch URL; escaping i auth moderatora | #74 + przyszły właściciel zgłoszeń | planowane; funkcja wyłączona do przeglądu |
+| T07 | Tampering | Podmiana wartości DH lub powtórzenie podpisu z obcej sesji | Integralność uwierzytelnionego DH | 4 | 3 | 12 wysokie | Transkrypt wiąże sesję, epoch, rolę, p/g, lokalne A/B i oba klucze. Każdy ACK wymaga zgodności pełnego SHA-256 i podpisu RSA. Completed wymaga obu ACK. | #101–#103 | zaimplementowane w węzłach i koordynatorze, QA procesowe wymagane |
+| T08 | Tampering | Mallory lub obca rola publikuje klucz, podpis albo wynik weryfikacji ofiary | Zaufane klucze i wynik protokołu | 3 | 4 | 12 wysokie | Rola wynika z Bearer i przypisania instance/epoch. Dostęp Mallory jest ograniczony do podmiany DH. Retry ma kontrolę konfliktu treści. | #102/#103 | zaimplementowane w koordynatorze, QA procesowe wymagane |
+| I08 | Information Disclosure | Prywatny klucz RSA lub zaakceptowany K trafia do widoku/logu po błędzie podpisu | Klucze prywatne i sekret sesji | 3 | 5 | 15 wysokie | Prywatne klucze lokalne. Diagnostyka każdej roli po completed i podwójnym opt-in. Failed czyści diagnostykę i odrzuca jej ponowne zgłoszenie. | #102/#103 | zaimplementowane w węzłach i koordynatorze, QA procesowe wymagane |
 | D06 | Denial of Service | Spam, flooding lub boty w systemie zgłoszeń | Poczta, pamięć, koszty | 4 | 3 | 12 wysokie | Rate limit, limity liczby/retencji zgłoszeń, moderacja; nie łączyć z kolejką protokołu DH | #74 + operator | planowane; nie uruchamiać funkcji bez limitów |
 | I06 | Information Disclosure | Zgłoszenie zawiera dane osobowe lub podatność opublikowaną publicznie | Prywatność i zgłoszenia bezpieczeństwa | 3 | 4 | 12 wysokie | Jasna polityka zbierania/retencji, poufny kanał, ograniczenie dostępu; bez tokenów i danych sesji w formularzu | #74 + operator | planowane; gate kanału poufnego |
 | I07 | Information Disclosure | Ktoś używa 32-bitowych kluczy RADH do realnych danych | Dane poza demonstratorem | 4 | 5 | 20 krytyczne użycie poza przeznaczeniem | Ostrzeżenia w UI/API/docs, brak reklamowania bezpieczeństwa, brak funkcji przechowania prawdziwych danych | PO #74 + Szymon | poza zakresem algorytmów; ostrzeżenia istnieją, utrzymać |
@@ -110,6 +113,12 @@ uprawnienia HTTP muszą nadal uniemożliwiać podszycie się użytkownika pod
 proces Mallory. 32-bitowe A/B pozwalają praktycznie odzyskiwać wykładniki:
 izolacja aplikacji nie zmienia tego w bezpieczną kryptografię produkcyjną.
 Nie wolno używać edukacyjnego RSA do podpisywania tokenów usług lub TLS RADH.
+
+W scenariuszu podpisanym koordynator jest zaufanym źródłem kluczy n/e.
+Model demonstracji zakłada poprawność przypisania klucza do roli i wyklucza
+przejęcie koordynatora lub poświadczeń usług. Węzły sprawdzają pełny SHA-256,
+ponieważ redukcja modulo małe n traci informację i może dać ten sam reprezentant
+dla dwóch różnych transkryptów. Uwierzytelnianie HTTP i TLS działają osobno.
 
 ## Przegląd i źródła
 
