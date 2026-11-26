@@ -2,7 +2,7 @@
 // ataku także Mallory. Frontend niczego nie liczy i nie wymyśla zdarzeń: pokazuje stan
 // sesji z API (#37, #41). Sekrety prywatne nigdy nie przechodzą przez przeglądarkę.
 
-import { useEffect, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { Badge, Button, DataBadge, Notice } from './ui'
 import { useParameterDraw } from './useParameterDraw'
@@ -25,6 +25,7 @@ import type {
   DhMallory,
   DhMode,
   DhNode,
+  DhScenario,
   DhSession,
   DhSessionParams,
   EventType,
@@ -81,11 +82,34 @@ const PARTICIPANT_STATUS: Record<ParticipantStatus, { label: string; tone: Tone 
   waiting: { label: 'oczekuje', tone: 'neutral' },
   published: { label: 'wysłał wartość publiczną', tone: 'neutral' },
   received: { label: 'przetworzył wartość partnera', tone: 'ok' },
+  verified: { label: 'zweryfikował podpis partnera', tone: 'ok' },
 }
 
-const MODE_LABEL: Record<DhMode, string> = {
-  normal: 'Zwykła wymiana',
-  mitm: 'Atak MITM',
+const MODE_LABELS: Record<DhScenario, Record<DhMode, string>> = {
+  classic: { normal: 'Zwykła wymiana', mitm: 'Atak MITM' },
+  authenticated: { normal: 'Podpisana wymiana', mitm: 'Podpisana wymiana + MITM' },
+}
+
+// Ten sam widok obsługuje zakładkę DH i RSA + DH (#104). Scenariusz decyduje o etykietach
+// i identyfikatorach elementów: w zwykłej zakładce zostają jak dotąd, w RSA + DH mają
+// prefiks, bo obie zakładki są naraz w DOM.
+const ScenarioContext = createContext<DhScenario>('classic')
+
+function useScenario() {
+  const scenario = useContext(ScenarioContext)
+  return {
+    scenario,
+    authenticated: scenario === 'authenticated',
+    modeLabel: MODE_LABELS[scenario],
+    id: (name: string) => (scenario === 'classic' ? name : `rsadh-${name}`),
+  }
+}
+
+// Kod błędu sesji uwierzytelnionej po negatywnej weryfikacji podpisu (AUTHENTICATED_DH.md).
+const SIGNATURE_FAILED = 'SIGNATURE_VERIFICATION_FAILED'
+
+function signatureRejected(session: DhSession): boolean {
+  return session.status === 'failed' && session.failureCode === SIGNATURE_FAILED
 }
 
 const SESSION_STATUS: Record<SessionStatus, { label: string; tone: Tone }> = {
@@ -108,6 +132,10 @@ const EVENT_TYPE: Record<EventType, string> = {
   session_cancelled: 'anulowanie sesji',
   session_failed: 'przerwanie sesji',
   session_expired: 'wygaśnięcie sesji',
+  trusted_key_published: 'klucz publiczny RSA',
+  signature_published: 'podpis transkryptu',
+  signature_verified: 'weryfikacja podpisu',
+  signature_rejected: 'weryfikacja podpisu',
 }
 
 const MESSAGE_STATUS: Record<MessageStatus, { label: string; tone: Tone }> = {
@@ -207,7 +235,18 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof ApiError ? error.message : fallback
 }
 
-export function DhExchange() {
+// scenario: 'classic' – zakładka DH, 'authenticated' – zakładka RSA + DH (#104).
+// Każdy scenariusz ma własne poświadczenie sesji, więc zakładki sobie nie przeszkadzają.
+export function DhExchange({ scenario = 'classic' }: { scenario?: DhScenario }) {
+  return (
+    <ScenarioContext value={scenario}>
+      <DhExchangeView scenario={scenario} />
+    </ScenarioContext>
+  )
+}
+
+function DhExchangeView({ scenario }: { scenario: DhScenario }) {
+  const { authenticated, modeLabel, id: sid } = useScenario()
   const [fieldErrors, setFieldErrors] = useState<DhFieldErrors>({})
   // Losowanie zmienia tylko formularz: nie dotyka trwającej sesji i niczego nie
   // uruchamia. Pola zostają niesterowane (wartości czyta FormData); losowanie wpisuje
@@ -222,7 +261,7 @@ export function DhExchange() {
     },
   )
   const [view, setView] = useState<ViewState>(() =>
-    currentCredential() ? { status: 'loading' } : { status: 'empty' },
+    currentCredential(scenario) ? { status: 'loading' } : { status: 'empty' },
   )
   const [diagnosticsEnabled, setDiagnosticsEnabled] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -257,7 +296,7 @@ export function DhExchange() {
       : null
 
   useEffect(() => {
-    const own = currentCredential()
+    const own = currentCredential(scenario)
     if (!own) return
     const controller = new AbortController()
     const id = requestId.current
@@ -274,7 +313,7 @@ export function DhExchange() {
       },
     )
     return () => controller.abort()
-  }, [])
+  }, [scenario])
 
   useEffect(
     () => () => {
@@ -427,7 +466,8 @@ export function DhExchange() {
 
       const shown = withDiagnostics(session, diagnostics)
       setView({ status: 'session', session: shown })
-      if (shown.status === 'completed') {
+      // W RSA + DH porównujemy też sesję odrzuconą przez weryfikację podpisu – to jej wynik.
+      if (shown.status === 'completed' || signatureRejected(shown)) {
         setLastByMode((previous) => ({ ...previous, [shown.mode]: shown }))
       }
 
@@ -479,7 +519,9 @@ export function DhExchange() {
 
     setView({ status: 'loading' })
     try {
-      const session = await startDhSession(validation.data, mode, diagnosticsEnabled, controller.signal)
+      const session = await startDhSession(
+        validation.data, mode, diagnosticsEnabled, controller.signal, scenario,
+      )
       if (id !== requestId.current) return
       setView({ status: 'session', session })
       scrollToSceneIfBelow(sceneRef.current)
@@ -497,7 +539,7 @@ export function DhExchange() {
   // Sesja została utworzona, ale start się nie udał: pokazujemy jej stan (z odpytywaniem,
   // więc widać też wygaśnięcie) i błąd akcji obok. Zwraca false, gdy sesji nie ma.
   async function showKeptSession(id: number, message: string, signal: AbortSignal) {
-    const own = currentCredential()
+    const own = currentCredential(scenario)
     if (!own) return false
     try {
       const kept = await fetchDhSession(own.id, signal)
@@ -512,7 +554,7 @@ export function DhExchange() {
   }
 
   async function handleResume() {
-    const own = currentCredential()
+    const own = currentCredential(scenario)
     // Po 429/503 czekamy tak samo jak przy nowym starcie.
     if (!own || startBlocked) return
     const id = ++requestId.current
@@ -548,7 +590,7 @@ export function DhExchange() {
     setActionError(null)
     setView({ status: 'loading' })
     try {
-      await resetOwnDhSession(controller.signal)
+      await resetOwnDhSession(controller.signal, scenario)
       if (id === requestId.current) setView({ status: 'empty' })
     } catch (error) {
       if (id !== requestId.current) return
@@ -562,7 +604,7 @@ export function DhExchange() {
 
   return (
     <div className="dh">
-      <h1>Wymiana kluczy Diffiego–Hellmana</h1>
+      <h1>{authenticated ? 'Wymiana DH uwierzytelniona podpisami RSA' : 'Wymiana kluczy Diffiego–Hellmana'}</h1>
 
       <div className="layout">
         <section className="dh-scene" aria-label="Przebieg sesji" ref={sceneRef}>
@@ -583,6 +625,7 @@ export function DhExchange() {
               mode={shownMode}
               node={session?.nodes.alice}
               nodes={nodes}
+              rejected={session ? signatureRejected(session) : false}
             />
 
             {/* Środek: przy zwykłej wymianie wiadomości idą przez koordynatora,
@@ -599,12 +642,19 @@ export function DhExchange() {
               </div>
             )}
 
-            <NodePanel role="bob" mode={shownMode} node={session?.nodes.bob} nodes={nodes} />
+            <NodePanel
+              role="bob"
+              mode={shownMode}
+              node={session?.nodes.bob}
+              nodes={nodes}
+              rejected={session ? signatureRejected(session) : false}
+            />
           </div>
 
-          {shownMode === 'mitm' && <MitmExplanation />}
+          {authenticated ? <TrustExplanation /> : shownMode === 'mitm' && <MitmExplanation />}
 
           {session && <WaitingHint session={session} nodes={nodes} />}
+          {authenticated && session && <SignaturesPanel session={session} />}
           {session && <SessionResult session={session} />}
           <ScenarioComparison sessions={lastByMode} />
           {session && (
@@ -630,7 +680,7 @@ export function DhExchange() {
                     checked={mode === value}
                     onChange={() => setMode(value)}
                   />
-                  {MODE_LABEL[value]}
+                  {modeLabel[value]}
                 </label>
               ))}
             </fieldset>
@@ -639,6 +689,7 @@ export function DhExchange() {
             <Field
               name="prime"
               label="Liczba pierwsza (p)"
+              idPrefix={sid('')}
               error={fieldErrors.prime}
               key={`prime-${drawn.version}`}
               defaultValue={drawn.values.prime}
@@ -647,6 +698,7 @@ export function DhExchange() {
             <Field
               name="generator"
               label="Generator (g)"
+              idPrefix={sid('')}
               error={fieldErrors.generator}
               key={`generator-${drawn.version}`}
               defaultValue={drawn.values.generator}
@@ -664,9 +716,13 @@ export function DhExchange() {
             </Button>
             {parameters.error && <Notice tone="error">{parameters.error}</Notice>}
             <p className="hint">
-              Klucze prywatne losują procesy{' '}
-              {mode === 'mitm' ? 'Alice, Boba i Mallory' : 'Alice i Boba'}. Przeglądarka ich
-              nie zna.
+              {authenticated
+                ? 'Klucze prywatne DH i pary kluczy RSA losują procesy Alice i Boba. Przeglądarka ich nie zna.'
+                : <>
+                    Klucze prywatne losują procesy{' '}
+                    {mode === 'mitm' ? 'Alice, Boba i Mallory' : 'Alice i Boba'}. Przeglądarka ich
+                    nie zna.
+                  </>}
             </p>
 
             {/* Świadoma zgoda na diagnostykę: bez niej węzły nie zgłaszają K. */}
@@ -687,7 +743,7 @@ export function DhExchange() {
                 busyLabel="Uruchamianie…"
                 disabled={nodesOffline || activeId !== null || startBlocked || parameters.isDrawing}
                 aria-describedby={
-                  nodesOffline || nodes.status === 'error' ? 'dh-nodes-hint' : undefined
+                  nodesOffline || nodes.status === 'error' ? sid('dh-nodes-hint') : undefined
                 }
               >
                 Rozpocznij sesję
@@ -702,7 +758,7 @@ export function DhExchange() {
                 Uruchom własną sesję
               </Button>
             )}
-            {view.status === 'error' && currentCredential() && (
+            {view.status === 'error' && currentCredential(scenario) && (
               <Button variant="secondary" onClick={handleResume} disabled={startBlocked}>
                 Ponów start własnej sesji
               </Button>
@@ -713,8 +769,15 @@ export function DhExchange() {
             {session?.status === 'expired' && (
               <Notice tone="warning">Sesja wygasła. Reset usunie jej historię i pozwoli rozpocząć nową.</Notice>
             )}
-            {session?.status === 'failed' && (
-              <Notice tone="error">Wymiana została przerwana. Usuń sesję przyciskiem Reset i rozpocznij nową.</Notice>
+            {session && signatureRejected(session) ? (
+              <Notice tone="error">
+                Podpis odrzucony – wymiana przerwana, wspólny sekret nie został zaakceptowany. Reset
+                pozwoli rozpocząć nową sesję.
+              </Notice>
+            ) : (
+              session?.status === 'failed' && (
+                <Notice tone="error">Wymiana została przerwana. Usuń sesję przyciskiem Reset i rozpocznij nową.</Notice>
+              )
             )}
 
             {view.status === 'error' && <Notice tone="error">{view.message}</Notice>}
@@ -727,14 +790,15 @@ export function DhExchange() {
 
 // Parametry wspólne i status sesji.
 function SessionHeader({ session }: { session: DhSession }) {
+  const { modeLabel, id } = useScenario()
   const status = SESSION_STATUS[session.status]
   return (
-    <section className="dh-shared" aria-labelledby="dh-shared-title">
+    <section className="dh-shared" aria-labelledby={id('dh-shared-title')}>
       <div className="dh-shared-header">
-        <h2 id="dh-shared-title">Parametry wspólne</h2>
+        <h2 id={id('dh-shared-title')}>Parametry wspólne</h2>
         <span className="dh-badges">
           <Badge tone={session.mode === 'mitm' ? 'error' : 'neutral'}>
-            {MODE_LABEL[session.mode]}
+            {modeLabel[session.mode]}
           </Badge>
           <Badge tone={status.tone}>sesja {status.label}</Badge>
         </span>
@@ -780,13 +844,14 @@ function WaitingHint({ session, nodes }: { session: DhSession; nodes: NodesState
 
 // Komunikat pod przyciskami o dostępności węzłów potrzebnych w wybranym scenariuszu.
 function NodesHint({ nodes, mode }: { nodes: NodesState; mode: DhMode }) {
+  const { id } = useScenario()
   let text: string | null = null
   if (nodes.status === 'error') text = `Nie udało się sprawdzić dostępności węzłów: ${nodes.message}`
   const offline = offlineNodes(nodes, mode)
   if (offline.length > 0) text = `Uruchom proces ${joinNames(offline)}, żeby rozpocząć sesję.`
   if (!text) return null
   return (
-    <p className="hint" id="dh-nodes-hint">
+    <p className="hint" id={id('dh-nodes-hint')}>
       {text}
     </p>
   )
@@ -820,14 +885,19 @@ type NodePanelProps = {
   // Stan uczestnika w sesji; bez sesji undefined.
   node: DhNode | undefined
   nodes: NodesState
+  // RSA + DH: weryfikacja podpisu się nie powiodła, więc K nie zostało zaakceptowane.
+  rejected?: boolean
 }
 
-function NodePanel({ role, mode, node, nodes }: NodePanelProps) {
+function NodePanel({ role, mode, node, nodes, rejected = false }: NodePanelProps) {
+  const { id } = useScenario()
   const { name, nameOf, priv, pub, fake, other } = ROLES[role]
   const status = nodeBadge(role, node, nodes)
   // W MITM ofiara dostaje wartość Mallory, choć myśli, że to wartość partnera.
   const received = mode === 'mitm' ? fake : ROLES[other].pub
-  const titleId = `dh-${role}-title`
+  const titleId = id(`dh-${role}-title`)
+  // W RSA + DH węzeł po weryfikacji podpisu ma status verified zamiast received.
+  const computed = node?.status === 'received' || node?.status === 'verified'
 
   return (
     <section className={`dh-party dh-party--${role}`} aria-labelledby={titleId}>
@@ -855,7 +925,11 @@ function NodePanel({ role, mode, node, nodes }: NodePanelProps) {
       {/* Bez diagnostyki K zostaje w procesie: po przetworzeniu wartości partnera
           wiemy tylko, że węzeł je obliczył, więc zamiast „?” mówimy to wprost.
           Gdy diagnostyka przyjdzie (także po zakończeniu sesji), pokazujemy liczbę. */}
-      {node?.status === 'received' && node.sharedKey === undefined ? (
+      {rejected ? (
+        <DhValue kind="private" label="Wspólny sekret" withValue={false}>
+          <span className="formula">K</span> – niezaakceptowany: podpis partnera się nie zgadza
+        </DhValue>
+      ) : computed && node?.sharedKey === undefined ? (
         <DhValue kind="private" label="Wspólny sekret" withValue={false}>
           <span className="formula">K</span> – obliczony, zna go tylko proces {nameOf}
         </DhValue>
@@ -890,6 +964,7 @@ function malloryBadge(mallory: DhMallory): { label: string; tone: Tone } {
 }
 
 function MalloryPanel({ mallory, completed, nodes }: MalloryPanelProps) {
+  const { id } = useScenario()
   const status = mallory
     ? malloryBadge(mallory)
     : availabilityBadge(nodes.status === 'ready' ? nodes.nodes.mallory : undefined, nodes)
@@ -899,9 +974,9 @@ function MalloryPanel({ mallory, completed, nodes }: MalloryPanelProps) {
     false
 
   return (
-    <section className="dh-party dh-party--mallory" aria-labelledby="dh-mallory-title">
+    <section className="dh-party dh-party--mallory" aria-labelledby={id('dh-mallory-title')}>
       <div className="dh-party-header">
-        <h2 id="dh-mallory-title">Mallory</h2>
+        <h2 id={id('dh-mallory-title')}>Mallory</h2>
         {status && <Badge tone={status.tone}>{status.label}</Badge>}
       </div>
 
@@ -1007,6 +1082,135 @@ function MitmExplanation() {
   )
 }
 
+// RSA + DH: krótko, na czym polega ochrona i jakie ma założenia oraz ograniczenia.
+function TrustExplanation() {
+  const { id } = useScenario()
+  return (
+    <section className="dh-explain dh-explain--trust" aria-labelledby={id('dh-explain-title')}>
+      <h2 id={id('dh-explain-title')}>Jak podpisy chronią wymianę</h2>
+      <p>
+        Alice i Bob podpisują swoim kluczem prywatnym RSA transkrypt sesji: p, g, obie
+        wartości publiczne i oba klucze publiczne RSA. Każde sprawdza podpis partnera jego
+        kluczem publicznym. Gdy Mallory podmieni A albo B, transkrypty stron się różnią
+        i podpis nie przejdzie weryfikacji.
+      </p>
+      <p>
+        Założenie: klucze publiczne RSA są zaufane – tu przekazuje je koordynator. Ktoś, kto
+        mógłby podmienić także klucze, oszukałby obie strony.
+      </p>
+      <p>
+        Ograniczenia: klucze RSA mają 32 bity i nie ma paddingu, więc da się je złamać
+        w ułamku sekundy. Podpisywany jest skrót SHA-256 zredukowany modulo n, więc różne
+        transkrypty mogą dać tę samą liczbę – dlatego backend dodatkowo porównuje pełne skróty.
+      </p>
+    </section>
+  )
+}
+
+const VERIFICATION_BADGE = {
+  pending: { label: 'oczekuje', tone: 'neutral' },
+  ok: { label: 'podpis poprawny', tone: 'ok' },
+  rejected: { label: 'podpis odrzucony', tone: 'error' },
+} as const satisfies Record<string, { label: string; tone: Tone }>
+
+// Początek skrótu – wystarczy, żeby zobaczyć, czy dwa skróty się różnią.
+function shortHash(hash: string): string {
+  return `${hash.slice(0, 12)}…`
+}
+
+// RSA + DH: zaufane klucze publiczne, podpisy transkryptu i wyniki weryfikacji obu stron.
+// Wszystkie liczby pochodzą z API; klucze prywatne zostają w węzłach.
+function SignaturesPanel({ session }: { session: DhSession }) {
+  const { id } = useScenario()
+  const { keys, signatures, verifications } = session.authentication
+  const rejections = (['alice', 'bob'] as const).flatMap((verifier) => {
+    const verification = verifications[verifier]
+    return verification && !verification.verified ? [{ verifier, verification }] : []
+  })
+  const bothVerified = verifications.alice?.verified === true && verifications.bob?.verified === true
+
+  return (
+    <section className="dh-auth" aria-labelledby={id('dh-auth-title')}>
+      <h2 id={id('dh-auth-title')}>Podpisy RSA</h2>
+      <div className="dh-auth-parties">
+        {(['alice', 'bob'] as const).map((role) => {
+          const key = keys[role]
+          const signature = signatures[role]
+          const verifier = ROLES[role].other
+          // Podpis roli sprawdza partner.
+          const verification = verifications[verifier]
+          const badge = !verification
+            ? VERIFICATION_BADGE.pending
+            : verification.verified
+              ? VERIFICATION_BADGE.ok
+              : VERIFICATION_BADGE.rejected
+          return (
+            <div className="dh-auth-party" key={role}>
+              <h3>
+                <RoleName role={role} />
+              </h3>
+              <dl>
+                <div>
+                  <dt>
+                    Zaufany klucz publiczny (n, e) <DataBadge kind="public" />
+                  </dt>
+                  <dd className="formula">
+                    {key ? `(${key.modulus}, ${key.publicExponent})` : '?'}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Podpis transkryptu (s)</dt>
+                  <dd className="formula">{signature?.signature ?? '?'}</dd>
+                </div>
+                <div>
+                  <dt>Skrót transkryptu (SHA-256)</dt>
+                  <dd className="dh-hash">{signature?.transcriptHash ?? '?'}</dd>
+                </div>
+                <div>
+                  <dt>Weryfikacja przez {ROLES[verifier].nameOf}</dt>
+                  <dd>
+                    <Badge tone={badge.tone}>{badge.label}</Badge>
+                  </dd>
+                </div>
+              </dl>
+            </div>
+          )
+        })}
+      </div>
+
+      {bothVerified && (
+        <p className="result result--ok">
+          Obie strony zweryfikowały podpis partnera: wartości publiczne pochodzą od właścicieli
+          zaufanych kluczy.
+        </p>
+      )}
+      {rejections.length > 0 && (
+        <div className="result result--error" role="status">
+          <h3>Przyczyna odrzucenia</h3>
+          {rejections.map(({ verifier, verification }) => (
+            <p key={verifier}>
+              Weryfikacja {ROLES[verifier].nameOf}: podpis {ROLES[verification.signer].nameOf}{' '}
+              odrzucony.{' '}
+              {verification.transcriptHash !== verification.publishedTranscriptHash ? (
+                <>
+                  Skrót transkryptu z widoku {ROLES[verifier].nameOf}{' '}
+                  <code>{shortHash(verification.transcriptHash)}</code> różni się od skrótu
+                  podpisanego przez {ROLES[verification.signer].nameOf}{' '}
+                  <code>{shortHash(verification.publishedTranscriptHash)}</code> – strony widziały
+                  inne wartości publiczne, czyli ktoś podmienił wiadomość po drodze.
+                </>
+              ) : (
+                'Skróty są zgodne, ale podpis nie pasuje do zaufanego klucza publicznego.'
+              )}
+            </p>
+          ))}
+          <p>Wspólny sekret nie został zaakceptowany i nie jest pokazywany.</p>
+        </div>
+      )}
+    </section>
+  )
+}
+
 type DhValueProps = {
   kind: DataKind
   label: string
@@ -1042,6 +1246,7 @@ function DhValue({ kind, label, value, withValue = true, children }: DhValueProp
 // Porównanie sekretów obu stron. Pokazujemy dopiero, gdy oba węzły zgłosiły K
 // w diagnostyce (węzły uruchomione z --allow-diagnostics).
 function SessionResult({ session }: { session: DhSession }) {
+  const { id } = useScenario()
   const kA = session.nodes.alice.sharedKey
   const kB = session.nodes.bob.sharedKey
   if (kA === undefined || kB === undefined) return null
@@ -1050,10 +1255,10 @@ function SessionResult({ session }: { session: DhSession }) {
   return (
     <section
       className={`result dh-result result--${match ? 'ok' : 'error'}`}
-      aria-labelledby="dh-result-title"
+      aria-labelledby={id('dh-result-title')}
     >
       {/* Same K są już w panelach węzłów, tu tylko werdykt i wyjaśnienie. */}
-      <h2 id="dh-result-title">
+      <h2 id={id('dh-result-title')}>
         {match ? 'Sekrety zgodne' : 'Sekrety niezgodne'}
       </h2>
       {session.mode === 'mitm' && <MitmResult session={session} />}
@@ -1114,7 +1319,12 @@ function MitmResult({ session }: { session: DhSession }) {
 }
 
 // Wiersze porównania: te same wartości z ostatniej sesji każdego scenariusza.
-const COMPARE_ROWS: { label: ReactNode; value: (session: DhSession) => number | undefined }[] = [
+// classicOnly: sekrety Mallory – w RSA + DH podmiana jest odrzucana, więc ich nie ma.
+const COMPARE_ROWS: {
+  label: ReactNode
+  value: (session: DhSession) => number | undefined
+  classicOnly?: boolean
+}[] = [
   { label: 'A – wysłała Alice', value: (s) => s.nodes.alice.publicValue },
   { label: 'B – wysłał Bob', value: (s) => s.nodes.bob.publicValue },
   { label: 'Alice otrzymała', value: (s) => s.nodes.alice.receivedValue },
@@ -1142,6 +1352,7 @@ const COMPARE_ROWS: { label: ReactNode; value: (session: DhSession) => number | 
       </>
     ),
     value: (s) => s.mallory?.withAlice,
+    classicOnly: true,
   },
   {
     label: (
@@ -1150,6 +1361,7 @@ const COMPARE_ROWS: { label: ReactNode; value: (session: DhSession) => number | 
       </>
     ),
     value: (s) => s.mallory?.withBob,
+    classicOnly: true,
   },
 ]
 
@@ -1157,6 +1369,7 @@ const COMPARED_MODES = ['normal', 'mitm'] as const
 
 // Werdykt sesji: czy Alice i Bob mają ten sam K (o ile węzły zgłosiły diagnostykę).
 function secretsVerdict(session: DhSession): { label: string; tone: Tone } {
+  if (signatureRejected(session)) return { label: 'brak – podpis odrzucony', tone: 'error' }
   const kA = session.nodes.alice.sharedKey
   const kB = session.nodes.bob.sharedKey
   if (kA === undefined || kB === undefined) return { label: 'brak K w diagnostyce', tone: 'neutral' }
@@ -1167,31 +1380,43 @@ function secretsVerdict(session: DhSession): { label: string; tone: Tone } {
 // z API; wartości różniące się między scenariuszami są wyróżnione.
 // Domyślnie zwinięte. Po sesji tylko jednego scenariusza nie da się go rozwinąć –
 // z jedną sesją nie ma czego porównać, więc podpowiadamy, który scenariusz uruchomić.
+// RSA + DH: wynik weryfikacji podpisów w sesji.
+function signaturesVerdict(session: DhSession): { label: string; tone: Tone } {
+  if (signatureRejected(session)) return { label: 'odrzucone', tone: 'error' }
+  return { label: 'zweryfikowane', tone: 'ok' }
+}
+
 function ScenarioComparison({ sessions }: { sessions: Partial<Record<DhMode, DhSession>> }) {
+  const { authenticated, modeLabel, id } = useScenario()
+  const rows = COMPARE_ROWS.filter((row) => !(authenticated && row.classicOnly))
   const { normal, mitm } = sessions
   if (!normal && !mitm) return null
   const missing = COMPARED_MODES.find((mode) => !sessions[mode])
 
   if (missing) {
     return (
-      <section className="dh-compare" aria-labelledby="dh-compare-title">
+      <section className="dh-compare" aria-labelledby={id('dh-compare-title')}>
         <div className="dh-collapsible-header dh-collapsible-header--disabled">
-          <h2 id="dh-compare-title">Porównanie scenariuszy</h2>
+          <h2 id={id('dh-compare-title')}>Porównanie scenariuszy</h2>
         </div>
         <p className="hint">
-          Uruchom scenariusz „{MODE_LABEL[missing]}”, żeby porównać go z ostatnią sesją.
+          Uruchom scenariusz „{modeLabel[missing]}”, żeby porównać go z ostatnią sesją.
         </p>
       </section>
     )
   }
 
   return (
-    <section className="dh-compare" aria-labelledby="dh-compare-title">
+    <section className="dh-compare" aria-labelledby={id('dh-compare-title')}>
       <details>
         <summary className="dh-collapsible-header">
-          <h2 id="dh-compare-title">Porównanie scenariuszy</h2>
+          <h2 id={id('dh-compare-title')}>Porównanie scenariuszy</h2>
         </summary>
-        <p className="hint">Ostatnia zakończona sesja każdego scenariusza.</p>
+        <p className="hint">
+          {authenticated
+            ? 'Ostatnia zakończona albo odrzucona sesja każdego scenariusza.'
+            : 'Ostatnia zakończona sesja każdego scenariusza.'}
+        </p>
         <div className="dh-log-scroll">
           <table>
             <thead>
@@ -1199,7 +1424,7 @@ function ScenarioComparison({ sessions }: { sessions: Partial<Record<DhMode, DhS
                 <th scope="col">Wartość</th>
                 {COMPARED_MODES.map((mode) => (
                   <th scope="col" key={mode}>
-                    {MODE_LABEL[mode]}
+                    {modeLabel[mode]}
                   </th>
                 ))}
               </tr>
@@ -1216,7 +1441,7 @@ function ScenarioComparison({ sessions }: { sessions: Partial<Record<DhMode, DhS
                   )
                 })}
               </tr>
-              {COMPARE_ROWS.map((row, index) => {
+              {rows.map((row, index) => {
                 const values = COMPARED_MODES.map((mode) => {
                   const s = sessions[mode]
                   return s ? row.value(s) : undefined
@@ -1241,6 +1466,21 @@ function ScenarioComparison({ sessions }: { sessions: Partial<Record<DhMode, DhS
                   </tr>
                 )
               })}
+              {authenticated && (
+                <tr>
+                  <th scope="row">Podpisy RSA</th>
+                  {COMPARED_MODES.map((mode) => {
+                    const s = sessions[mode]
+                    if (!s) return <td key={mode}>–</td>
+                    const verdict = signaturesVerdict(s)
+                    return (
+                      <td key={mode}>
+                        <Badge tone={verdict.tone}>{verdict.label}</Badge>
+                      </td>
+                    )
+                  })}
+                </tr>
+              )}
               <tr>
                 <th scope="row">Sekrety Alice i Boba</th>
                 {COMPARED_MODES.map((mode) => {
@@ -1272,11 +1512,12 @@ function EventLog({
   events: DhEvent[]
   interceptions: DhInterception[]
 }) {
+  const { id } = useScenario()
   return (
-    <section className="dh-log" aria-labelledby="dh-log-title">
+    <section className="dh-log" aria-labelledby={id('dh-log-title')}>
       <details>
         <summary className="dh-collapsible-header">
-          <h2 id="dh-log-title">Dziennik zdarzeń</h2>
+          <h2 id={id('dh-log-title')}>Dziennik zdarzeń</h2>
           <span className="dh-log-count">({events.length})</span>
         </summary>
         {events.length === 0 ? (
@@ -1315,11 +1556,53 @@ function EventLog({
 // Po podmianie (message_forwarded, a potem message_processed) wiadomość naprawdę
 // wysyła Mallory, podszywając się pod oryginalnego nadawcę – pokazujemy oba fakty
 // i wartość, którą zastąpiła.
+// Zdarzenia uwierzytelnienia (RSA + DH) mają tylko autora – przy weryfikacji
+// weryfikującego → podpisującego – i zamiast statusu wiadomości wynik weryfikacji.
+const AUTH_EVENTS: readonly EventType[] = [
+  'trusted_key_published', 'signature_published', 'signature_verified', 'signature_rejected',
+]
+
 function EventRow({ event, interception }: { event: DhEvent; interception?: DhInterception }) {
   const status = MESSAGE_STATUS[event.status]
+  const auth = AUTH_EVENTS.includes(event.type)
   const substituted =
     interception !== undefined &&
     (event.type === 'message_forwarded' || event.type === 'message_processed')
+  if (auth) {
+    return (
+      <tr>
+        <td className="dh-log-seq">{event.seq}</td>
+        <td className="dh-log-type">{EVENT_TYPE[event.type]}</td>
+        <td className={`dh-log-route${event.from ? '' : ' dh-log-empty'}`}>
+          {event.from ? (
+            <>
+              <RoleName role={event.from} />
+              {event.to && (
+                <>
+                  {' '}
+                  → <RoleName role={event.to} />
+                </>
+              )}
+            </>
+          ) : (
+            '–'
+          )}
+        </td>
+        <td className="formula dh-log-value dh-log-empty" data-label="Wartość">
+          –
+        </td>
+        <td className={`dh-log-status${event.verified === null ? ' dh-log-empty' : ''}`}>
+          {event.verified === null ? (
+            '–'
+          ) : (
+            <Badge tone={event.verified ? 'ok' : 'error'}>
+              {event.verified ? 'podpis poprawny' : 'podpis odrzucony'}
+            </Badge>
+          )}
+        </td>
+      </tr>
+    )
+  }
   return (
     <tr>
       <td className="dh-log-seq">{event.seq}</td>

@@ -33,14 +33,17 @@ describe('zakładki', () => {
     expect((screen.getByRole('tabpanel', { name: 'Diffie–Hellman' }) as HTMLElement).hidden).toBe(false)
     expect((document.getElementById('view-rsa') as HTMLElement).hidden).toBe(true)
 
+    const rsadh = screen.getByRole('tab', { name: 'RSA + DH' })
+    await user.keyboard('{ArrowRight}')
+    expect(document.activeElement).toBe(rsadh)
     await user.keyboard('{ArrowRight}') // zawija do pierwszej
     expect(document.activeElement).toBe(rsa)
     await user.keyboard('{End}')
-    expect(document.activeElement).toBe(dh)
+    expect(document.activeElement).toBe(rsadh)
     await user.keyboard('{Home}')
     expect(document.activeElement).toBe(rsa)
     await user.keyboard('{ArrowLeft}')
-    expect(document.activeElement).toBe(dh)
+    expect(document.activeElement).toBe(rsadh)
   })
 
   it('panele są powiązane z zakładkami (aria-controls / aria-labelledby)', () => {
