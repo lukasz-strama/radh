@@ -257,10 +257,13 @@ class Page:
                        ".filter(e=>e.offsetParent!==null).map(e=>e.innerText)", scope)
 
     def party(self, role: str) -> dict:
-        """Wartości z panelu węzła: etykieta → liczba z <output> (None = '?')."""
+        """Wartości z panelu węzła w widocznej zakładce: etykieta → liczba z <output> (None = '?').
+
+        Zakładki DH i RSA + DH są naraz w DOM, więc panele z ukrytej zakładki pomijamy."""
         return self.js("""
             const out={};
             for(const v of document.querySelectorAll(`.dh-party--${arguments[0]} .dh-value`)){
+              if(v.closest('[hidden]'))continue;
               const label=v.querySelector('.dh-value-header').innerText.replace(/\\s*(tajne|jawne)\\s*$/,'').trim();
               const o=v.querySelector('output'); const t=o?o.innerText.trim():null;
               out[label]=t===null||t==='?'?null:Number(t);
@@ -268,7 +271,8 @@ class Page:
             return out;""", role)
 
     def session_badges(self) -> list[str]:
-        return self.js("return [...document.querySelectorAll('.dh-shared .badge')].map(e=>e.innerText)")
+        return self.js("return [...document.querySelectorAll('.dh-shared .badge')]"
+                       ".filter(e=>!e.closest('[hidden]')).map(e=>e.innerText)")
 
     def layout_report(self) -> dict:
         """Przepełnienia poziome, małe cele dotykowe, nakładanie się elementów."""
