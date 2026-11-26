@@ -8,7 +8,8 @@ FastAPI i wyświetla jego odpowiedź.
 
 ## Interfejs
 
-Aplikacja ma dwie zakładki: **RSA** (generowanie kluczy i szyfrowanie) oraz
+Aplikacja ma dwie zakładki: **RSA** (generowanie kluczy, szyfrowanie
+i deszyfrowanie liczby albo tekstu) oraz
 **Diffie–Hellman** (wymiana kluczy, także w scenariuszu ataku MITM).
 Zmiana zakładki nie usuwa wpisanych danych ani wyników.
 
@@ -23,7 +24,7 @@ szerokościach 360, 390, 768 i 1440 px):
   44 px wysokości, wygodne do obsługi palcem;
 - wszystko da się obsłużyć klawiaturą (zakładki strzałkami ←/→).
 
-![Zakładka RSA: wygenerowana para kluczy i szyfrogram](docs/screenshots/rsa.png)
+![Zakładka RSA: wygenerowana para kluczy, zaszyfrowany i odzyskany tekst „HELLO”](docs/screenshots/rsa.png)
 
 ![Zakładka Diffie–Hellman: zakończona zwykła wymiana](docs/screenshots/dh-normal.png)
 
@@ -90,7 +91,11 @@ Wszystkie wartości (`n`, `φ(n)`, `d`) liczy CryptoCore przez endpoint
 
 - Pierwszość `p` i `q`, zakres modułu oraz warunek `NWD(e, φ(n)) = 1` sprawdza
   backend; frontend pokazuje jego komunikat.
-- Przycisk „Użyj klucza publicznego” wpisuje `e` i `n` do formularza szyfrowania.
+- Przycisk „Losuj parametry” wypełnia `p`, `q` i `e` wartościami z
+  `POST /api/v1/rsa/demo/parameters`. Kluczy nie generuje – pola można dalej
+  edytować, a „Generuj klucze” jest zablokowane do końca losowania.
+- Przycisk „Użyj klucza publicznego” wpisuje `e` i `n` do szyfrowania,
+  a „Użyj klucza prywatnego” – `d` i `n` do deszyfrowania.
 - Po zmianie biblioteki C trzeba ją przebudować i zrestartować backend.
   Bez tego generowanie zwróci „Nie znaleziono zasobu” (stary backend) albo
   błąd niedostępnego CryptoCore (stara biblioteka).
@@ -98,6 +103,30 @@ Wszystkie wartości (`n`, `φ(n)`, `d`) liczy CryptoCore przez endpoint
 Szybkie sprawdzenie: dla `p = 61`, `q = 53`, `e = 17` interfejs powinien pokazać
 `n = 3233`, `φ(n) = 3120`, `d = 2753`, a po użyciu klucza publicznego
 wiadomość `m = 65` zaszyfruje się do `2790`.
+
+### Szyfrowanie i deszyfrowanie RSA
+
+Panel „Szyfrowanie i deszyfrowanie” pokazuje pełny cykl: szyfrowanie kluczem
+publicznym `(n, e)` i deszyfrowanie kluczem prywatnym `(n, d)`. Każdą operację
+liczy CryptoCore – kontrakt tras w [`backend/README.md`](../backend/README.md).
+
+- **Liczba**: `c = m^e mod n` (`POST /api/v1/rsa/demo/encrypt`) i
+  `m = c^d mod n` (`POST /api/v1/rsa/demo/decrypt`).
+- **Tekst**: tekst jest kodowany jako UTF-8, a każdy bajt szyfrowany osobno
+  (`POST /api/v1/rsa/demo/text/encrypt` i `.../text/decrypt`). Tabela pokazuje
+  znak → bajty → szyfrogramy; polskie znaki zajmują po dwa bajty. Limit to
+  128 bajtów, a moduł musi być większy od 255.
+- Po zaszyfrowaniu szyfrogram trafia od razu do pola deszyfrowania.
+- Klucz prywatny jest tylko w pamięci strony – nie trafia do `sessionStorage`,
+  `localStorage` ani adresu strony.
+- To textbook RSA bez paddingu: te same bajty dają te same szyfrogramy. Panel
+  pokazuje stałe ostrzeżenie.
+- Przy przekroczeniu limitu żądań (429) przycisk jest zablokowany na czas
+  z `Retry-After`, a komunikat podaje, za ile sekund spróbować ponownie.
+
+Szybkie sprawdzenie: z kluczem `p = 61`, `q = 53`, `e = 17` tekst `HELLO`
+zaszyfruje się do `3000, 28, 2726, 2726, 1307`, a deszyfrowanie zwróci `HELLO`.
+W trybie liczbowym `65 → 2790 → 65`.
 
 ### Zakładka Diffie–Hellman
 
