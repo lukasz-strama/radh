@@ -73,6 +73,9 @@ def ui_stack(core, tmp_path_factory):
     stack = Stack(tmp, core.path, {
         "CREATE_RATE_PER_MINUTE": 600, "CREATE_RATE_BURST": 64, "MAX_SESSIONS_PER_IP": 64,
         "READ_IP_RATE_PER_MINUTE": 6000, "CRYPTO_RATE_PER_MINUTE": 600, "CRYPTO_RATE_BURST": 64,
+        # #114: losowanie parametrów i tekstowe RSA mają własne limity (domyślnie burst 2).
+        "PARAMETER_RATE_PER_MINUTE": 600, "PARAMETER_RATE_BURST": 64,
+        "RSA_TEXT_RATE_PER_MINUTE": 600, "RSA_TEXT_RATE_BURST": 64,
     }, port=BACKEND_PORT)
     stack.start_backend()
     stack.start_nodes()
